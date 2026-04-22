@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.registry import stage_agent
 from app.agents.runtime import AgentsRuntime
 from app.data.models import (
     Artifact,
@@ -21,6 +22,7 @@ from app.data.models import (
 from app.orchestrator.state_machine import STAGE_ORDER, next_stage
 from app.schemas.api import RunCreateRequest
 from app.schemas.contracts import ComplianceLevel, CreativeBlueprint, CreativeBundle, ResearchReport
+from app.services.agent_api_configs import resolve_agent_config
 
 
 runtime = AgentsRuntime()
@@ -242,13 +244,24 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
     db.flush()
 
     try:
+        agent_name = stage_agent(task.stage_name)
+        resolved = resolve_agent_config(
+            db,
+            agent_name=agent_name,
+            run_provider=run.model_provider,
+            run_model=run.model_name,
+        )
+        provider_name = resolved["provider_name"]
+        model_name = resolved["model_name"]
+        task.metadata_json = {**(task.metadata_json or {}), "agent_name": agent_name, "resolved_api": resolved}
+
         output = None
         if task.stage_name == "research":
             output = runtime.run_research(
                 run.id,
                 task.input_payload,
-                provider=run.model_provider,
-                model=run.model_name,
+                provider=provider_name,
+                model=model_name,
             )
         elif task.stage_name == "ideation":
             research = ResearchReport.model_validate(task.input_payload["research"])
@@ -256,24 +269,24 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
                 run.id,
                 research,
                 variant_count=run.variant_count,
-                provider=run.model_provider,
-                model=run.model_name,
+                provider=provider_name,
+                model=model_name,
             )
         elif task.stage_name == "generation":
             blueprint = CreativeBlueprint.model_validate(task.input_payload["blueprint"])
             output = runtime.run_generation(
                 run.id,
                 blueprint,
-                provider=run.model_provider,
-                model=run.model_name,
+                provider=provider_name,
+                model=model_name,
             )
         elif task.stage_name == "scoring":
             bundle = CreativeBundle.model_validate(task.input_payload["bundle"])
             output = runtime.run_scoring(
                 run.id,
                 bundle,
-                provider=run.model_provider,
-                model=run.model_name,
+                provider=provider_name,
+                model=model_name,
             )
         else:
             raise ValueError(f"unknown stage: {task.stage_name}")
@@ -330,4 +343,3 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
         run.updated_at = utcnow()
         db.flush()
         return task
-

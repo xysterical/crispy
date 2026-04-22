@@ -74,10 +74,20 @@ def test_feedback_import_updates_leaderboard(client):
 
 
 def test_persona_read_and_patch(client):
+    catalog_resp = client.get("/personas")
+    assert catalog_resp.status_code == 200
+    catalog = catalog_resp.json()
+    gm_row = [row for row in catalog if row["agent_name"] == "gm_orchestrator"][0]
+    assert "/gm/" in gm_row["source_path"] or "personas/gm/" in gm_row["source_path"]
+    research_row = [row for row in catalog if row["agent_name"] == "research_agent"][0]
+    assert "stages/01_research_agent.md" in research_row["source_path"]
+
     get_resp = client.get("/personas/research_agent")
     assert get_resp.status_code == 200
     before = get_resp.json()
     assert "Research Agent" in before["content"]
+    assert before["display_name"] == "Research Agent"
+    assert before["stage"] == "research"
 
     patch_resp = client.patch(
         "/personas/research_agent",
@@ -87,4 +97,3 @@ def test_persona_read_and_patch(client):
     after = patch_resp.json()
     assert after["version"] >= before["version"]
     assert "Updated from dashboard" in after["content"]
-

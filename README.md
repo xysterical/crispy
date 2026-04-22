@@ -25,18 +25,24 @@ uv run uvicorn app.main:app --reload
 
 Open dashboard:
 - [http://localhost:8000](http://localhost:8000)
+- [http://localhost:8000/dashboard/agent-apis](http://localhost:8000/dashboard/agent-apis) for agent API config management
 
 ## Key API endpoints
+- `GET /runs` list latest runs (dashboard feed)
 - `POST /runs` create a pipeline run
 - `GET /runs/{id}` inspect run and stage outputs
 - `POST /runs/{id}/advance` approve current stage and queue next stage
 - `POST /runs/{id}/reject` reject and requeue current stage
 - `POST /feedback/import` import weekly CSV-equivalent rows
 - `GET /projects/{id}/leaderboard` get weighted creative ranking
+- `GET /personas` list persona catalog (GM and stage agents)
 - `GET /personas/{agent}` read persona markdown
 - `PATCH /personas/{agent}` update persona markdown + create audit version
+- `GET /agent-configs` list default + per-agent API configs
+- `PATCH /agent-configs/{agent}` upsert per-agent API config (fallback to `default` if unset)
 
 ## Notes
 - Default provider is a local Kimi stub adapter for deterministic MVP behavior.
+- Persona files are structured as `personas/gm/gm_orchestrator.md` and `personas/stages/0x_*.md`.
 - Media assets are stored in local filesystem under `assets/<run_id>/`.
 - Current mode is single-user and no authentication.

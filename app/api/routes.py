@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from sqlalchemy import desc, select
@@ -8,20 +10,25 @@ from sqlalchemy.orm import Session
 from app.data.models import PipelineRun, StageTask
 from app.data.session import get_db
 from app.schemas.api import (
+    AgentApiConfigPatchRequest,
+    AgentApiConfigView,
     FeedbackImportRequest,
     FeedbackImportResponse,
     LeaderboardItem,
     LeaderboardResponse,
+    PersonaMeta,
     PersonaPatchRequest,
     PersonaView,
     ReviewActionRequest,
     RunCreateRequest,
+    RunSummary,
     RunView,
     StageTaskView,
 )
 from app.schemas.contracts import ComplianceLevel, ConversionForecast, ScoreCard
+from app.services.agent_api_configs import list_agent_configs, upsert_agent_config
 from app.services.feedback import import_feedback_rows, project_leaderboard
-from app.services.personas import get_persona, update_persona
+from app.services.personas import get_persona, list_persona_catalog, persona_info, update_persona
 from app.services.runs import approve_stage, create_run, get_run, latest_scorecard, reject_stage
 
 
@@ -40,6 +47,7 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
             attempt=task.attempt,
             review_notes=task.review_notes,
             output_payload=task.output_payload or {},
+            metadata_json=task.metadata_json or {},
             error_message=task.error_message,
             started_at=task.started_at,
             completed_at=task.completed_at,
@@ -83,26 +91,289 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
     )
 
 
-@router.get("/", response_class=HTMLResponse)
-def dashboard(db: Session = Depends(get_db)) -> str:
-    runs = db.scalars(select(PipelineRun).order_by(desc(PipelineRun.created_at)).limit(30)).all()
-    rows = "\n".join(
-        f"<tr><td>{run.id}</td><td>{run.status}</td><td>{run.current_stage}</td><td>{run.updated_at}</td></tr>"
-        for run in runs
-    )
-    return f"""
+def _dashboard_html() -> str:
+    return """
     <html>
-      <head><title>crispy dashboard</title></head>
+      <head>
+        <title>Crispy Dashboard</title>
+        <style>
+          body { font-family: ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; color: #1a1d21; }
+          .grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; }
+          .card { border: 1px solid #d9dce1; border-radius: 12px; padding: 16px; background: #fff; }
+          h1, h2, h3 { margin-top: 0; }
+          table { width: 100%; border-collapse: collapse; font-size: 13px; }
+          th, td { border-bottom: 1px solid #eceef2; padding: 8px; text-align: left; vertical-align: top; }
+          button { margin-right: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid #bbc2cc; background: #f7f9fc; cursor: pointer; }
+          textarea, input { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #c8cfda; margin: 4px 0 10px 0; box-sizing: border-box; }
+          .muted { color: #5a6270; font-size: 12px; }
+          .pill { display: inline-block; border-radius: 999px; padding: 2px 8px; font-size: 11px; background: #edf3ff; margin-right: 6px; }
+          .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+          .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+          .actions { margin: 10px 0; }
+        </style>
+      </head>
       <body>
-        <h1>crispy pipeline dashboard</h1>
-        <p>Single-user MVP dashboard for manual stage review and ROI loop verification.</p>
-        <table border="1" cellpadding="6">
-          <tr><th>Run ID</th><th>Status</th><th>Current Stage</th><th>Updated At</th></tr>
-          {rows}
-        </table>
+        <h1>Crispy Dashboard</h1>
+        <p class="muted">半自动可验证 MVP：四阶段人工闸门 + 反馈闭环。Agent API 配置页: <a href="/dashboard/agent-apis">/dashboard/agent-apis</a></p>
+        <div class="grid">
+          <section class="card">
+            <h2>Runs</h2>
+            <div class="actions">
+              <button onclick="refreshRuns()">Refresh</button>
+              <button onclick="advanceRun()">Advance Current Stage</button>
+              <button onclick="rejectRun()">Reject Current Stage</button>
+            </div>
+            <table>
+              <thead><tr><th>Run ID</th><th>Status</th><th>Stage</th><th>Updated</th></tr></thead>
+              <tbody id="runs-body"></tbody>
+            </table>
+          </section>
+          <section class="card">
+            <h2>Create Run</h2>
+            <form onsubmit="createRun(event)">
+              <input id="workspace_name" placeholder="workspace_name" value="workspace_demo" />
+              <input id="project_name" placeholder="project_name" value="project_demo" />
+              <input id="product_name" placeholder="product_name" value="pet_product" />
+              <input id="campaign_name" placeholder="campaign_name" value="meta_campaign_1" />
+              <div class="row">
+                <input id="model_provider" placeholder="model_provider" value="kimi" />
+                <input id="model_name" placeholder="model_name" value="kimi-default-text" />
+              </div>
+              <button type="submit">Create</button>
+            </form>
+            <div id="create-msg" class="muted"></div>
+          </section>
+        </div>
+        <div class="grid" style="margin-top:20px;">
+          <section class="card">
+            <h2>Run Detail</h2>
+            <div id="run-detail" class="mono">Select a run to inspect stage outputs.</div>
+          </section>
+          <section class="card">
+            <h2>Persona Manager</h2>
+            <div id="persona-list" class="muted">Loading personas...</div>
+            <div id="persona-editor" style="margin-top:10px; display:none;">
+              <div class="muted" id="persona-meta"></div>
+              <textarea id="persona-content" rows="14"></textarea>
+              <button onclick="savePersona()">Save Persona</button>
+            </div>
+          </section>
+        </div>
+        <script>
+          let currentRunId = null;
+          let currentPersona = null;
+
+          async function api(path, options = {}) {
+            const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+            if (!res.ok) {
+              const txt = await res.text();
+              throw new Error(txt || res.statusText);
+            }
+            return res.headers.get("content-type")?.includes("application/json") ? res.json() : res.text();
+          }
+
+          async function refreshRuns() {
+            const rows = await api("/runs");
+            const body = document.getElementById("runs-body");
+            body.innerHTML = "";
+            rows.forEach((r) => {
+              const tr = document.createElement("tr");
+              tr.innerHTML = `<td><a href="#" onclick="selectRun('${r.id}');return false;">${r.id.slice(0, 8)}</a></td>
+                              <td>${r.status}</td><td>${r.current_stage || "-"}</td><td>${r.updated_at}</td>`;
+              body.appendChild(tr);
+            });
+          }
+
+          async function selectRun(runId) {
+            currentRunId = runId;
+            const run = await api(`/runs/${runId}`);
+            document.getElementById("run-detail").textContent = JSON.stringify(run, null, 2);
+          }
+
+          async function createRun(event) {
+            event.preventDefault();
+            const payload = {
+              workspace_name: document.getElementById("workspace_name").value,
+              project_name: document.getElementById("project_name").value,
+              product_name: document.getElementById("product_name").value,
+              campaign_name: document.getElementById("campaign_name").value,
+              model_provider: document.getElementById("model_provider").value,
+              model_name: document.getElementById("model_name").value,
+            };
+            const run = await api("/runs", { method: "POST", body: JSON.stringify(payload) });
+            document.getElementById("create-msg").textContent = `Created run ${run.id}`;
+            await refreshRuns();
+            await selectRun(run.id);
+          }
+
+          async function advanceRun() {
+            if (!currentRunId) return;
+            await api(`/runs/${currentRunId}/advance`, { method: "POST", body: JSON.stringify({ notes: "approved_in_dashboard" }) });
+            await selectRun(currentRunId);
+            await refreshRuns();
+          }
+
+          async function rejectRun() {
+            if (!currentRunId) return;
+            await api(`/runs/${currentRunId}/reject`, { method: "POST", body: JSON.stringify({ notes: "rejected_in_dashboard" }) });
+            await selectRun(currentRunId);
+            await refreshRuns();
+          }
+
+          async function loadPersonas() {
+            const list = await api("/personas");
+            const container = document.getElementById("persona-list");
+            container.innerHTML = "";
+            list.forEach((p) => {
+              const btn = document.createElement("button");
+              btn.textContent = `${p.display_name} (${p.stage})`;
+              btn.onclick = () => openPersona(p.agent_name);
+              container.appendChild(btn);
+            });
+          }
+
+          async function openPersona(agentName) {
+            const p = await api(`/personas/${agentName}`);
+            currentPersona = p.agent_name;
+            document.getElementById("persona-editor").style.display = "block";
+            document.getElementById("persona-meta").innerHTML =
+              `<span class="pill">${p.display_name || p.agent_name}</span><span class="pill">v${p.version}</span><span class="pill">${p.stage || "n/a"}</span>`;
+            document.getElementById("persona-content").value = p.content;
+          }
+
+          async function savePersona() {
+            if (!currentPersona) return;
+            const content = document.getElementById("persona-content").value;
+            await api(`/personas/${currentPersona}`, { method: "PATCH", body: JSON.stringify({ content, changed_by: "dashboard_ui" }) });
+            await openPersona(currentPersona);
+          }
+
+          refreshRuns();
+          loadPersonas();
+        </script>
       </body>
     </html>
     """
+
+
+def _agent_api_dashboard_html(personas_json: str, configs_json: str) -> str:
+    return f"""
+    <html>
+      <head>
+        <title>Crispy Agent API Configs</title>
+        <style>
+          body {{ font-family: ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; color: #1a1d21; }}
+          table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+          th, td {{ border-bottom: 1px solid #eceef2; padding: 8px; text-align: left; vertical-align: top; }}
+          input {{ width: 100%; padding: 6px; border-radius: 6px; border: 1px solid #c8cfda; box-sizing: border-box; }}
+          button {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #bbc2cc; background: #f7f9fc; cursor: pointer; }}
+          .muted {{ color: #5a6270; font-size: 12px; }}
+        </style>
+      </head>
+      <body>
+        <h1>Agent API Configs</h1>
+        <p class="muted">规则：若单 Agent 配置为空或不存在，则自动使用 <b>default</b> 配置。</p>
+        <p><a href="/dashboard">Back to Dashboard</a></p>
+        <table>
+          <thead><tr><th>Agent</th><th>Provider</th><th>Model</th><th>Base URL</th><th>API Key Env</th><th>Action</th></tr></thead>
+          <tbody id="cfg-body"></tbody>
+        </table>
+        <script>
+          const personas = {personas_json};
+          const existing = {configs_json};
+          const byAgent = Object.fromEntries(existing.map(c => [c.agent_name, c]));
+          const rows = [{{ agent_name: "default", display_name: "Default Fallback", stage: "global" }}, ...personas];
+
+          async function api(path, options = {{}}) {{
+            const res = await fetch(path, {{ headers: {{ "Content-Type": "application/json" }}, ...options }});
+            if (!res.ok) {{
+              const txt = await res.text();
+              throw new Error(txt || res.statusText);
+            }}
+            return res.json();
+          }}
+
+          function render() {{
+            const body = document.getElementById("cfg-body");
+            body.innerHTML = "";
+            rows.forEach((r) => {{
+              const cfg = byAgent[r.agent_name] || {{}};
+              const tr = document.createElement("tr");
+              tr.innerHTML = `
+                <td>${{r.display_name || r.agent_name}}<div class="muted">${{r.agent_name}} / ${{r.stage || "-"}}</div></td>
+                <td><input id="p-${{r.agent_name}}" value="${{cfg.provider_name || ""}}" placeholder="kimi"/></td>
+                <td><input id="m-${{r.agent_name}}" value="${{cfg.model_name || ""}}" placeholder="kimi-default-text"/></td>
+                <td><input id="b-${{r.agent_name}}" value="${{cfg.api_base_url || ""}}" placeholder="https://api.vendor.com/v1"/></td>
+                <td><input id="k-${{r.agent_name}}" value="${{cfg.api_key_env || ""}}" placeholder="KIMI_API_KEY"/></td>
+                <td><button onclick="save('${{r.agent_name}}')">Save</button></td>
+              `;
+              body.appendChild(tr);
+            }});
+          }}
+
+          async function save(agentName) {{
+            const payload = {{
+              provider_name: document.getElementById(`p-${{agentName}}`).value || null,
+              model_name: document.getElementById(`m-${{agentName}}`).value || null,
+              api_base_url: document.getElementById(`b-${{agentName}}`).value || null,
+              api_key_env: document.getElementById(`k-${{agentName}}`).value || null
+            }};
+            const updated = await api(`/agent-configs/${{agentName}}`, {{ method: "PATCH", body: JSON.stringify(payload) }});
+            byAgent[agentName] = updated;
+          }}
+
+          render();
+        </script>
+      </body>
+    </html>
+    """
+
+
+@router.get("/", response_class=HTMLResponse)
+def dashboard_root() -> str:
+    return _dashboard_html()
+
+
+@router.get("/dashboard", response_class=HTMLResponse)
+def dashboard_page() -> str:
+    return _dashboard_html()
+
+
+@router.get("/dashboard/agent-apis", response_class=HTMLResponse)
+def dashboard_agent_apis(db: Session = Depends(get_db)) -> str:
+    personas = [PersonaMeta(**row).model_dump(mode="json") for row in list_persona_catalog()]
+    configs = [
+        AgentApiConfigView(
+            agent_name=row.agent_name,
+            provider_name=row.provider_name,
+            model_name=row.model_name,
+            api_base_url=row.api_base_url,
+            api_key_env=row.api_key_env,
+            extra=row.extra or {},
+            is_default=row.agent_name == "default",
+            updated_at=row.updated_at,
+        ).model_dump(mode="json")
+        for row in list_agent_configs(db)
+    ]
+    db.commit()
+    personas_json = json.dumps(personas, ensure_ascii=False).replace("</", "<\\/")
+    configs_json = json.dumps(configs, ensure_ascii=False).replace("</", "<\\/")
+    return _agent_api_dashboard_html(personas_json=personas_json, configs_json=configs_json)
+
+
+@router.get("/runs", response_model=list[RunSummary])
+def list_runs(db: Session = Depends(get_db)) -> list[RunSummary]:
+    runs = db.scalars(select(PipelineRun).order_by(desc(PipelineRun.created_at)).limit(50)).all()
+    return [
+        RunSummary(
+            id=run.id,
+            status=run.status,
+            current_stage=run.current_stage,
+            project_id=run.project_id,
+            updated_at=run.updated_at,
+        )
+        for run in runs
+    ]
 
 
 @router.post("/runs", response_model=RunView)
@@ -168,13 +439,27 @@ def leaderboard(project_id: str, db: Session = Depends(get_db)) -> LeaderboardRe
     return LeaderboardResponse(project_id=project_id, ranking=ranking)
 
 
+@router.get("/personas", response_model=list[PersonaMeta])
+def list_agent_personas() -> list[PersonaMeta]:
+    return [PersonaMeta(**row) for row in list_persona_catalog()]
+
+
 @router.get("/personas/{agent_name}", response_model=PersonaView)
 def read_agent_persona(agent_name: str, db: Session = Depends(get_db)) -> PersonaView:
     try:
         content, version, source_path = get_persona(db, agent_name)
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, KeyError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return PersonaView(agent_name=agent_name, content=content, version=version, source_path=source_path)
+    info = persona_info(agent_name)
+    return PersonaView(
+        agent_name=agent_name,
+        display_name=info["display_name"],
+        stage=info["stage"],
+        role=info["role"],
+        content=content,
+        version=version,
+        source_path=source_path,
+    )
 
 
 @router.patch("/personas/{agent_name}", response_model=PersonaView)
@@ -183,7 +468,66 @@ def patch_agent_persona(
     payload: PersonaPatchRequest,
     db: Session = Depends(get_db),
 ) -> PersonaView:
-    content, version, source_path = update_persona(db, agent_name, payload.content, payload.changed_by)
+    try:
+        content, version, source_path = update_persona(db, agent_name, payload.content, payload.changed_by)
+        info = persona_info(agent_name)
+    except KeyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     db.commit()
-    return PersonaView(agent_name=agent_name, content=content, version=version, source_path=source_path)
+    return PersonaView(
+        agent_name=agent_name,
+        display_name=info["display_name"],
+        stage=info["stage"],
+        role=info["role"],
+        content=content,
+        version=version,
+        source_path=source_path,
+    )
 
+
+@router.get("/agent-configs", response_model=list[AgentApiConfigView])
+def get_agent_configs(db: Session = Depends(get_db)) -> list[AgentApiConfigView]:
+    rows = list_agent_configs(db)
+    db.commit()
+    return [
+        AgentApiConfigView(
+            agent_name=row.agent_name,
+            provider_name=row.provider_name,
+            model_name=row.model_name,
+            api_base_url=row.api_base_url,
+            api_key_env=row.api_key_env,
+            extra=row.extra or {},
+            is_default=row.agent_name == "default",
+            updated_at=row.updated_at,
+        )
+        for row in rows
+    ]
+
+
+@router.patch("/agent-configs/{agent_name}", response_model=AgentApiConfigView)
+def patch_agent_config(
+    agent_name: str,
+    payload: AgentApiConfigPatchRequest,
+    db: Session = Depends(get_db),
+) -> AgentApiConfigView:
+    row = upsert_agent_config(
+        db,
+        agent_name=agent_name,
+        provider_name=payload.provider_name,
+        model_name=payload.model_name,
+        api_base_url=payload.api_base_url,
+        api_key_env=payload.api_key_env,
+        extra=payload.extra,
+    )
+    db.commit()
+    return AgentApiConfigView(
+        agent_name=row.agent_name,
+        provider_name=row.provider_name,
+        model_name=row.model_name,
+        api_base_url=row.api_base_url,
+        api_key_env=row.api_key_env,
+        extra=row.extra or {},
+        is_default=row.agent_name == "default",
+        updated_at=row.updated_at,
+    )

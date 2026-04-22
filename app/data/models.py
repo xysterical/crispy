@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime, date
 from enum import StrEnum
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.data.base import Base, json_type
@@ -239,3 +239,18 @@ class GmMemory(Base):
     content: Mapped[dict] = mapped_column(json_type(), default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+
+class AgentApiConfig(Base):
+    __tablename__ = "agent_api_config"
+    __table_args__ = (UniqueConstraint("agent_name", name="uq_agent_api_config_agent_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    agent_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(64), default="kimi")
+    model_name: Mapped[str] = mapped_column(String(128), default="kimi-default-text")
+    api_base_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    api_key_env: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    extra: Mapped[dict] = mapped_column(json_type(), default=dict)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

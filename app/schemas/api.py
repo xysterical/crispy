@@ -31,6 +31,7 @@ class StageTaskView(BaseModel):
     attempt: int
     review_notes: str | None = None
     output_payload: dict = Field(default_factory=dict)
+    metadata_json: dict = Field(default_factory=dict)
     error_message: str | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -57,6 +58,14 @@ class RunView(BaseModel):
     stage_tasks: list[StageTaskView] = Field(default_factory=list)
     latest_scorecard: ScoreCard | None = None
     latest_forecast: ConversionForecast | None = None
+
+
+class RunSummary(BaseModel):
+    id: str
+    status: str
+    current_stage: str | None
+    project_id: str
+    updated_at: datetime
 
 
 class ReviewActionRequest(BaseModel):
@@ -87,6 +96,9 @@ class LeaderboardResponse(BaseModel):
 
 class PersonaView(BaseModel):
     agent_name: str
+    display_name: str | None = None
+    stage: str | None = None
+    role: str | None = None
     content: str
     version: int
     source_path: str
@@ -107,3 +119,31 @@ class FeedbackImportRequest(BaseModel):
     project_name: str
     rows: list[FeedbackRow]
     file_name: str = "manual_import.csv"
+
+
+class PersonaMeta(BaseModel):
+    agent_name: str
+    display_name: str
+    stage: str
+    role: str
+    order: int
+    source_path: str
+
+
+class AgentApiConfigView(BaseModel):
+    agent_name: str
+    provider_name: str
+    model_name: str
+    api_base_url: str | None = None
+    api_key_env: str | None = None
+    extra: dict = Field(default_factory=dict)
+    is_default: bool = False
+    updated_at: datetime
+
+
+class AgentApiConfigPatchRequest(BaseModel):
+    provider_name: str | None = None
+    model_name: str | None = None
+    api_base_url: str | None = None
+    api_key_env: str | None = None
+    extra: dict | None = None
