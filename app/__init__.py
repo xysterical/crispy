@@ -1,0 +1,2 @@
+"""Crispy application package."""
+
