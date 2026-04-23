@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -7,6 +9,7 @@ from app.data.models import AgentApiConfig
 
 
 DEFAULT_AGENT_NAME = "default"
+API_KEY_ENV_PREFIX = "CRISPY_API_KEY_"
 
 
 def _default_values() -> dict:
@@ -45,6 +48,8 @@ def upsert_agent_config(
     api_key_env: str | None,
     extra: dict | None,
 ) -> AgentApiConfig:
+    if api_key_env and not api_key_env.startswith(API_KEY_ENV_PREFIX):
+        raise ValueError(f"api_key_env must start with {API_KEY_ENV_PREFIX}")
     ensure_default_agent_config(db)
     row = db.scalar(select(AgentApiConfig).where(AgentApiConfig.agent_name == agent_name))
     if not row:
@@ -94,13 +99,37 @@ def resolve_agent_config(
         or default_cfg.model_name
         or run_model
     )
+    api_key_env = (agent_cfg.api_key_env if agent_cfg and agent_cfg.api_key_env else default_cfg.api_key_env)
+    api_key_available = bool(os.getenv(api_key_env)) if api_key_env else False
     return {
         "agent_name": agent_name,
         "provider_name": provider_name,
         "model_name": model_name,
         "api_base_url": (agent_cfg.api_base_url if agent_cfg and agent_cfg.api_base_url else default_cfg.api_base_url),
-        "api_key_env": (agent_cfg.api_key_env if agent_cfg and agent_cfg.api_key_env else default_cfg.api_key_env),
+        "api_key_env": api_key_env,
+        "api_key_available": api_key_available,
         "extra": (agent_cfg.extra if agent_cfg and agent_cfg.extra else default_cfg.extra),
         "source": "agent_override" if agent_cfg else "default",
     }
 
+
+def resolve_agent_runtime(config: dict) -> dict:
+    api_key_env = config.get("api_key_env")
+    api_key = os.getenv(api_key_env) if api_key_env else None
+    return {
+        "api_base_url": config.get("api_base_url"),
+        "api_key": api_key,
+        "extra": config.get("extra") or {},
+    }
+
+
+def api_key_available(api_key_env: str | None) -> bool:
+    if not api_key_env:
+        return False
+    return bool(os.getenv(api_key_env))
+
+
+def list_api_key_env_names(prefix: str = API_KEY_ENV_PREFIX) -> list[str]:
+    names = [name for name in os.environ.keys() if name.startswith(prefix)]
+    names.sort()
+    return names

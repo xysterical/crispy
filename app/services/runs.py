@@ -22,7 +22,7 @@ from app.data.models import (
 from app.orchestrator.state_machine import STAGE_ORDER, next_stage
 from app.schemas.api import RunCreateRequest
 from app.schemas.contracts import ComplianceLevel, CreativeBlueprint, CreativeBundle, ResearchReport
-from app.services.agent_api_configs import resolve_agent_config
+from app.services.agent_api_configs import resolve_agent_config, resolve_agent_runtime
 
 
 runtime = AgentsRuntime()
@@ -251,6 +251,7 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
             run_provider=run.model_provider,
             run_model=run.model_name,
         )
+        runtime_config = resolve_agent_runtime(resolved)
         provider_name = resolved["provider_name"]
         model_name = resolved["model_name"]
         task.metadata_json = {**(task.metadata_json or {}), "agent_name": agent_name, "resolved_api": resolved}
@@ -262,6 +263,7 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
                 task.input_payload,
                 provider=provider_name,
                 model=model_name,
+                runtime_config=runtime_config,
             )
         elif task.stage_name == "ideation":
             research = ResearchReport.model_validate(task.input_payload["research"])
@@ -271,6 +273,7 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
                 variant_count=run.variant_count,
                 provider=provider_name,
                 model=model_name,
+                runtime_config=runtime_config,
             )
         elif task.stage_name == "generation":
             blueprint = CreativeBlueprint.model_validate(task.input_payload["blueprint"])
@@ -279,6 +282,7 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
                 blueprint,
                 provider=provider_name,
                 model=model_name,
+                runtime_config=runtime_config,
             )
         elif task.stage_name == "scoring":
             bundle = CreativeBundle.model_validate(task.input_payload["bundle"])
@@ -287,6 +291,7 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
                 bundle,
                 provider=provider_name,
                 model=model_name,
+                runtime_config=runtime_config,
             )
         else:
             raise ValueError(f"unknown stage: {task.stage_name}")

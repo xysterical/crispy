@@ -27,6 +27,24 @@ Open dashboard:
 - [http://localhost:8000](http://localhost:8000)
 - [http://localhost:8000/dashboard/agent-apis](http://localhost:8000/dashboard/agent-apis) for agent API config management
 
+## API Key env naming and zshrc setup
+- Crispy only auto-discovers API key env vars with prefix: `CRISPY_API_KEY_`.
+- In Agent API config page, `API Key Env` uses dropdown options from current shell environment and writes only the env var name to DB.
+- Real key values are never stored in DB.
+
+Example `~/.zshrc`:
+```bash
+# Crispy API keys (detected by /dashboard/agent-apis dropdown)
+export CRISPY_API_KEY_KIMI="your-kimi-key"
+export CRISPY_API_KEY_OPENAI="your-openai-key"
+export CRISPY_API_KEY_GEMINI="your-gemini-key"
+```
+
+Apply changes:
+```bash
+source ~/.zshrc
+```
+
 ## Key API endpoints
 - `GET /runs` list latest runs (dashboard feed)
 - `POST /runs` create a pipeline run
@@ -39,10 +57,12 @@ Open dashboard:
 - `GET /personas/{agent}` read persona markdown
 - `PATCH /personas/{agent}` update persona markdown + create audit version
 - `GET /agent-configs` list default + per-agent API configs
+- `GET /agent-configs/env-vars` list discovered env vars (`CRISPY_API_KEY_` prefix only)
 - `PATCH /agent-configs/{agent}` upsert per-agent API config (fallback to `default` if unset)
 
 ## Notes
 - Default provider is a local Kimi stub adapter for deterministic MVP behavior.
 - Persona files are structured as `personas/gm/gm_orchestrator.md` and `personas/stages/0x_*.md`.
+- API key security: only `api_key_env` names are stored; runtime reads values from system env.
 - Media assets are stored in local filesystem under `assets/<run_id>/`.
 - Current mode is single-user and no authentication.

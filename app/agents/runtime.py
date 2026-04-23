@@ -36,13 +36,28 @@ class AgentsRuntime:
         self.providers = ProviderRegistry()
         self.media = LocalMediaProvider()
 
-    def run_research(self, run_id: str, context: dict, *, provider: str, model: str) -> StageOutput:
+    def run_research(
+        self,
+        run_id: str,
+        context: dict,
+        *,
+        provider: str,
+        model: str,
+        runtime_config: dict | None = None,
+    ) -> StageOutput:
         prompt = (
             "Summarize US pet product market, audience pain points, competitor hooks "
             f"for campaign context: {context}"
         )
         llm = self.providers.get(provider)
-        response = llm.complete(prompt, model=model)
+        runtime_config = runtime_config or {}
+        response = llm.complete(
+            prompt,
+            model=model,
+            api_base_url=runtime_config.get("api_base_url"),
+            api_key=runtime_config.get("api_key"),
+            extra=runtime_config.get("extra"),
+        )
         report = ResearchReport(
             market_insights=[
                 "Pet owners prefer clinically-backed safety claims and practical daily-use messaging.",
@@ -80,10 +95,18 @@ class AgentsRuntime:
         variant_count: int,
         provider: str,
         model: str,
+        runtime_config: dict | None = None,
     ) -> StageOutput:
         prompt = f"Build ad hooks and hypotheses from research: {research.model_dump_json()}"
         llm = self.providers.get(provider)
-        response = llm.complete(prompt, model=model)
+        runtime_config = runtime_config or {}
+        response = llm.complete(
+            prompt,
+            model=model,
+            api_base_url=runtime_config.get("api_base_url"),
+            api_key=runtime_config.get("api_key"),
+            extra=runtime_config.get("extra"),
+        )
 
         hooks = [
             HookItem(angle="time-saving", hook="Cut cleanup time in half before work", target_emotion="relief"),
@@ -121,10 +144,18 @@ class AgentsRuntime:
         *,
         provider: str,
         model: str,
+        runtime_config: dict | None = None,
     ) -> StageOutput:
         prompt = f"Generate ad copy and media plan from blueprint: {blueprint.model_dump_json()}"
         llm = self.providers.get(provider)
-        response = llm.complete(prompt, model=model)
+        runtime_config = runtime_config or {}
+        response = llm.complete(
+            prompt,
+            model=model,
+            api_base_url=runtime_config.get("api_base_url"),
+            api_key=runtime_config.get("api_key"),
+            extra=runtime_config.get("extra"),
+        )
 
         copy_variants = []
         image_assets = []
@@ -189,10 +220,18 @@ class AgentsRuntime:
         *,
         provider: str,
         model: str,
+        runtime_config: dict | None = None,
     ) -> StageOutput:
         prompt = f"Evaluate quality and compliance for bundle: {bundle.model_dump_json()}"
         llm = self.providers.get(provider)
-        response = llm.complete(prompt, model=model)
+        runtime_config = runtime_config or {}
+        response = llm.complete(
+            prompt,
+            model=model,
+            api_base_url=runtime_config.get("api_base_url"),
+            api_key=runtime_config.get("api_key"),
+            extra=runtime_config.get("extra"),
+        )
 
         compliance_result = compliance_check(bundle)
         scorecard, forecast = score_bundle(bundle, compliance_result)
@@ -236,4 +275,3 @@ def make_fallback_forecast() -> ConversionForecast:
         drivers=["insufficient_data"],
         recommended_action="regenerate_with_full_input",
     )
-

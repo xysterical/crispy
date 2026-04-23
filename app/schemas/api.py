@@ -136,6 +136,7 @@ class AgentApiConfigView(BaseModel):
     model_name: str
     api_base_url: str | None = None
     api_key_env: str | None = None
+    api_key_available: bool = False
     extra: dict = Field(default_factory=dict)
     is_default: bool = False
     updated_at: datetime

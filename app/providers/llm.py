@@ -15,7 +15,15 @@ class LlmResponse:
 class LlmProvider:
     """Interface for text generation providers."""
 
-    def complete(self, prompt: str, *, model: str) -> LlmResponse:
+    def complete(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        api_base_url: str | None = None,
+        api_key: str | None = None,
+        extra: dict | None = None,
+    ) -> LlmResponse:
         raise NotImplementedError
 
 
@@ -25,7 +33,15 @@ class KimiStubProvider(LlmProvider):
     Replace with real Kimi API integration once credentials are available.
     """
 
-    def complete(self, prompt: str, *, model: str) -> LlmResponse:
+    def complete(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        api_base_url: str | None = None,
+        api_key: str | None = None,
+        extra: dict | None = None,
+    ) -> LlmResponse:
         snippet = prompt.strip().replace("\n", " ")[:280]
         text = f"[{model}] {snippet}"
         return LlmResponse(
@@ -43,4 +59,3 @@ class ProviderRegistry:
 
     def get(self, name: str) -> LlmProvider:
         return self._providers.get(name, self._providers["kimi"])
-
