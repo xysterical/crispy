@@ -12,3 +12,6 @@ wheels/
 # Local runtime artifacts
 assets/
 *.db
+
+# Else
+.DS_Store

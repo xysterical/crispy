@@ -125,3 +125,10 @@ def test_persona_read_and_patch(client):
     after = patch_resp.json()
     assert after["version"] >= before["version"]
     assert "Updated from dashboard" in after["content"]
+
+
+def test_persona_dashboard_page_loads(client):
+    resp = client.get("/dashboard/personas")
+    assert resp.status_code == 200
+    assert "Persona Board" in resp.text
+    assert "Back to Dashboard" in resp.text

@@ -348,7 +348,10 @@ def _dashboard_html() -> str:
           h2 { font-size: 20px; margin-bottom: 10px; }
           h3 { font-size: 15px; margin-bottom: 8px; }
           .subtitle { color: var(--muted); margin-top: 6px; font-size: 14px; }
-          .topbar { display:flex; justify-content:space-between; align-items:end; gap:12px; margin-bottom:14px; }
+          .topbar { margin-bottom: 14px; }
+          .top-actions { display:flex; gap:10px; flex-wrap: wrap; align-items: center; }
+          .top-divider { border-top: 1px solid #d8e4dc; margin: 12px 0; }
+          .data-source-block { width: min(620px, 100%); }
           .links { display:flex; gap:10px; flex-wrap: wrap; }
           a { color: var(--accent-dark); text-decoration: none; }
           a:hover { text-decoration: underline; }
@@ -470,17 +473,12 @@ def _dashboard_html() -> str:
             font-size: 12px;
           }
           summary { cursor: pointer; font-weight: 600; color: #2a5b4a; }
-          .persona-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
-          .persona-chip { border-radius: 999px; padding: 6px 10px; font-size: 12px; }
-          .persona-chip-gm { border-color: #8cbda6; background: #eaf7f1; color: #154a3b; font-weight: 700; }
-          .persona-divider { border-top: 1px dashed #c7dbce; margin: 2px 0 10px 0; }
           .status-msg { margin-top: 6px; font-size: 13px; font-weight: 600; }
           .status-ok { color: #1f7a62; }
           .status-error { color: var(--danger); }
           .run-detail-empty { padding: 12px; background: #f5faf6; border-radius: 10px; border: 1px dashed #c8dacd; }
           @media (max-width: 1140px) {
             .grid { grid-template-columns: 1fr; }
-            .topbar { align-items: flex-start; flex-direction: column; }
           }
           @media (max-width: 860px) {
             .app-shell { width: calc(100% - 12px); margin-top: 10px; }
@@ -500,11 +498,13 @@ def _dashboard_html() -> str:
             </div>
           </header>
           <div class="topbar">
-            <div class="links">
+            <div class="top-actions links">
               <a class="nav-link" href="/dashboard/agent-apis">Agent API Configs</a>
               <a class="nav-link" href="/dashboard/assets">Asset Library</a>
+              <a class="nav-link" href="/dashboard/personas">Personas</a>
             </div>
-            <div style="min-width: min(520px, 100%);">
+            <div class="top-divider"></div>
+            <div class="data-source-block">
               <label>Data Source</label>
               <select id="data-source-select" onchange="switchDataSource()"></select>
               <div id="data-source-path" class="muted mono"></div>
@@ -603,23 +603,13 @@ def _dashboard_html() -> str:
               <div id="create-msg" class="status-msg muted"></div>
             </section>
           </div>
-          <div class="grid" style="margin-top:18px;">
-            <section class="card">
-              <h2>Run Detail</h2>
-              <div id="run-detail" class="run-detail-empty">Select a run.</div>
-            </section>
-            <section class="card">
-              <h2>Persona Manager</h2>
-              <div id="persona-list"></div>
-              <textarea id="persona-content" rows="12" style="display:none"></textarea>
-              <button id="persona-save" style="display:none" onclick="savePersona()">Save Persona</button>
-              <div id="persona-msg" class="status-msg muted"></div>
-            </section>
-          </div>
+          <section class="card" style="margin-top:18px;">
+            <h2>Run Detail</h2>
+            <div id="run-detail" class="run-detail-empty">Select a run.</div>
+          </section>
         </main>
         <script>
           let currentRunId = null;
-          let currentPersona = null;
           let pipelineModes = [];
           let dataSources = [];
           let dataSourceSelectInFlight = false;
@@ -900,52 +890,6 @@ def _dashboard_html() -> str:
             await refreshRuns();
           }
 
-          async function loadPersonas(){
-            const list = await api("/personas");
-            const box = document.getElementById("persona-list");
-            const gm = list.find((p) => p.agent_name === "gm_orchestrator" || p.stage === "manager");
-            const others = list.filter((p) => !gm || p.agent_name !== gm.agent_name);
-            box.innerHTML = `
-              <div class="muted">Total agents: ${list.length}</div>
-              <div class="persona-chips" id="persona-gm-wrap"></div>
-              ${gm && others.length ? '<div class="persona-divider"></div>' : ''}
-              <div class="persona-chips" id="persona-other-wrap"></div>
-            `;
-            const gmWrap = document.getElementById("persona-gm-wrap");
-            const otherWrap = document.getElementById("persona-other-wrap");
-            const createPersonaButton = (p, extraClass = "") => {
-              const b = document.createElement("button");
-              b.textContent = `${p.display_name} (${p.stage})`;
-              b.className = `persona-chip ${extraClass}`.trim();
-              b.onclick = () => openPersona(p.agent_name);
-              return b;
-            };
-            if (gm) {
-              gmWrap.appendChild(createPersonaButton(gm, "persona-chip-gm"));
-            }
-            others.forEach((p) => {
-              otherWrap.appendChild(createPersonaButton(p));
-            });
-          }
-
-          async function openPersona(name){
-            const p = await api(`/personas/${name}`);
-            currentPersona = p.agent_name;
-            const area = document.getElementById("persona-content");
-            area.style.display = "block";
-            area.value = p.content;
-            document.getElementById("persona-save").style.display = "inline-block";
-          }
-
-          async function savePersona(){
-            if(!currentPersona) return;
-            const content = document.getElementById("persona-content").value;
-            await api(`/personas/${currentPersona}`, { method:"PATCH", body: JSON.stringify({content, changed_by:"dashboard_ui"})});
-            const msg = document.getElementById("persona-msg");
-            msg.className = "status-msg status-ok";
-            msg.textContent = `Saved ${currentPersona}`;
-          }
-
           refreshResearchHint();
           refreshPresetHint();
           loadPipelineModes();
@@ -959,8 +903,456 @@ def _dashboard_html() -> str:
               }
             }
           });
-          loadPersonas();
           setInterval(refreshRuns, 5000);
+        </script>
+      </body>
+    </html>
+    """
+
+
+def _personas_dashboard_html() -> str:
+    return """
+    <html>
+      <head>
+        <title>Crispy Personas</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style>
+          :root {
+            --bg: #f4f7f2;
+            --bg-alt: #e8f2f8;
+            --card: rgba(255, 255, 255, 0.92);
+            --text: #183329;
+            --muted: #5e6e66;
+            --line: #d8e5dc;
+            --accent: #1f7a62;
+            --accent-soft: #e7f6ef;
+            --radius: 16px;
+            --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          }
+          * { box-sizing: border-box; }
+          body {
+            margin: 0;
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            background:
+              radial-gradient(circle at 10% -20%, #d9ede6 0%, transparent 40%),
+              radial-gradient(circle at 90% -20%, #d8e9f6 0%, transparent 42%),
+              linear-gradient(180deg, var(--bg-alt), var(--bg) 30%);
+          }
+          .app-shell { width: min(1460px, calc(100% - 24px)); margin: 20px auto 30px auto; }
+          .hero {
+            display:flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            gap: 12px;
+            margin-bottom: 14px;
+          }
+          h1, h2, h3 { margin: 0; line-height: 1.25; }
+          h1 { font-size: 28px; letter-spacing: -0.02em; }
+          h2 { font-size: 20px; margin-bottom: 10px; }
+          .subtitle { margin-top: 6px; color: var(--muted); font-size: 14px; }
+          .card {
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 14px;
+            background: var(--card);
+            box-shadow: 0 8px 24px rgba(30, 62, 50, 0.07);
+            backdrop-filter: blur(4px);
+          }
+          .nav-link {
+            border: 1px solid var(--line);
+            background: #fff;
+            padding: 8px 12px;
+            border-radius: 999px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #135f4c;
+            text-decoration: none;
+            white-space: nowrap;
+          }
+          .filters { margin-bottom: 12px; }
+          .filters-row {
+            display: grid;
+            grid-template-columns: 1.4fr 1fr;
+            gap: 10px;
+          }
+          label { display: block; font-size: 12px; color: #3f5c52; margin-bottom: 5px; font-weight: 600; }
+          input, select, textarea {
+            width: 100%;
+            padding: 9px 10px;
+            border-radius: 10px;
+            border: 1px solid #c8d8ce;
+            background: #fff;
+            color: var(--text);
+            font-size: 14px;
+          }
+          input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(31, 122, 98, 0.16);
+          }
+          .workspace {
+            display: grid;
+            grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+            gap: 14px;
+            align-items: start;
+          }
+          .board {
+            display: grid;
+            grid-auto-flow: column;
+            grid-auto-columns: minmax(240px, 1fr);
+            gap: 12px;
+            overflow-x: auto;
+            padding-bottom: 6px;
+          }
+          .board-column {
+            border: 1px solid #dce9df;
+            border-radius: 12px;
+            background: #f8fbf9;
+            padding: 10px;
+            min-height: 380px;
+          }
+          .column-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            gap: 6px;
+          }
+          .column-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #356353;
+            font-weight: 700;
+          }
+          .count-pill {
+            border: 1px solid #c8ddd0;
+            border-radius: 999px;
+            background: #f2faf5;
+            color: #356353;
+            font-size: 11px;
+            padding: 1px 8px;
+            font-weight: 700;
+          }
+          .column-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+          }
+          .persona-card {
+            border: 1px solid #cfe0d5;
+            border-radius: 10px;
+            background: #fff;
+            width: 100%;
+            text-align: left;
+            padding: 10px;
+            cursor: pointer;
+          }
+          .persona-card:hover { background: #f7fcf9; }
+          .persona-card.active {
+            border-color: #7cb89f;
+            box-shadow: 0 0 0 2px rgba(31, 122, 98, 0.12);
+            background: var(--accent-soft);
+          }
+          .persona-name { font-weight: 700; margin-bottom: 3px; color: #1d4a3c; }
+          .persona-agent {
+            font-size: 11px;
+            color: #5b6e65;
+            font-family: var(--mono);
+            margin-bottom: 4px;
+          }
+          .persona-role {
+            font-size: 12px;
+            color: #3d5a50;
+            line-height: 1.35;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+          }
+          .empty {
+            border: 1px dashed #c8dacd;
+            border-radius: 10px;
+            padding: 14px;
+            text-align: center;
+            color: var(--muted);
+            background: #f9fcfa;
+            font-size: 13px;
+          }
+          .editor-meta { color: var(--muted); font-size: 12px; margin-bottom: 8px; line-height: 1.5; }
+          .editor-actions {
+            margin-top: 10px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+          }
+          button {
+            padding: 8px 12px;
+            border-radius: 10px;
+            border: 1px solid #bfd0c5;
+            background: #f4faf5;
+            color: #20473a;
+            font-weight: 600;
+            cursor: pointer;
+          }
+          button:hover { background: #eaf6ee; }
+          button.primary {
+            background: linear-gradient(135deg, var(--accent), #2d9d79);
+            border-color: #1b735b;
+            color: #fff;
+          }
+          button:disabled {
+            cursor: not-allowed;
+            opacity: 0.6;
+          }
+          .status-msg { font-size: 13px; font-weight: 600; }
+          .status-ok { color: #1f7a62; }
+          .status-error { color: #b64040; }
+          .status-warn { color: #8a6a28; font-weight: 500; }
+          @media (max-width: 1120px) {
+            .workspace { grid-template-columns: 1fr; }
+            .board { grid-auto-columns: minmax(220px, 1fr); }
+          }
+          @media (max-width: 860px) {
+            .app-shell { width: calc(100% - 12px); margin-top: 10px; }
+            .hero { flex-direction: column; align-items: flex-start; }
+            .filters-row { grid-template-columns: 1fr; }
+          }
+        </style>
+      </head>
+      <body>
+        <main class="app-shell">
+          <header class="hero">
+            <div>
+              <h1>Persona Board</h1>
+              <div class="subtitle">Notion-style board for agent persona tuning and versioned prompt edits.</div>
+            </div>
+            <a class="nav-link" href="/dashboard">Back to Dashboard</a>
+          </header>
+
+          <section class="card filters">
+            <div class="filters-row">
+              <div>
+                <label>Search Persona</label>
+                <input id="persona-search" placeholder="Search by display name, agent name, role, stage" />
+              </div>
+              <div>
+                <label>Stage Filter</label>
+                <select id="stage-filter">
+                  <option value="">All stages</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <div class="workspace">
+            <section class="card">
+              <h2>Board</h2>
+              <div id="persona-board" class="board"></div>
+            </section>
+            <section class="card">
+              <h2 id="editor-title">Select a persona card</h2>
+              <div id="editor-meta" class="editor-meta">Click any card to load persona markdown.</div>
+              <textarea id="persona-content" rows="22" placeholder="Select a persona from board first." disabled></textarea>
+              <div class="editor-actions">
+                <button id="persona-save" class="primary" onclick="savePersona()" disabled>Save Persona</button>
+                <span id="save-msg" class="status-msg"></span>
+              </div>
+            </section>
+          </div>
+        </main>
+        <script>
+          let personas = [];
+          let currentPersona = null;
+          let currentVersion = null;
+          let currentSourcePath = "";
+
+          const stageLabels = {
+            manager: "Manager",
+            research: "Research",
+            ideation: "Ideation",
+            generation: "Generation",
+            scoring: "Scoring",
+            global: "Global",
+            other: "Other",
+          };
+          const preferredStages = ["manager", "research", "ideation", "generation", "scoring", "global"];
+
+          function esc(v){
+            return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
+          }
+          function toStage(v){
+            const stage = String(v || "").trim().toLowerCase();
+            return stage || "other";
+          }
+          function stageLabel(stage){
+            return stageLabels[stage] || stage.replaceAll("_", " ");
+          }
+          function stageOrder(rows){
+            const stages = Array.from(new Set(rows.map((p) => toStage(p.stage))));
+            const known = preferredStages.filter((s) => stages.includes(s));
+            const rest = stages.filter((s) => !known.includes(s)).sort((a, b) => a.localeCompare(b));
+            return [...known, ...rest];
+          }
+          function grouped(rows){
+            const byStage = {};
+            stageOrder(rows).forEach((stage) => { byStage[stage] = []; });
+            rows.forEach((item) => {
+              const stage = toStage(item.stage);
+              if (!byStage[stage]) byStage[stage] = [];
+              byStage[stage].push(item);
+            });
+            Object.values(byStage).forEach((items) => {
+              items.sort((a, b) => (a.order ?? 9999) - (b.order ?? 9999));
+            });
+            return byStage;
+          }
+          async function api(path, options = {}) {
+            const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+            if (!res.ok) throw new Error(await res.text());
+            return res.json();
+          }
+          function updateStageFilterOptions(rows){
+            const sel = document.getElementById("stage-filter");
+            const prev = sel.value;
+            const stages = stageOrder(rows);
+            sel.innerHTML = '<option value="">All stages</option>';
+            stages.forEach((stage) => {
+              const opt = document.createElement("option");
+              opt.value = stage;
+              opt.textContent = stageLabel(stage);
+              sel.appendChild(opt);
+            });
+            sel.value = stages.includes(prev) ? prev : "";
+          }
+          function renderBoard(){
+            const search = document.getElementById("persona-search").value.trim().toLowerCase();
+            const stageFilter = document.getElementById("stage-filter").value;
+            const filtered = personas.filter((p) => {
+              const hit = !search || [
+                p.display_name,
+                p.agent_name,
+                p.stage,
+                p.role,
+              ].join(" ").toLowerCase().includes(search);
+              const stageHit = !stageFilter || toStage(p.stage) === stageFilter;
+              return hit && stageHit;
+            });
+            const board = document.getElementById("persona-board");
+            if (!filtered.length) {
+              board.innerHTML = '<div class="empty">No personas match current filters.</div>';
+              return;
+            }
+            const byStage = grouped(filtered);
+            const columns = Object.entries(byStage)
+              .map(([stage, items]) => {
+                const cards = items
+                  .map((p) => `
+                    <button class="persona-card ${currentPersona === p.agent_name ? "active" : ""}" onclick="openPersona('${esc(p.agent_name)}')">
+                      <div class="persona-name">${esc(p.display_name || p.agent_name)}</div>
+                      <div class="persona-agent">${esc(p.agent_name)}</div>
+                      <div class="persona-role">${esc(p.role || "-")}</div>
+                    </button>
+                  `)
+                  .join("");
+                return `
+                  <article class="board-column">
+                    <div class="column-head">
+                      <div class="column-title">${esc(stageLabel(stage))}</div>
+                      <span class="count-pill">${items.length}</span>
+                    </div>
+                    <div class="column-list">${cards}</div>
+                  </article>
+                `;
+              })
+              .join("");
+            board.innerHTML = columns;
+          }
+          async function openPersona(agentName){
+            try {
+              const p = await api(`/personas/${agentName}`);
+              currentPersona = p.agent_name;
+              currentVersion = p.version;
+              currentSourcePath = p.source_path || "";
+              document.getElementById("editor-title").textContent = `${p.display_name} (${p.stage})`;
+              document.getElementById("editor-meta").innerHTML =
+                `agent: <code>${esc(p.agent_name)}</code> | version: <code>${esc(p.version)}</code><br/>source: <code>${esc(currentSourcePath)}</code>`;
+              const area = document.getElementById("persona-content");
+              area.disabled = false;
+              area.value = p.content || "";
+              document.getElementById("persona-save").disabled = false;
+              document.getElementById("save-msg").textContent = "";
+              document.getElementById("save-msg").className = "status-msg";
+              renderBoard();
+              const target = `/dashboard/personas?agent=${encodeURIComponent(agentName)}`;
+              if (window.location.pathname + window.location.search !== target) {
+                history.replaceState({}, "", target);
+              }
+            } catch (err) {
+              const msg = document.getElementById("save-msg");
+              msg.className = "status-msg status-error";
+              msg.textContent = `Load failed: ${err.message || err}`;
+            }
+          }
+          async function savePersona(){
+            if (!currentPersona) return;
+            const msg = document.getElementById("save-msg");
+            msg.className = "status-msg";
+            msg.textContent = "Saving...";
+            try {
+              const content = document.getElementById("persona-content").value;
+              const updated = await api(`/personas/${currentPersona}`, {
+                method: "PATCH",
+                body: JSON.stringify({ content, changed_by: "dashboard_personas_ui" }),
+              });
+              currentVersion = updated.version;
+              currentSourcePath = updated.source_path || currentSourcePath;
+              document.getElementById("editor-meta").innerHTML =
+                `agent: <code>${esc(updated.agent_name)}</code> | version: <code>${esc(updated.version)}</code><br/>source: <code>${esc(currentSourcePath)}</code>`;
+              msg.className = "status-msg status-ok";
+              msg.textContent = `Saved ${updated.agent_name} (v${updated.version})`;
+            } catch (err) {
+              msg.className = "status-msg status-error";
+              msg.textContent = `Save failed: ${err.message || err}`;
+            }
+          }
+          async function init(){
+            try {
+              personas = await api("/personas");
+              updateStageFilterOptions(personas);
+              renderBoard();
+              const params = new URLSearchParams(window.location.search);
+              const target = params.get("agent");
+              if (target && personas.some((p) => p.agent_name === target)) {
+                await openPersona(target);
+                return;
+              }
+              const gm = personas.find((p) => p.agent_name === "gm_orchestrator");
+              if (gm) {
+                await openPersona(gm.agent_name);
+              }
+            } catch (err) {
+              const board = document.getElementById("persona-board");
+              board.innerHTML = `<div class="empty">Failed to load personas: ${esc(err.message || err)}</div>`;
+            }
+          }
+          document.getElementById("persona-search").addEventListener("input", renderBoard);
+          document.getElementById("stage-filter").addEventListener("change", renderBoard);
+          document.getElementById("persona-content").addEventListener("input", () => {
+            if (!currentPersona) return;
+            const msg = document.getElementById("save-msg");
+            msg.className = "status-msg status-warn";
+            msg.textContent = "Unsaved changes";
+          });
+          document.addEventListener("keydown", (event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+              event.preventDefault();
+              savePersona();
+            }
+          });
+          init();
         </script>
       </body>
     </html>
@@ -1466,6 +1858,11 @@ def dashboard_page() -> str:
 @router.get("/dashboard/assets", response_class=HTMLResponse)
 def dashboard_assets_page() -> str:
     return _assets_dashboard_html()
+
+
+@router.get("/dashboard/personas", response_class=HTMLResponse)
+def dashboard_personas_page() -> str:
+    return _personas_dashboard_html()
 
 
 @router.get("/dashboard/data-sources", response_model=DataSourceListResponse)
