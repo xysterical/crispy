@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from app.data.models import PipelineRun, StageTask
+from app.agents.registry import stage_agent
+from app.data.models import Artifact, PipelineRun, StageTask
 from app.data.session import get_db
+from app.orchestrator.state_machine import PIPELINE_STAGE_PLANS, PipelineMode
 from app.schemas.api import (
     AgentApiConfigPatchRequest,
     AgentApiConfigView,
+    DeliverablesResponse,
     FeedbackImportRequest,
     FeedbackImportResponse,
     LeaderboardItem,
@@ -19,11 +22,13 @@ from app.schemas.api import (
     PersonaMeta,
     PersonaPatchRequest,
     PersonaView,
+    PipelineModeView,
     ReviewActionRequest,
     RunCreateRequest,
     RunSummary,
     RunView,
     StageTaskView,
+    VariantsResponse,
 )
 from app.schemas.contracts import ComplianceLevel, ConversionForecast, ScoreCard
 from app.services.agent_api_configs import (
@@ -34,17 +39,48 @@ from app.services.agent_api_configs import (
     upsert_agent_config,
 )
 from app.services.feedback import import_feedback_rows, project_leaderboard
+from app.services.intake_assets import process_uploaded_payloads
 from app.services.personas import get_persona, list_persona_catalog, persona_info, update_persona
-from app.services.runs import approve_stage, create_run, get_run, latest_scorecard, reject_stage
+from app.services.runs import (
+    approve_stage,
+    create_run,
+    get_run,
+    latest_scorecard,
+    reject_stage,
+    run_deliverables,
+    run_variants,
+)
 
 
 router = APIRouter()
 
 
+def _load_json_list(raw: str | None, field_name: str) -> list:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"invalid json for {field_name}") from exc
+    if not isinstance(parsed, list):
+        raise HTTPException(status_code=400, detail=f"{field_name} must be a JSON list")
+    return parsed
+
+
+def _load_json_dict(raw: str | None, field_name: str) -> dict:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"invalid json for {field_name}") from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail=f"{field_name} must be a JSON object")
+    return parsed
+
+
 def _serialize_run(db: Session, run: PipelineRun) -> RunView:
-    tasks = db.scalars(
-        select(StageTask).where(StageTask.run_id == run.id).order_by(StageTask.created_at.asc())
-    ).all()
+    tasks = db.scalars(select(StageTask).where(StageTask.run_id == run.id).order_by(StageTask.created_at.asc())).all()
     task_views = [
         StageTaskView(
             id=task.id,
@@ -87,6 +123,11 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
         locale=run.locale,
         model_provider=run.model_provider,
         model_name=run.model_name,
+        pipeline_mode=run.pipeline_mode,
+        enable_research=run.enable_research,
+        manual_research_brief=run.manual_research_brief or "",
+        business_context=run.business_context or {},
+        category_tags=run.category_tags or [],
         budget_used=run.budget_used,
         variant_count=run.variant_count,
         created_at=run.created_at,
@@ -97,79 +138,122 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
     )
 
 
+def _pipeline_mode_views() -> list[PipelineModeView]:
+    labels = {
+        PipelineMode.COPY_IMAGE_ONLY.value: "Copy + Image",
+        PipelineMode.VIDEO_ONLY.value: "Video",
+        PipelineMode.FULL_MULTIMODAL.value: "Full Multimodal",
+    }
+    views: list[PipelineModeView] = []
+    for mode, stages in PIPELINE_STAGE_PLANS.items():
+        ordered_agents: list[str] = []
+        for stage in stages:
+            agent = stage_agent(stage)
+            if agent not in ordered_agents:
+                ordered_agents.append(agent)
+        views.append(
+            PipelineModeView(
+                mode=mode,
+                display_name=labels.get(mode, mode),
+                stages=stages,
+                agents=ordered_agents,
+                agent_count=len(ordered_agents),
+            )
+        )
+    return views
+
+
 def _dashboard_html() -> str:
     return """
     <html>
       <head>
         <title>Crispy Dashboard</title>
         <style>
-          body { font-family: ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; color: #1a1d21; background:#fafbfc; }
-          .grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; align-items: start; }
+          body { font-family: ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; color: #1a1d21; background:#f7f9fc; }
+          .grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 18px; align-items: start; }
           .card { border: 1px solid #d9dce1; border-radius: 12px; padding: 16px; background: #fff; }
-          h1, h2, h3 { margin-top: 0; }
           table { width: 100%; border-collapse: collapse; font-size: 13px; }
           th, td { border-bottom: 1px solid #eceef2; padding: 8px; text-align: left; vertical-align: top; }
-          button { margin-right: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid #bbc2cc; background: #f7f9fc; cursor: pointer; }
-          textarea, input { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #c8cfda; margin: 4px 0 10px 0; box-sizing: border-box; background: #fff; }
-          label { display:block; font-size:12px; color:#334155; margin-top:6px; font-weight:600; }
+          textarea, input, select { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #c8cfda; margin: 4px 0 10px 0; box-sizing: border-box; background: #fff; }
+          button { padding: 8px 12px; border-radius: 8px; border: 1px solid #bcc4cf; background: #f4f7fb; cursor: pointer; }
           .muted { color: #5a6270; font-size: 12px; }
-          .pill { display: inline-block; border-radius: 999px; padding: 2px 8px; font-size: 11px; background: #edf3ff; margin-right: 6px; }
-          .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+          .detail-scroll { max-height: 640px; overflow-y: auto; border:1px solid #eef1f5; border-radius: 10px; padding: 10px; background:#fdfefe; }
           .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-          .actions { margin: 10px 0; }
-          .detail-scroll { max-height: 560px; overflow-y: auto; border:1px solid #eef1f5; border-radius: 10px; padding: 10px; background:#fdfefe; }
-          .run-summary { border:1px solid #edf2f7; border-radius:8px; padding:8px 10px; margin-bottom:10px; background:#f8fafc; }
-          .log-item { border:1px solid #e6ebf0; border-radius:10px; padding:10px; margin-bottom:10px; background:#fff; }
-          .log-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
-          .log-meta { color:#4b5563; font-size:12px; margin:2px 0; }
-          .status { border-radius:999px; padding:2px 8px; font-size:11px; text-transform:uppercase; font-weight:600; }
-          .status-running { background:#fff7ed; color:#9a3412; }
-          .status-waiting_review { background:#eff6ff; color:#1d4ed8; }
-          .status-approved, .status-completed { background:#ecfdf5; color:#047857; }
-          .status-rejected, .status-failed { background:#fef2f2; color:#b91c1c; }
-          .status-queued, .status-draft { background:#f3f4f6; color:#374151; }
-          details summary { cursor:pointer; color:#1f4f99; margin-top:6px; }
-          pre { white-space: pre-wrap; word-break: break-word; margin:8px 0 0 0; }
+          .stage-card { border: 1px solid #e8edf4; border-radius: 10px; padding: 10px; margin-bottom: 10px; background: #fff; }
+          .stage-title { font-weight: 600; margin-bottom: 6px; }
+          .pill { display:inline-block; padding:2px 8px; border-radius:20px; font-size:12px; border:1px solid #d6deea; margin-right:6px; }
+          .hint { padding: 8px 10px; border: 1px solid #e8edf4; border-radius: 8px; background: #f9fbff; margin-bottom: 8px; }
         </style>
       </head>
       <body>
         <h1>Crispy Dashboard</h1>
-        <p class="muted">半自动可验证 MVP：四阶段人工闸门 + 反馈闭环。Agent API 配置页: <a href="/dashboard/agent-apis">/dashboard/agent-apis</a></p>
+        <p class="muted">Create run now uses multipart upload and supports mode-specific pipelines. Agent API config: <a href="/dashboard/agent-apis">/dashboard/agent-apis</a></p>
         <div class="grid">
           <section class="card">
             <h2>Runs</h2>
-            <div class="actions">
+            <div style="margin-bottom:10px;">
               <button onclick="refreshRuns()">Refresh</button>
-              <button onclick="advanceRun()">Advance Current Stage</button>
-              <button onclick="rejectRun()">Reject Current Stage</button>
+              <button onclick="advanceRun()">Advance</button>
+              <button onclick="rejectRun()">Reject</button>
             </div>
             <table>
-              <thead><tr><th>Run ID</th><th>Status</th><th>Stage</th><th>Updated</th></tr></thead>
+              <thead><tr><th>Run ID</th><th>Status</th><th>Stage</th><th>Mode</th><th>Updated</th></tr></thead>
               <tbody id="runs-body"></tbody>
             </table>
           </section>
           <section class="card">
             <h2>Create Run</h2>
             <form onsubmit="createRun(event)">
-              <label for="workspace_name">Workspace Name</label>
-              <input id="workspace_name" placeholder="workspace_name" value="workspace_demo" />
-              <label for="project_name">Project Name</label>
-              <input id="project_name" placeholder="project_name" value="project_demo" />
-              <label for="product_name">Product Name</label>
-              <input id="product_name" placeholder="product_name" value="pet_product" />
-              <label for="campaign_name">Campaign Name</label>
-              <input id="campaign_name" placeholder="campaign_name" value="meta_campaign_1" />
               <div class="row">
-                <div>
-                  <label for="model_provider">Default Provider</label>
-                  <input id="model_provider" placeholder="model_provider" value="kimi" />
-                </div>
-                <div>
-                  <label for="model_name">Default Model</label>
-                  <input id="model_name" placeholder="model_name" value="kimi-default-text" />
-                </div>
+                <div><label>Workspace</label><input id="workspace_name" value="workspace_demo" /></div>
+                <div><label>Project</label><input id="project_name" value="project_demo" /></div>
               </div>
-              <button type="submit">Create</button>
+              <div class="row">
+                <div><label>Product</label><input id="product_name" value="dog leash" /></div>
+                <div><label>Campaign</label><input id="campaign_name" value="meta_dog_leash_1" /></div>
+              </div>
+              <div class="row">
+                <div><label>Pipeline Mode</label><select id="pipeline_mode"></select></div>
+                <div><label>Variant Count</label><input id="variant_count" type="number" min="1" max="16" value="8" /></div>
+              </div>
+              <div id="mode-summary" class="hint muted">Loading pipeline modes...</div>
+              <div class="row">
+                <div><label>Provider</label><input id="model_provider" value="openai" /></div>
+                <div><label>Model</label><input id="model_name" value="gpt-4.1" /></div>
+              </div>
+              <div class="row">
+                <div><label>Channel</label><input id="channel" value="meta" /></div>
+                <div><label>Objective</label><input id="objective" value="conversions" /></div>
+              </div>
+              <label>Product Description</label>
+              <textarea id="product_description" rows="3" placeholder="What is the product, who uses it, and why it matters."></textarea>
+              <div class="row">
+                <div><label>Target Audience</label><input id="target_audience" value="dog owners in US cities" /></div>
+                <div><label>Price Range</label><input id="price_range" placeholder="$19.99 - $29.99" /></div>
+              </div>
+              <label>Key Value Props (comma separated)</label>
+              <input id="key_value_props" value="hands-free walking,anti-pull comfort,durable nylon" />
+              <div class="row">
+                <div><label>Primary CTA</label><input id="primary_cta" value="Shop Now" /></div>
+                <div><label>Campaign Goal</label><input id="campaign_goal" value="purchase" /></div>
+              </div>
+              <label>Category Tags (comma separated)</label>
+              <input id="category_tags" value="pet_accessories,dog" />
+              <label>Reference URLs (one per line)</label>
+              <textarea id="url_references" rows="2" placeholder="https://example.com/product"></textarea>
+              <label>Research Source</label>
+              <select id="research_mode" onchange="refreshResearchHint()">
+                <option value="manual_validated" selected>Use my validated research (Default)</option>
+                <option value="autonomous_web">Run autonomous web research</option>
+              </select>
+              <div id="research-hint" class="hint muted"></div>
+              <label>Validated Research Notes (optional)</label>
+              <textarea id="manual_research_brief" rows="3" placeholder="Paste your manually validated market notes, claims boundaries, and competitor findings."></textarea>
+              <label>Advanced Business Context JSON (optional)</label>
+              <textarea id="business_context_extra" rows="3" placeholder='{"landing_page_angle":"premium utility","seasonality":"spring"}'></textarea>
+              <label>Upload Product Inputs (max 10 files, 50MB each, 200MB total)</label>
+              <input id="input_files" type="file" multiple accept=".csv,.xlsx,.png,.jpg,.jpeg,.webp,.mp4,.mov,.m4v" />
+              <button type="submit">Create Run</button>
             </form>
             <div id="create-msg" class="muted"></div>
           </section>
@@ -177,51 +261,30 @@ def _dashboard_html() -> str:
         <div class="grid" style="margin-top:20px;">
           <section class="card">
             <h2>Run Detail</h2>
-            <div id="run-detail" class="mono detail-scroll">Select a run to inspect stage logs.</div>
+            <div id="run-detail" class="detail-scroll">Select a run.</div>
           </section>
           <section class="card">
             <h2>Persona Manager</h2>
-            <div id="persona-list" class="muted">Loading personas...</div>
-            <div id="persona-editor" style="margin-top:10px; display:none;">
-              <div class="muted" id="persona-meta"></div>
-              <textarea id="persona-content" rows="14"></textarea>
-              <button onclick="savePersona()">Save Persona</button>
-            </div>
+            <div id="persona-list"></div>
+            <textarea id="persona-content" rows="12" style="display:none"></textarea>
+            <button id="persona-save" style="display:none" onclick="savePersona()">Save Persona</button>
           </section>
         </div>
         <script>
           let currentRunId = null;
           let currentPersona = null;
+          let pipelineModes = [];
 
-          function esc(value) {
-            return String(value ?? "")
-              .replaceAll("&", "&amp;")
-              .replaceAll("<", "&lt;")
-              .replaceAll(">", "&gt;");
-          }
-
-          function statusBadge(status) {
-            const safe = esc(status || "unknown");
-            return `<span class="status status-${safe}">${safe}</span>`;
-          }
-
-          function prettyTime(value) {
-            if (!value) return "-";
-            try { return new Date(value).toLocaleString(); } catch { return value; }
-          }
-
-          function truncateJson(value, maxLen = 1800) {
-            const text = JSON.stringify(value || {}, null, 2);
-            if (text.length <= maxLen) return text;
-            return `${text.slice(0, maxLen)}\\n...<truncated>`;
+          function esc(v){ return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
+          function toList(raw){ return String(raw || "").split(",").map(s => s.trim()).filter(Boolean); }
+          function parseJsonObject(raw){
+            if (!raw || !raw.trim()) return {};
+            try { return JSON.parse(raw); } catch (_e) { throw new Error("Advanced Business Context JSON is invalid."); }
           }
 
           async function api(path, options = {}) {
             const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
-            if (!res.ok) {
-              const txt = await res.text();
-              throw new Error(txt || res.statusText);
-            }
+            if (!res.ok) { throw new Error(await res.text()); }
             return res.headers.get("content-type")?.includes("application/json") ? res.json() : res.text();
           }
 
@@ -231,125 +294,173 @@ def _dashboard_html() -> str:
             body.innerHTML = "";
             rows.forEach((r) => {
               const tr = document.createElement("tr");
-              tr.innerHTML = `<td><a href="#" onclick="selectRun('${r.id}');return false;">${r.id.slice(0, 8)}</a></td>
-                              <td>${statusBadge(r.status)}</td><td>${esc(r.current_stage || "-")}</td><td>${prettyTime(r.updated_at)}</td>`;
+              tr.innerHTML = `<td><a href="#" onclick="selectRun('${r.id}');return false;">${r.id.slice(0,8)}</a></td><td>${esc(r.status)}</td><td>${esc(r.current_stage||"-")}</td><td>${esc(r.pipeline_mode)}</td><td>${esc(r.updated_at)}</td>`;
               body.appendChild(tr);
             });
           }
 
-          function renderRunDetail(run) {
-            const score = run.latest_scorecard?.total_score;
-            const conf = run.latest_forecast?.confidence_0_1;
-            const summary = `
-              <div class="run-summary">
-                <div><b>Run:</b> ${esc(run.id)} | <b>Status:</b> ${statusBadge(run.status)} | <b>Current Stage:</b> ${esc(run.current_stage || "-")}</div>
-                <div class="log-meta"><b>Budget Used:</b> ${esc(run.budget_used)} | <b>Variant Count:</b> ${esc(run.variant_count)} | <b>Updated:</b> ${prettyTime(run.updated_at)}</div>
-                <div class="log-meta"><b>Score:</b> ${score ?? "-"} | <b>Forecast Confidence:</b> ${conf ?? "-"}</div>
-              </div>`;
-
-            const logs = (run.stage_tasks || []).map((task) => {
-              const resolved = task.metadata_json?.resolved_api || {};
-              const outputText = esc(truncateJson(task.output_payload));
-              const review = task.review_notes ? `<div class="log-meta"><b>Review:</b> ${esc(task.review_notes)}</div>` : "";
-              const err = task.error_message ? `<div class="log-meta"><b>Error:</b> ${esc(task.error_message)}</div>` : "";
-              const keyState = resolved.api_key_env
-                ? `<div class="log-meta"><b>API Key Env:</b> ${esc(resolved.api_key_env)} (${resolved.api_key_available ? "found" : "missing"})</div>`
-                : `<div class="log-meta"><b>API Key Env:</b> -</div>`;
+          function renderRunDetail(run){
+            const stageHtml = run.stage_tasks.map((task) => {
+              const agent = task.metadata_json?.agent_name || "-";
               return `
-                <article class="log-item">
-                  <div class="log-head">
-                    <div><b>${esc(task.stage_name).toUpperCase()}</b> #${esc(task.attempt)}</div>
-                    <div>${statusBadge(task.status)}</div>
+                <article class="stage-card">
+                  <div class="stage-title">${esc(task.stage_name)}</div>
+                  <div>
+                    <span class="pill">status: ${esc(task.status)}</span>
+                    <span class="pill">attempt: ${esc(task.attempt)}</span>
+                    <span class="pill">agent: ${esc(agent)}</span>
                   </div>
-                  <div class="log-meta"><b>Start:</b> ${prettyTime(task.started_at)} | <b>End:</b> ${prettyTime(task.completed_at)}</div>
-                  <div class="log-meta"><b>Provider/Model:</b> ${esc(resolved.provider_name || "-")} / ${esc(resolved.model_name || "-")} (${esc(resolved.source || "run_default")})</div>
-                  ${keyState}
-                  ${review}
-                  ${err}
+                  <div class="muted">started: ${esc(task.started_at || "-")} | completed: ${esc(task.completed_at || "-")}</div>
+                  <div class="muted">review: ${esc(task.review_notes || "-")}</div>
                   <details>
-                    <summary>Stage Output (truncated)</summary>
-                    <pre>${outputText}</pre>
+                    <summary>Output JSON</summary>
+                    <pre>${esc(JSON.stringify(task.output_payload || {}, null, 2))}</pre>
                   </details>
-                </article>`;
+                </article>
+              `;
             }).join("");
-            return summary + logs;
+            const score = run.latest_scorecard ? `<pre>${esc(JSON.stringify(run.latest_scorecard, null, 2))}</pre>` : `<span class="muted">No score yet.</span>`;
+            return `
+              <div style="margin-bottom:12px;">
+                <div><b>Run:</b> ${esc(run.id)}</div>
+                <div><span class="pill">status: ${esc(run.status)}</span><span class="pill">stage: ${esc(run.current_stage || "-")}</span><span class="pill">mode: ${esc(run.pipeline_mode)}</span></div>
+                <div class="muted">provider/model: ${esc(run.model_provider)} / ${esc(run.model_name)} | budget: ${esc(run.budget_used)}</div>
+              </div>
+              <h3>Stage Logs</h3>
+              ${stageHtml || '<span class="muted">No stage logs.</span>'}
+              <h3>Latest Scorecard</h3>
+              ${score}
+            `;
           }
 
-          async function selectRun(runId, preserveScroll = false) {
+          async function selectRun(runId){
             currentRunId = runId;
             const run = await api(`/runs/${runId}`);
-            const panel = document.getElementById("run-detail");
-            const shouldStickBottom = preserveScroll || Math.abs((panel.scrollHeight - panel.scrollTop - panel.clientHeight)) < 24;
-            panel.innerHTML = renderRunDetail(run);
-            if (shouldStickBottom) {
-              panel.scrollTop = panel.scrollHeight;
+            document.getElementById("run-detail").innerHTML = renderRunDetail(run);
+          }
+
+          async function loadPipelineModes(){
+            pipelineModes = await api("/pipeline-modes");
+            const sel = document.getElementById("pipeline_mode");
+            sel.innerHTML = "";
+            pipelineModes.forEach((m) => {
+              const opt = document.createElement("option");
+              opt.value = m.mode;
+              opt.textContent = `${m.display_name} (${m.agent_count} agents)`;
+              if (m.mode === "copy_image_only") opt.selected = true;
+              sel.appendChild(opt);
+            });
+            sel.onchange = refreshModeHint;
+            refreshModeHint();
+          }
+
+          function refreshModeHint(){
+            const mode = document.getElementById("pipeline_mode").value;
+            const chosen = pipelineModes.find((m) => m.mode === mode);
+            if (!chosen) return;
+            const text = `Stages: ${chosen.stages.join(" -> ")} | Active agents (${chosen.agent_count}): ${chosen.agents.join(", ")}`;
+            document.getElementById("mode-summary").textContent = text;
+          }
+
+          function refreshResearchHint(){
+            const mode = document.getElementById("research_mode").value;
+            const hint = document.getElementById("research-hint");
+            if (mode === "autonomous_web") {
+              hint.textContent = "Autonomous web research will run in planning and may be slower due to online fetches.";
+            } else {
+              hint.textContent = "Planning will rely on your manual notes and uploaded assets only (recommended for fast debugging).";
             }
           }
 
-          async function createRun(event) {
+          async function createRun(event){
             event.preventDefault();
-            const payload = {
-              workspace_name: document.getElementById("workspace_name").value,
-              project_name: document.getElementById("project_name").value,
-              product_name: document.getElementById("product_name").value,
-              campaign_name: document.getElementById("campaign_name").value,
-              model_provider: document.getElementById("model_provider").value,
-              model_name: document.getElementById("model_name").value,
-            };
-            const run = await api("/runs", { method: "POST", body: JSON.stringify(payload) });
-            document.getElementById("create-msg").textContent = `Created run ${run.id}`;
-            await refreshRuns();
-            await selectRun(run.id);
+            try {
+              const businessContext = {
+                product_description: document.getElementById("product_description").value,
+                target_audience: document.getElementById("target_audience").value,
+                key_value_props: toList(document.getElementById("key_value_props").value),
+                primary_cta: document.getElementById("primary_cta").value,
+                campaign_objective: document.getElementById("campaign_goal").value,
+                price_range: document.getElementById("price_range").value,
+                ...parseJsonObject(document.getElementById("business_context_extra").value),
+              };
+              const urlReferences = document.getElementById("url_references").value.split("\\n").map(s => s.trim()).filter(Boolean);
+              const payload = new FormData();
+              payload.append("workspace_name", document.getElementById("workspace_name").value);
+              payload.append("project_name", document.getElementById("project_name").value);
+              payload.append("product_name", document.getElementById("product_name").value);
+              payload.append("campaign_name", document.getElementById("campaign_name").value);
+              payload.append("channel", document.getElementById("channel").value);
+              payload.append("objective", document.getElementById("objective").value);
+              payload.append("model_provider", document.getElementById("model_provider").value);
+              payload.append("model_name", document.getElementById("model_name").value);
+              payload.append("pipeline_mode", document.getElementById("pipeline_mode").value);
+              payload.append("variant_count", String(Number(document.getElementById("variant_count").value || 8)));
+              payload.append("category_tags", JSON.stringify(toList(document.getElementById("category_tags").value)));
+              payload.append("url_references", JSON.stringify(urlReferences));
+              payload.append("enable_research", document.getElementById("research_mode").value === "autonomous_web" ? "true" : "false");
+              payload.append("manual_research_brief", document.getElementById("manual_research_brief").value);
+              payload.append("business_context", JSON.stringify(businessContext));
+              const files = document.getElementById("input_files").files;
+              for (let i = 0; i < files.length; i++) payload.append("files", files[i]);
+              const resp = await fetch("/runs/rich", { method: "POST", body: payload });
+              if (!resp.ok) throw new Error(await resp.text());
+              const run = await resp.json();
+              document.getElementById("create-msg").textContent = `Created run ${run.id} (${run.pipeline_mode})`;
+              await refreshRuns();
+              await selectRun(run.id);
+            } catch (err) {
+              document.getElementById("create-msg").textContent = `Create failed: ${err.message || err}`;
+            }
           }
 
-          async function advanceRun() {
-            if (!currentRunId) return;
-            await api(`/runs/${currentRunId}/advance`, { method: "POST", body: JSON.stringify({ notes: "approved_in_dashboard" }) });
+          async function advanceRun(){
+            if(!currentRunId) return;
+            await api(`/runs/${currentRunId}/advance`, { method:"POST", body: JSON.stringify({notes:"approved"})});
             await selectRun(currentRunId);
             await refreshRuns();
           }
 
-          async function rejectRun() {
-            if (!currentRunId) return;
-            await api(`/runs/${currentRunId}/reject`, { method: "POST", body: JSON.stringify({ notes: "rejected_in_dashboard" }) });
+          async function rejectRun(){
+            if(!currentRunId) return;
+            await api(`/runs/${currentRunId}/reject`, { method:"POST", body: JSON.stringify({notes:"rejected"})});
             await selectRun(currentRunId);
             await refreshRuns();
           }
 
-          async function loadPersonas() {
+          async function loadPersonas(){
             const list = await api("/personas");
-            const container = document.getElementById("persona-list");
-            container.innerHTML = "";
-            list.forEach((p) => {
-              const btn = document.createElement("button");
-              btn.textContent = `${p.display_name} (${p.stage})`;
-              btn.onclick = () => openPersona(p.agent_name);
-              container.appendChild(btn);
+            const box = document.getElementById("persona-list");
+            box.innerHTML = `<div class="muted">Total agents: ${list.length}</div>`;
+            list.forEach((p)=>{
+              const b=document.createElement("button");
+              b.textContent=`${p.display_name} (${p.stage})`;
+              b.style.margin = "4px 6px 4px 0";
+              b.onclick=()=>openPersona(p.agent_name);
+              box.appendChild(b);
             });
           }
 
-          async function openPersona(agentName) {
-            const p = await api(`/personas/${agentName}`);
+          async function openPersona(name){
+            const p = await api(`/personas/${name}`);
             currentPersona = p.agent_name;
-            document.getElementById("persona-editor").style.display = "block";
-            document.getElementById("persona-meta").innerHTML =
-              `<span class="pill">${p.display_name || p.agent_name}</span><span class="pill">v${p.version}</span><span class="pill">${p.stage || "n/a"}</span>`;
-            document.getElementById("persona-content").value = p.content;
+            const area = document.getElementById("persona-content");
+            area.style.display = "block";
+            area.value = p.content;
+            document.getElementById("persona-save").style.display = "inline-block";
           }
 
-          async function savePersona() {
-            if (!currentPersona) return;
+          async function savePersona(){
+            if(!currentPersona) return;
             const content = document.getElementById("persona-content").value;
-            await api(`/personas/${currentPersona}`, { method: "PATCH", body: JSON.stringify({ content, changed_by: "dashboard_ui" }) });
-            await openPersona(currentPersona);
+            await api(`/personas/${currentPersona}`, { method:"PATCH", body: JSON.stringify({content, changed_by:"dashboard_ui"})});
           }
 
+          refreshResearchHint();
+          loadPipelineModes();
           refreshRuns();
           loadPersonas();
-          setInterval(async () => {
-            await refreshRuns();
-            if (currentRunId) await selectRun(currentRunId, true);
-          }, 5000);
+          setInterval(refreshRuns, 5000);
         </script>
       </body>
     </html>
@@ -372,44 +483,31 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
       </head>
       <body>
         <h1>Agent API Configs</h1>
-        <p class="muted">规则：若单 Agent 配置为空或不存在，则自动使用 <b>default</b> 配置。</p>
-        <p class="muted">安全策略：系统只存 <b>API Key Env 变量名</b>，不会存明文 API Key；执行时从系统环境变量读取。</p>
-        <p class="muted">命名规则：环境变量前缀为 <b>{API_KEY_ENV_PREFIX}</b>，页面下拉列表会自动识别该前缀的变量。</p>
+        <p class="muted">Fallback rule: if agent config missing, use <b>default</b>.</p>
+        <p class="muted">Security: only env var names are stored. Prefix required: <b>{API_KEY_ENV_PREFIX}</b>.</p>
         <p><a href="/dashboard">Back to Dashboard</a></p>
         <table>
-          <thead><tr><th>Agent</th><th>Provider</th><th>Model</th><th>Base URL</th><th>API Key Env (Name Only)</th><th>Env Status</th><th>Action</th></tr></thead>
+          <thead><tr><th>Agent</th><th>Provider</th><th>Model</th><th>Base URL</th><th>API Key Env</th><th>Env Status</th><th>Action</th></tr></thead>
           <tbody id="cfg-body"></tbody>
         </table>
         <script>
           const personas = {personas_json};
           const existing = {configs_json};
-          const bootstrapEnvVars = {env_vars_json};
-          let envVars = [...bootstrapEnvVars];
+          let envVars = {env_vars_json};
           const byAgent = Object.fromEntries(existing.map(c => [c.agent_name, c]));
           const rows = [{{ agent_name: "default", display_name: "Default Fallback", stage: "global" }}, ...personas];
-
           async function api(path, options = {{}}) {{
             const res = await fetch(path, {{ headers: {{ "Content-Type": "application/json" }}, ...options }});
-            if (!res.ok) {{
-              const txt = await res.text();
-              throw new Error(txt || res.statusText);
-            }}
+            if (!res.ok) throw new Error(await res.text());
             return res.json();
           }}
-
           function envOptions(selected) {{
-            const names = [...envVars];
-            if (selected && !names.includes(selected)) {{
-              names.unshift(selected);
-            }}
             const base = ['<option value="">(none)</option>'];
-            names.forEach((name) => {{
-              const selectedAttr = selected === name ? " selected" : "";
-              base.push(`<option value="${{name}}"${{selectedAttr}}>${{name}}</option>`);
-            }});
+            const names = [...envVars];
+            if (selected && !names.includes(selected)) names.unshift(selected);
+            names.forEach((name) => {{ base.push(`<option value="${{name}}"${{selected===name?" selected":""}}>${{name}}</option>`); }});
             return base.join("");
           }}
-
           function render() {{
             const body = document.getElementById("cfg-body");
             body.innerHTML = "";
@@ -417,18 +515,16 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
               const cfg = byAgent[r.agent_name] || {{}};
               const tr = document.createElement("tr");
               tr.innerHTML = `
-                <td>${{r.display_name || r.agent_name}}<div class="muted">${{r.agent_name}} / ${{r.stage || "-"}}</div></td>
-                <td><input id="p-${{r.agent_name}}" value="${{cfg.provider_name || ""}}" placeholder="kimi"/></td>
-                <td><input id="m-${{r.agent_name}}" value="${{cfg.model_name || ""}}" placeholder="kimi-default-text"/></td>
-                <td><input id="b-${{r.agent_name}}" value="${{cfg.api_base_url || ""}}" placeholder="https://api.vendor.com/v1"/></td>
+                <td>${{r.display_name || r.agent_name}}<div class="muted">${{r.agent_name}}</div></td>
+                <td><input id="p-${{r.agent_name}}" value="${{cfg.provider_name || ""}}" /></td>
+                <td><input id="m-${{r.agent_name}}" value="${{cfg.model_name || ""}}" /></td>
+                <td><input id="b-${{r.agent_name}}" value="${{cfg.api_base_url || ""}}" /></td>
                 <td><select id="k-${{r.agent_name}}">${{envOptions(cfg.api_key_env || "")}}</select></td>
                 <td>${{cfg.api_key_env ? (cfg.api_key_available ? "found" : "missing") : "-"}}</td>
-                <td><button onclick="save('${{r.agent_name}}')">Save</button></td>
-              `;
+                <td><button onclick="save('${{r.agent_name}}')">Save</button></td>`;
               body.appendChild(tr);
             }});
           }}
-
           async function save(agentName) {{
             const payload = {{
               provider_name: document.getElementById(`p-${{agentName}}`).value || null,
@@ -436,19 +532,13 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
               api_base_url: document.getElementById(`b-${{agentName}}`).value || null,
               api_key_env: document.getElementById(`k-${{agentName}}`).value || null
             }};
-            const updated = await api(`/agent-configs/${{agentName}}`, {{ method: "PATCH", body: JSON.stringify(payload) }});
-            byAgent[agentName] = updated;
-          }}
-
-          async function init() {{
-            try {{
-              envVars = await api("/agent-configs/env-vars");
-            }} catch (_err) {{
-              envVars = [...bootstrapEnvVars];
-            }}
+            byAgent[agentName] = await api(`/agent-configs/${{agentName}}`, {{ method: "PATCH", body: JSON.stringify(payload) }});
             render();
           }}
-
+          async function init() {{
+            try {{ envVars = await api("/agent-configs/env-vars"); }} catch (_err) {{}}
+            render();
+          }}
           init();
         </script>
       </body>
@@ -469,7 +559,6 @@ def dashboard_page() -> str:
 @router.get("/dashboard/agent-apis", response_class=HTMLResponse)
 def dashboard_agent_apis(db: Session = Depends(get_db)) -> str:
     personas = [PersonaMeta(**row).model_dump(mode="json") for row in list_persona_catalog()]
-    env_vars = list_api_key_env_names()
     configs = [
         AgentApiConfigView(
             agent_name=row.agent_name,
@@ -485,10 +574,16 @@ def dashboard_agent_apis(db: Session = Depends(get_db)) -> str:
         for row in list_agent_configs(db)
     ]
     db.commit()
-    personas_json = json.dumps(personas, ensure_ascii=False).replace("</", "<\\/")
-    configs_json = json.dumps(configs, ensure_ascii=False).replace("</", "<\\/")
-    env_vars_json = json.dumps(env_vars, ensure_ascii=False).replace("</", "<\\/")
-    return _agent_api_dashboard_html(personas_json=personas_json, configs_json=configs_json, env_vars_json=env_vars_json)
+    return _agent_api_dashboard_html(
+        personas_json=json.dumps(personas, ensure_ascii=False).replace("</", "<\\/"),
+        configs_json=json.dumps(configs, ensure_ascii=False).replace("</", "<\\/"),
+        env_vars_json=json.dumps(list_api_key_env_names(), ensure_ascii=False).replace("</", "<\\/"),
+    )
+
+
+@router.get("/pipeline-modes", response_model=list[PipelineModeView])
+def list_pipeline_modes() -> list[PipelineModeView]:
+    return _pipeline_mode_views()
 
 
 @router.get("/runs", response_model=list[RunSummary])
@@ -499,6 +594,7 @@ def list_runs(db: Session = Depends(get_db)) -> list[RunSummary]:
             id=run.id,
             status=run.status,
             current_stage=run.current_stage,
+            pipeline_mode=run.pipeline_mode,
             project_id=run.project_id,
             updated_at=run.updated_at,
         )
@@ -514,6 +610,80 @@ def create_pipeline_run(payload: RunCreateRequest, db: Session = Depends(get_db)
     return _serialize_run(db, run)
 
 
+@router.post("/runs/rich", response_model=RunView)
+async def create_pipeline_run_rich(
+    workspace_name: str = Form(...),
+    project_name: str = Form(...),
+    product_name: str = Form(...),
+    campaign_name: str = Form(...),
+    channel: str = Form("meta"),
+    objective: str = Form("conversions"),
+    market: str = Form("US"),
+    locale: str = Form("en-US"),
+    variant_count: int = Form(8),
+    model_provider: str = Form("openai"),
+    model_name: str = Form("gpt-4.1"),
+    pipeline_mode: str = Form(PipelineMode.FULL_MULTIMODAL.value),
+    enable_research: bool = Form(False),
+    manual_research_brief: str = Form(""),
+    business_context: str = Form("{}"),
+    category_tags: str = Form("[]"),
+    url_references: str = Form("[]"),
+    files: list[UploadFile] = File(default=[]),
+    db: Session = Depends(get_db),
+) -> RunView:
+    if pipeline_mode not in PIPELINE_STAGE_PLANS:
+        raise HTTPException(status_code=400, detail=f"unsupported pipeline_mode: {pipeline_mode}")
+    payload = RunCreateRequest(
+        workspace_name=workspace_name,
+        project_name=project_name,
+        product_name=product_name,
+        campaign_name=campaign_name,
+        channel=channel,
+        objective=objective,
+        market=market,
+        locale=locale,
+        variant_count=variant_count,
+        model_provider=model_provider,
+        model_name=model_name,
+        pipeline_mode=pipeline_mode,
+        enable_research=enable_research,
+        manual_research_brief=manual_research_brief,
+        business_context=_load_json_dict(business_context, "business_context"),
+        category_tags=_load_json_list(category_tags, "category_tags"),
+        context={"url_references": _load_json_list(url_references, "url_references")},
+    )
+    run = create_run(db, payload)
+    uploaded_payloads = []
+    for file in files:
+        content = await file.read()
+        uploaded_payloads.append({"filename": file.filename or "upload.bin", "content_type": file.content_type, "content": content})
+    try:
+        assets_summary, artifacts = process_uploaded_payloads(run.id, uploaded_payloads)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    run.context_json = {
+        **(run.context_json or {}),
+        "input_assets": assets_summary,
+        "url_references": payload.context.get("url_references", []),
+    }
+    for artifact in artifacts:
+        db.add(
+            Artifact(
+                run_id=run.id,
+                stage_name="intake",
+                artifact_type=artifact["type"],
+                uri=artifact["uri"],
+                payload=artifact["payload"],
+            )
+        )
+    db.commit()
+    db.refresh(run)
+    return _serialize_run(db, run)
+
+
 @router.get("/runs/{run_id}", response_model=RunView)
 def get_pipeline_run(run_id: str, db: Session = Depends(get_db)) -> RunView:
     try:
@@ -521,6 +691,40 @@ def get_pipeline_run(run_id: str, db: Session = Depends(get_db)) -> RunView:
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _serialize_run(db, run)
+
+
+@router.get("/runs/{run_id}/deliverables", response_model=DeliverablesResponse)
+def get_run_deliverables(run_id: str, db: Session = Depends(get_db)) -> DeliverablesResponse:
+    try:
+        run = get_run(db, run_id)
+        deliverables = run_deliverables(db, run_id)
+        evaluation = get_stage_payload(db, run_id, "evaluation_selection")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    score = (evaluation.get("evaluation_result", {}) if evaluation else {}) or {}
+    return DeliverablesResponse(
+        run_id=run.id,
+        winner_variant_id=deliverables.get("winner_variant_id"),
+        deliverables=deliverables,
+        score=score,
+    )
+
+
+@router.get("/runs/{run_id}/variants", response_model=VariantsResponse)
+def get_run_variants(run_id: str, db: Session = Depends(get_db)) -> VariantsResponse:
+    try:
+        get_run(db, run_id)
+        data = run_variants(db, run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return VariantsResponse(run_id=run_id, variants=data.get("variants", []), ranked=data.get("ranked", []))
+
+
+def get_stage_payload(db: Session, run_id: str, stage_name: str) -> dict:
+    task = db.scalar(select(StageTask).where(StageTask.run_id == run_id, StageTask.stage_name == stage_name))
+    if not task:
+        raise ValueError(f"stage task not found: {run_id}/{stage_name}")
+    return task.output_payload or {}
 
 
 @router.post("/runs/{run_id}/advance", response_model=RunView)
@@ -548,7 +752,7 @@ def reject_pipeline_run(run_id: str, payload: ReviewActionRequest, db: Session =
 @router.post("/feedback/import", response_model=FeedbackImportResponse)
 def import_feedback(payload: FeedbackImportRequest, db: Session = Depends(get_db)) -> FeedbackImportResponse:
     import_record, snapshots, memory = import_feedback_rows(
-        db,
+        db=db,
         workspace_name=payload.workspace_name,
         project_name=payload.project_name,
         rows=payload.rows,
@@ -593,11 +797,7 @@ def read_agent_persona(agent_name: str, db: Session = Depends(get_db)) -> Person
 
 
 @router.patch("/personas/{agent_name}", response_model=PersonaView)
-def patch_agent_persona(
-    agent_name: str,
-    payload: PersonaPatchRequest,
-    db: Session = Depends(get_db),
-) -> PersonaView:
+def patch_agent_persona(agent_name: str, payload: PersonaPatchRequest, db: Session = Depends(get_db)) -> PersonaView:
     try:
         content, version, source_path = update_persona(db, agent_name, payload.content, payload.changed_by)
         info = persona_info(agent_name)
@@ -642,11 +842,7 @@ def get_agent_config_env_vars() -> list[str]:
 
 
 @router.patch("/agent-configs/{agent_name}", response_model=AgentApiConfigView)
-def patch_agent_config(
-    agent_name: str,
-    payload: AgentApiConfigPatchRequest,
-    db: Session = Depends(get_db),
-) -> AgentApiConfigView:
+def patch_agent_config(agent_name: str, payload: AgentApiConfigPatchRequest, db: Session = Depends(get_db)) -> AgentApiConfigView:
     try:
         row = upsert_agent_config(
             db,

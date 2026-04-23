@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from sqlalchemy import select
+
+from app.data.models import GmInstructionVersion
 from app.data.session import SessionLocal
 from app.services.runs import execute_next_queued_stage
 
@@ -65,6 +68,14 @@ def test_feedback_import_updates_leaderboard(client):
     payload = import_resp.json()
     assert payload["rows"] == 2
     assert payload["snapshots_created"] == 2
+    assert payload["memory_entry_id"] is not None
+
+    with SessionLocal() as db:
+        gm_instruction = db.scalar(
+            select(GmInstructionVersion).order_by(GmInstructionVersion.version.desc()).limit(1)
+        )
+        assert gm_instruction is not None
+        assert gm_instruction.version >= 1
 
     leaderboard = client.get(f"/projects/{project_id}/leaderboard")
     assert leaderboard.status_code == 200

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.contracts import ConversionForecast, FeedbackRow, ScoreCard, StageName
+
+PipelineMode = Literal["copy_image_only", "video_only", "full_multimodal"]
 
 
 class RunCreateRequest(BaseModel):
@@ -18,8 +21,13 @@ class RunCreateRequest(BaseModel):
     locale: str = "en-US"
     variant_count: int = 8
     context: dict = Field(default_factory=dict)
-    model_provider: str = "kimi"
-    model_name: str = "kimi-default-text"
+    model_provider: str = "openai"
+    model_name: str = "gpt-4.1"
+    pipeline_mode: PipelineMode = "full_multimodal"
+    enable_research: bool = False
+    manual_research_brief: str = ""
+    business_context: dict = Field(default_factory=dict)
+    category_tags: list[str] = Field(default_factory=list)
 
 
 class StageTaskView(BaseModel):
@@ -51,6 +59,11 @@ class RunView(BaseModel):
     locale: str
     model_provider: str
     model_name: str
+    pipeline_mode: PipelineMode = "full_multimodal"
+    enable_research: bool = False
+    manual_research_brief: str = ""
+    business_context: dict = Field(default_factory=dict)
+    category_tags: list[str] = Field(default_factory=list)
     budget_used: float
     variant_count: int
     created_at: datetime
@@ -64,6 +77,7 @@ class RunSummary(BaseModel):
     id: str
     status: str
     current_stage: str | None
+    pipeline_mode: PipelineMode = "full_multimodal"
     project_id: str
     updated_at: datetime
 
@@ -148,3 +162,24 @@ class AgentApiConfigPatchRequest(BaseModel):
     api_base_url: str | None = None
     api_key_env: str | None = None
     extra: dict | None = None
+
+
+class DeliverablesResponse(BaseModel):
+    run_id: str
+    winner_variant_id: str | None = None
+    deliverables: dict = Field(default_factory=dict)
+    score: dict = Field(default_factory=dict)
+
+
+class VariantsResponse(BaseModel):
+    run_id: str
+    variants: list[dict] = Field(default_factory=list)
+    ranked: list[dict] = Field(default_factory=list)
+
+
+class PipelineModeView(BaseModel):
+    mode: PipelineMode
+    display_name: str
+    stages: list[str] = Field(default_factory=list)
+    agents: list[str] = Field(default_factory=list)
+    agent_count: int = 0

@@ -7,10 +7,14 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class StageName(StrEnum):
-    RESEARCH = "research"
-    IDEATION = "ideation"
-    GENERATION = "generation"
-    SCORING = "scoring"
+    INTAKE = "intake"
+    PLANNING = "planning"
+    DIVERGENCE = "divergence"
+    COPY_IMAGE_GENERATION = "copy_image_generation"
+    VIDEO_SCRIPTING = "video_scripting"
+    STORYBOARD_IMAGE_GENERATION = "storyboard_image_generation"
+    VIDEO_GENERATION = "video_generation"
+    EVALUATION_SELECTION = "evaluation_selection"
 
 
 class Evidence(BaseModel):
@@ -142,3 +146,111 @@ class FeedbackRow(BaseModel):
         if value < 0:
             raise ValueError("metric cannot be negative")
         return value
+
+
+class ProductIntake(BaseModel):
+    product_name: str
+    market: str = "US"
+    locale: str = "en-US"
+    category_tags: list[str] = Field(default_factory=list)
+    business_context: dict = Field(default_factory=dict)
+    manual_research_brief: str = ""
+    url_references: list[str] = Field(default_factory=list)
+    sku_summary: list[dict] = Field(default_factory=list)
+    image_references: list[dict] = Field(default_factory=list)
+    video_references: list[dict] = Field(default_factory=list)
+
+
+class PlanningBrief(BaseModel):
+    strategic_angles: list[str] = Field(default_factory=list)
+    audience_priorities: list[str] = Field(default_factory=list)
+    positioning: str = ""
+    constraints: list[str] = Field(default_factory=list)
+    gm_lessons: list[dict] = Field(default_factory=list)
+
+
+class VariantCandidate(BaseModel):
+    variant_id: str
+    angle: str
+    hook: str
+    message: str
+
+
+class VariantSet(BaseModel):
+    variants: list[VariantCandidate] = Field(default_factory=list)
+
+
+class CopyImageBundle(BaseModel):
+    copy_variants: list[CopyVariant] = Field(default_factory=list)
+    image_assets: list[ImageAssetRef] = Field(default_factory=list)
+
+
+class VideoScriptItem(BaseModel):
+    variant_id: str
+    hook: str
+    script: str
+    shot_list: list[str] = Field(default_factory=list)
+
+
+class VideoScriptPack(BaseModel):
+    scripts: list[VideoScriptItem] = Field(default_factory=list)
+
+
+class StoryboardFrame(BaseModel):
+    variant_id: str
+    frame_id: str
+    prompt: str
+    image_uri: str
+
+
+class StoryboardPack(BaseModel):
+    frames: list[StoryboardFrame] = Field(default_factory=list)
+
+
+class VideoAsset(BaseModel):
+    variant_id: str
+    video_uri: str
+    duration_seconds: float = 0.0
+
+
+class VideoBundle(BaseModel):
+    videos: list[VideoAsset] = Field(default_factory=list)
+
+
+class RankedVariant(BaseModel):
+    variant_id: str
+    total_score: float = Field(ge=0, le=100)
+    sub_scores: dict[str, float] = Field(default_factory=dict)
+    compliance_level: ComplianceLevel = ComplianceLevel.LOW
+    reasons: list[str] = Field(default_factory=list)
+
+
+class EvaluationResult(BaseModel):
+    ranked_variants: list[RankedVariant] = Field(default_factory=list)
+    top_k: list[RankedVariant] = Field(default_factory=list)
+    winner: RankedVariant | None = None
+    scorecard: ScoreCard
+    forecast: ConversionForecast
+
+
+class SelectedDeliverables(BaseModel):
+    winner_variant_id: str
+    copy_variant: CopyVariant | None = None
+    image_assets: list[ImageAssetRef] = Field(default_factory=list)
+    video_asset: VideoAsset | None = None
+    reasoning: list[str] = Field(default_factory=list)
+
+
+class GmMemoryEntry(BaseModel):
+    project_id: str
+    category_tags: list[str] = Field(default_factory=list)
+    winners: list[dict] = Field(default_factory=list)
+    failures: list[dict] = Field(default_factory=list)
+    summary: str = ""
+
+
+class GmInstructionVersion(BaseModel):
+    project_id: str
+    version: int
+    content: dict = Field(default_factory=dict)
+    source_feedback_import_id: str | None = None

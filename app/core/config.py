@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     assets_dir: Path = Field(default=Path("assets"))
     default_locale: str = "en-US"
     default_market: str = "US"
-    default_provider: str = "kimi"
-    default_model: str = "kimi-default-text"
+    default_provider: str = "openai"
+    default_model: str = "gpt-4.1"
     enable_worker: bool = True
 
 

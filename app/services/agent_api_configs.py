@@ -14,8 +14,8 @@ API_KEY_ENV_PREFIX = "CRISPY_API_KEY_"
 
 def _default_values() -> dict:
     return {
-        "provider_name": "kimi",
-        "model_name": "kimi-default-text",
+        "provider_name": "openai",
+        "model_name": "gpt-4.1",
         "api_base_url": None,
         "api_key_env": None,
         "extra": {},

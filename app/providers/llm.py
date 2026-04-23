@@ -53,9 +53,33 @@ class KimiStubProvider(LlmProvider):
         )
 
 
+class OpenAIStubProvider(LlmProvider):
+    def complete(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        api_base_url: str | None = None,
+        api_key: str | None = None,
+        extra: dict | None = None,
+    ) -> LlmResponse:
+        snippet = prompt.strip().replace("\n", " ")[:280]
+        text = f"[openai:{model}] {snippet}"
+        return LlmResponse(
+            text=text,
+            model_used=model,
+            tokens_prompt=max(1, len(prompt) // 4),
+            tokens_completion=max(1, len(text) // 4),
+            estimated_cost=0.0,
+        )
+
+
 class ProviderRegistry:
     def __init__(self) -> None:
-        self._providers: dict[str, LlmProvider] = {"kimi": KimiStubProvider()}
+        self._providers: dict[str, LlmProvider] = {
+            "openai": OpenAIStubProvider(),
+            "kimi": KimiStubProvider(),
+        }
 
     def get(self, name: str) -> LlmProvider:
-        return self._providers.get(name, self._providers["kimi"])
+        return self._providers.get(name, self._providers["openai"])

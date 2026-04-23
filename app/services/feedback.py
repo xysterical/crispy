@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.data.models import (
     FeedbackImport,
     GmMemory,
+    GmInstructionVersion,
     PerformanceSnapshot,
     Project,
     Workspace,
@@ -123,9 +124,32 @@ def import_feedback_rows(
                 "top_creatives": top,
                 "underperformers": bottom,
                 "summary": "Preserve top-performing hook patterns and retire low-score variants.",
+                "category_tags": [],
             },
         )
         db.add(memory)
+        latest_version = db.scalar(
+            select(GmInstructionVersion.version)
+            .where(GmInstructionVersion.project_id == project.id)
+            .order_by(GmInstructionVersion.version.desc())
+            .limit(1)
+        )
+        next_version = int(latest_version or 0) + 1
+        db.add(
+            GmInstructionVersion(
+                project_id=project.id,
+                source_feedback_import_id=import_record.id,
+                version=next_version,
+                content={
+                    "version": next_version,
+                    "source": "feedback_import",
+                    "winning_patterns": [item[0] for item in top],
+                    "avoid_patterns": [item[0] for item in bottom],
+                    "guidance": "Prioritize winning hooks and avoid low-performing patterns in planning stage.",
+                },
+                is_active=True,
+            )
+        )
     db.flush()
     return import_record, snapshot_count, memory
 
@@ -168,4 +192,3 @@ def project_leaderboard(db: Session, project_id: str, limit: int = 20) -> list[d
         )
     ranked.sort(key=lambda item: item["weighted_score"], reverse=True)
     return ranked[:limit]
-

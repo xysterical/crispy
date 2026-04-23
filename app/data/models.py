@@ -15,10 +15,14 @@ def utcnow() -> datetime:
 
 
 class StageName(StrEnum):
-    RESEARCH = "research"
-    IDEATION = "ideation"
-    GENERATION = "generation"
-    SCORING = "scoring"
+    INTAKE = "intake"
+    PLANNING = "planning"
+    DIVERGENCE = "divergence"
+    COPY_IMAGE_GENERATION = "copy_image_generation"
+    VIDEO_SCRIPTING = "video_scripting"
+    STORYBOARD_IMAGE_GENERATION = "storyboard_image_generation"
+    VIDEO_GENERATION = "video_generation"
+    EVALUATION_SELECTION = "evaluation_selection"
 
 
 class RunStatus(StrEnum):
@@ -116,10 +120,15 @@ class PipelineRun(Base):
     current_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
     market: Mapped[str] = mapped_column(String(16), default="US")
     locale: Mapped[str] = mapped_column(String(16), default="en-US")
-    model_provider: Mapped[str] = mapped_column(String(64), default="kimi")
-    model_name: Mapped[str] = mapped_column(String(128), default="kimi-default-text")
+    pipeline_mode: Mapped[str] = mapped_column(String(32), default="full_multimodal")
+    model_provider: Mapped[str] = mapped_column(String(64), default="openai")
+    model_name: Mapped[str] = mapped_column(String(128), default="gpt-4.1")
     budget_used: Mapped[float] = mapped_column(Float, default=0.0)
     variant_count: Mapped[int] = mapped_column(Integer, default=8)
+    enable_research: Mapped[bool] = mapped_column(Boolean, default=False)
+    manual_research_brief: Mapped[str | None] = mapped_column(Text, nullable=True)
+    business_context: Mapped[dict] = mapped_column(json_type(), default=dict)
+    category_tags: Mapped[list[str]] = mapped_column(json_type(), default=list)
     context_json: Mapped[dict] = mapped_column(json_type(), default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -237,6 +246,18 @@ class GmMemory(Base):
     run_id: Mapped[str | None] = mapped_column(ForeignKey("pipeline_run.id"), nullable=True)
     memory_type: Mapped[str] = mapped_column(String(32), default="strategy")
     content: Mapped[dict] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class GmInstructionVersion(Base):
+    __tablename__ = "gm_instruction_version"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), nullable=False)
+    source_feedback_import_id: Mapped[str | None] = mapped_column(ForeignKey("feedback_import.id"), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[dict] = mapped_column(json_type(), default=dict)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

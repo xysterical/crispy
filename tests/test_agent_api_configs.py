@@ -17,11 +17,11 @@ def test_agent_api_default_and_override(client):
     assert any(row["agent_name"] == "default" for row in configs)
 
     patch_resp = client.patch(
-        "/agent-configs/research_agent",
-        json={"provider_name": "kimi", "model_name": "kimi-research-v1"},
+        "/agent-configs/gm_orchestrator",
+        json={"provider_name": "openai", "model_name": "gpt-4.1-mini"},
     )
     assert patch_resp.status_code == 200
-    assert patch_resp.json()["model_name"] == "kimi-research-v1"
+    assert patch_resp.json()["model_name"] == "gpt-4.1-mini"
 
     create_resp = client.post(
         "/runs",
@@ -30,8 +30,8 @@ def test_agent_api_default_and_override(client):
             "project_name": "p-agentcfg",
             "product_name": "pet toy",
             "campaign_name": "meta-agentcfg-1",
-            "model_provider": "kimi",
-            "model_name": "kimi-default-text",
+            "model_provider": "openai",
+            "model_name": "gpt-4.1",
         },
     )
     run = create_resp.json()
@@ -39,9 +39,9 @@ def test_agent_api_default_and_override(client):
 
     _run_worker_once()
     run_view = client.get(f"/runs/{run_id}").json()
-    research_task = [t for t in run_view["stage_tasks"] if t["stage_name"] == "research"][0]
-    assert research_task["metadata_json"]["resolved_api"]["source"] == "agent_override"
-    assert research_task["metadata_json"]["resolved_api"]["model_name"] == "kimi-research-v1"
+    intake_task = [t for t in run_view["stage_tasks"] if t["stage_name"] == "intake"][0]
+    assert intake_task["metadata_json"]["resolved_api"]["source"] == "agent_override"
+    assert intake_task["metadata_json"]["resolved_api"]["model_name"] == "gpt-4.1-mini"
 
 
 def test_agent_api_page_loads(client, monkeypatch):
@@ -67,7 +67,7 @@ def test_agent_api_env_vars_endpoint(client, monkeypatch):
 
 def test_agent_api_env_prefix_validation(client):
     resp = client.patch(
-        "/agent-configs/research_agent",
+        "/agent-configs/generation_agent",
         json={"api_key_env": "OPENAI_API_KEY"},
     )
     assert resp.status_code == 400

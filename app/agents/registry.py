@@ -106,10 +106,13 @@ def get_agent_spec(agent_name: str) -> AgentSpec:
 
 def stage_agent(stage_name: str) -> str:
     mapping = {
-        "research": "research_agent",
-        "ideation": "ideation_agent",
-        "generation": "generation_agent",
-        "scoring": "scoring_agent",
+        "intake": "gm_orchestrator",
+        "planning": "ideation_agent",
+        "divergence": "ideation_agent",
+        "copy_image_generation": "generation_agent",
+        "video_scripting": "generation_agent",
+        "storyboard_image_generation": "generation_agent",
+        "video_generation": "generation_agent",
+        "evaluation_selection": "scoring_agent",
     }
     return mapping.get(stage_name, "gm_orchestrator")
-

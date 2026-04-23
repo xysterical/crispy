@@ -4,7 +4,10 @@ ROI-focused multi-agent ad creative pipeline for cross-border ecommerce.
 
 ## MVP scope
 - Semi-automated and human-reviewable pipeline.
-- Four stages: `research -> ideation -> generation -> scoring`.
+- Stage graph is mode-based:
+  - `copy_image_only`: `intake -> planning -> divergence -> copy_image_generation -> evaluation_selection`
+  - `video_only`: `intake -> planning -> divergence -> video_scripting -> storyboard_image_generation -> video_generation -> evaluation_selection`
+  - `full_multimodal`: all 8 stages end-to-end
 - Multi-agent roles: GM orchestrator + stage agents + compliance policy.
 - Structured contracts via Pydantic and persisted JSONB/JSON.
 - Feedback loop with CSV import and weighted leaderboard.
@@ -35,7 +38,6 @@ Open dashboard:
 Example `~/.zshrc`:
 ```bash
 # Crispy API keys (detected by /dashboard/agent-apis dropdown)
-export CRISPY_API_KEY_KIMI="your-kimi-key"
 export CRISPY_API_KEY_OPENAI="your-openai-key"
 export CRISPY_API_KEY_GEMINI="your-gemini-key"
 ```
@@ -47,8 +49,12 @@ source ~/.zshrc
 
 ## Key API endpoints
 - `GET /runs` list latest runs (dashboard feed)
-- `POST /runs` create a pipeline run
+- `POST /runs` create a pipeline run (JSON)
+- `POST /runs/rich` create a pipeline run with multipart files (SKU/image/video/url references)
+- `GET /pipeline-modes` list available pipeline modes with stage+agent coverage
 - `GET /runs/{id}` inspect run and stage outputs
+- `GET /runs/{id}/deliverables` get selected best deliverables
+- `GET /runs/{id}/variants` get divergence variants and ranked results
 - `POST /runs/{id}/advance` approve current stage and queue next stage
 - `POST /runs/{id}/reject` reject and requeue current stage
 - `POST /feedback/import` import weekly CSV-equivalent rows
@@ -61,7 +67,8 @@ source ~/.zshrc
 - `PATCH /agent-configs/{agent}` upsert per-agent API config (fallback to `default` if unset)
 
 ## Notes
-- Default provider is a local Kimi stub adapter for deterministic MVP behavior.
+- Default provider/model are `openai` + `gpt-4.1` (stubbed provider for deterministic MVP behavior).
+- Dashboard `Research Source` defaults to manual mode (`enable_research=false`) for faster local debugging.
 - Persona files are structured as `personas/gm/gm_orchestrator.md` and `personas/stages/0x_*.md`.
 - API key security: only `api_key_env` names are stored; runtime reads values from system env.
 - Media assets are stored in local filesystem under `assets/<run_id>/`.
