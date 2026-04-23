@@ -12,6 +12,18 @@ ROI-focused multi-agent ad creative pipeline for cross-border ecommerce.
 - Structured contracts via Pydantic and persisted JSONB/JSON.
 - Feedback loop with CSV import and weighted leaderboard.
 
+## Agent responsibilities
+- Crispy treats **stages** and **agents** as decoupled layers. Stages are workflow checkpoints; agents are capability roles.
+- Current stage-to-agent mapping:
+  - `gm_orchestrator`: `intake`
+  - `ideation_agent`: `planning`, `divergence`
+  - `generation_agent`: `copy_image_generation`, `video_scripting`, `storyboard_image_generation`, `video_generation`
+  - `scoring_agent`: `evaluation_selection`
+- `research_agent` and `compliance_agent` are still first-class personas, but in current MVP flow:
+  - autonomous research is optional (`enable_research=false` by default), so no standalone research stage is always executed;
+  - compliance checks are included in evaluation outputs rather than a separate mandatory stage.
+- Source of truth for runtime mapping: `app/agents/registry.py`.
+
 ## Stack
 - Python 3.11+
 - `uv` for environment and dependency management
@@ -21,31 +33,39 @@ ROI-focused multi-agent ad creative pipeline for cross-border ecommerce.
 - `CrewAI` dependency reserved for deeper runtime integration in phase 2
 
 ## Quick start
+
+### Use uv
 ```bash
 uv sync
-uv run uvicorn app.main:app --reload
 ```
 
-Open dashboard:
-- [http://localhost:8000](http://localhost:8000)
-- [http://localhost:8000/dashboard/agent-apis](http://localhost:8000/dashboard/agent-apis) for agent API config management
-
-## API Key env naming and zshrc setup
+### API Key env naming and zshrc setup
 - Crispy only auto-discovers API key env vars with prefix: `CRISPY_API_KEY_`.
 - In Agent API config page, `API Key Env` uses dropdown options from current shell environment and writes only the env var name to DB.
 - Real key values are never stored in DB.
 
-Example `~/.zshrc`:
+Example run in terminal app, or write directly in your `~/.zshrc`:
 ```bash
 # Crispy API keys (detected by /dashboard/agent-apis dropdown)
-export CRISPY_API_KEY_OPENAI="your-openai-key"
-export CRISPY_API_KEY_GEMINI="your-gemini-key"
+echo 'export CRISPY_API_KEY_OPENAI="your-openai-key"' >> /.zshrc
 ```
 
 Apply changes:
 ```bash
 source ~/.zshrc
 ```
+
+### Dashboard:
+
+```bash
+uv run uvicorn app.main:app --reload
+```
+
+Open dashboard
+- [http://localhost:8000](http://localhost:8000)
+- [http://localhost:8000/dashboard/agent-apis](http://localhost:8000/dashboard/agent-apis) for agent API config management
+
+
 
 ## Key API endpoints
 - `GET /runs` list latest runs (dashboard feed)
