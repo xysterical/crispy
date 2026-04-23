@@ -72,6 +72,7 @@ Open dashboard
 - `POST /runs` create a pipeline run (JSON)
 - `POST /runs/rich` create a pipeline run with multipart files (SKU/image/video/url references)
 - `GET /pipeline-modes` list available pipeline modes with stage+agent coverage
+- `GET /creative-presets` list built-in creative size/duration presets
 - `GET /runs/{id}` inspect run and stage outputs
 - `GET /runs/{id}/deliverables` get selected best deliverables
 - `GET /runs/{id}/variants` get divergence variants and ranked results
@@ -85,21 +86,38 @@ Open dashboard
 - `GET /agent-configs` list default + per-agent API configs
 - `GET /agent-configs/env-vars` list discovered env vars (`CRISPY_API_KEY_` prefix only)
 - `PATCH /agent-configs/{agent}` upsert per-agent API config (fallback to `default` if unset)
+- `GET /gm-memory` inspect GM memory entries by scope/product/industry
+
+## Current pipeline flow (with GM memory loop)
+1. Input product/task/materials with required `product_code`, `industry_code`, and `creative_preset` (or custom specs).
+2. `intake`: GM orchestrator normalizes structured context and uploaded multimodal inputs.
+3. `planning`: ideation agent injects **product-level memory first**, then **industry-level memory** for strategy drafting.
+4. `divergence`: ideation agent expands variants.
+5. Generation chain:
+   - copy/image path -> `copy_image_generation`
+   - video path -> `video_scripting -> storyboard_image_generation -> video_generation`
+6. `evaluation_selection`: scoring agent ranks variants and returns winner deliverables.
+7. After launch feedback import:
+   - write product-scope and industry-scope GM memories
+   - bump GM instruction version
+   - next same `product_code` / `industry_code` run reuses those lessons automatically.
 
 ## Real API adapter notes
 - Provider adapter now supports OpenAI-compatible endpoints for:
   - chat: `/chat/completions`
   - image generation: `/images/generations`
+  - video generation: `/videos/generations`
 - Endpoint compatibility rules:
   - if `api_base_url` already points to a full endpoint (for example `.../images/generations`), Crispy calls it directly;
   - if `api_base_url` is a root URL (for example `.../v1`), Crispy appends the expected path;
   - if root URL has no `/v1`, Crispy retries with `/v1/...` fallback for compatibility.
-- `generation_agent` supports dual config:
+- `generation_agent` supports triple config:
   - text config from top-level fields (`provider_name/model_name/api_base_url/api_key_env`)
   - image config from `extra.image_config` (`provider_name/model_name/api_base_url/api_key_env`)
+  - video config from `extra.video_config` (`provider_name/model_name/api_base_url/api_key_env`)
 
 ## Notes
-- Default provider/model are `openai` + `gpt-4.1` (stubbed provider for deterministic MVP behavior).
+- Create Run no longer asks user to choose provider/model; runtime model routing is managed in `Agent API Configs`.
 - Dashboard `Research Source` defaults to manual mode (`enable_research=false`) for faster local debugging.
 - Persona files are structured as `personas/gm/gm_orchestrator.md` and `personas/stages/0x_*.md`.
 - API key security: only `api_key_env` names are stored; runtime reads values from system env.

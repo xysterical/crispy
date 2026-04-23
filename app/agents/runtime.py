@@ -11,6 +11,7 @@ from app.providers.llm import (
     ImageGenRequest,
     MultimodalChatRequest,
     ProviderRegistry,
+    VideoGenRequest,
     decode_placeholder_png,
 )
 from app.providers.media import LocalMediaProvider
@@ -92,6 +93,29 @@ class AgentsRuntime:
         )
         return result, provider_name, model_name
 
+    def _generate_video(
+        self,
+        *,
+        fallback_provider: str,
+        fallback_model: str,
+        prompt: str,
+        size: str,
+        duration_seconds: int,
+        runtime_config: dict | None,
+    ):
+        runtime = runtime_config or {}
+        video_runtime = runtime.get("video") or {}
+        provider_name = video_runtime.get("provider_name") or fallback_provider
+        model_name = video_runtime.get("model_name") or fallback_model
+        llm = self.providers.get(provider_name)
+        result = llm.generate_video(
+            VideoGenRequest(model=model_name, prompt=prompt, size=size, n=1, duration_seconds=duration_seconds),
+            api_base_url=video_runtime.get("api_base_url") or runtime.get("api_base_url"),
+            api_key=video_runtime.get("api_key") or runtime.get("api_key"),
+            extra=video_runtime.get("extra") or runtime.get("extra"),
+        )
+        return result, provider_name, model_name
+
     def _local_image_to_data_url(self, path_str: str) -> str | None:
         path = Path(path_str)
         if not path.exists() or not path.is_file():
@@ -139,6 +163,18 @@ class AgentsRuntime:
             if content:
                 return content, "url"
         return decode_placeholder_png(), "placeholder"
+
+    def _materialize_generated_video(self, generated_video) -> tuple[bytes, str]:
+        if generated_video.b64_data:
+            try:
+                return base64.b64decode(generated_video.b64_data), "b64_data"
+            except Exception:
+                pass
+        if generated_video.url:
+            content = self._download_url_bytes(generated_video.url)
+            if content:
+                return content, "url"
+        return b"", "placeholder"
 
     def run_intake(
         self,
@@ -253,6 +289,7 @@ class AgentsRuntime:
         *,
         intake: ProductIntake | None,
         business_context: dict | None,
+        creative_specs: dict | None,
         market: str,
         locale: str,
         provider: str,
@@ -260,6 +297,9 @@ class AgentsRuntime:
         runtime_config: dict | None = None,
     ) -> StageOutput:
         business_context = business_context or {}
+        creative_specs = creative_specs or {}
+        image_size = str(creative_specs.get("image_size") or "1:1")
+        resolution = str(creative_specs.get("resolution") or "720p")
         visual_summary = "No reference image analysis."
         estimated_cost = 0.0
         text_model_used = model
@@ -316,11 +356,12 @@ class AgentsRuntime:
                 )
             )
             image_prompt = (
-                f"Create a 1:1 social media ad image for North American market ({market}, {locale}). "
+                f"Create a social media ad image for North American market ({market}, {locale}). "
                 "Show a Labrador outdoors wearing/using the dog leash product naturally. "
                 "Keep product details aligned with this summary: "
                 f"{visual_summary}. "
-                "Style: realistic, brand-safe, no text overlay, sharp product visibility, conversion-oriented."
+                f"Style: realistic, brand-safe, no text overlay, sharp product visibility, conversion-oriented. "
+                f"Use aspect ratio {image_size}, target resolution {resolution}."
             )
             image_uri = ""
             image_source = "placeholder"
@@ -332,7 +373,7 @@ class AgentsRuntime:
                     fallback_provider=provider,
                     fallback_model=model,
                     prompt=image_prompt,
-                    size="1:1",
+                    size=image_size,
                     runtime_config=runtime_config,
                 )
                 estimated_cost += image_result.estimated_cost
@@ -350,7 +391,7 @@ class AgentsRuntime:
             image_ref = ImageAssetRef(
                 variant_id=item.variant_id,
                 uri=image_uri,
-                aspect_ratio="1:1",
+                aspect_ratio=image_size,
                 prompt=image_prompt,
             )
             images.append(image_ref)
@@ -456,25 +497,73 @@ class AgentsRuntime:
         run_id: str,
         script_pack: VideoScriptPack,
         *,
+        creative_specs: dict | None,
         provider: str,
         model: str,
         runtime_config: dict | None = None,
     ) -> StageOutput:
+        creative_specs = creative_specs or {}
+        video_size = str(creative_specs.get("video_size") or "9:16")
+        resolution = str(creative_specs.get("resolution") or "720p")
+        duration_seconds = int(creative_specs.get("video_duration_seconds") or 8)
         prompt = f"Generate videos from script pack: {script_pack.model_dump()}"
-        _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        _, text_model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         videos: list[VideoAsset] = []
         artifacts: list[dict] = []
+        video_models_used: set[str] = set()
         for script in script_pack.scripts:
-            video_uri = self.media.reserve_binary_artifact(run_id, f"{script.variant_id}_sample.mp4")
+            video_prompt = (
+                "Generate a short social ad video clip based on script. "
+                f"Hook: {script.hook}. Script: {script.script}. Shots: {script.shot_list}. "
+                f"Output should be brand-safe and product-forward, aspect ratio {video_size}, "
+                f"target resolution {resolution}, duration {duration_seconds} seconds."
+            )
+            source = "placeholder"
+            error_text = None
+            model_used = ""
+            provider_used = ""
+            try:
+                video_result, provider_used, model_used = self._generate_video(
+                    fallback_provider=provider,
+                    fallback_model=model,
+                    prompt=video_prompt,
+                    size=video_size,
+                    duration_seconds=duration_seconds,
+                    runtime_config=runtime_config,
+                )
+                estimated_cost += video_result.estimated_cost
+                selected = video_result.videos[0] if video_result.videos else None
+                if selected:
+                    video_bytes, source = self._materialize_generated_video(selected)
+                else:
+                    video_bytes, source = b"", "placeholder"
+                video_uri = self.media.write_binary_artifact(run_id, f"{script.variant_id}_sample.mp4", video_bytes)
+                video_models_used.add(video_result.model_used or model_used)
+            except Exception as exc:
+                error_text = str(exc)
+                video_uri = self.media.reserve_binary_artifact(run_id, f"{script.variant_id}_sample.mp4")
             asset = VideoAsset(variant_id=script.variant_id, video_uri=video_uri, duration_seconds=15.0)
             videos.append(asset)
-            artifacts.append({"type": "generated_video", "uri": video_uri, "payload": asset.model_dump()})
+            artifacts.append(
+                {
+                    "type": "generated_video",
+                    "uri": video_uri,
+                    "payload": {
+                        **asset.model_dump(),
+                        "source": source,
+                        "video_provider": provider_used,
+                        "video_model": model_used,
+                        "error": error_text,
+                    },
+                }
+            )
         bundle = VideoBundle(videos=videos)
         uri = self.media.write_text_artifact(run_id, "video_bundle.json", bundle.model_dump_json(indent=2))
         artifacts.append({"type": "video_bundle", "uri": uri, "payload": bundle.model_dump()})
+        final_model_used = f"text={text_model_used};video={','.join(sorted(m for m in video_models_used if m)) or 'placeholder'}"
         return StageOutput(
             payload=bundle.model_dump(),
-            model_used=model_used,
+            model_used=final_model_used,
             estimated_cost=estimated_cost,
             artifacts=artifacts,
         )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -31,6 +32,7 @@ from app.schemas.contracts import (
     VideoScriptPack,
 )
 from app.services.agent_api_configs import resolve_agent_config, resolve_agent_runtime
+from app.services.creative_specs import resolve_creative_specs
 
 
 runtime = AgentsRuntime()
@@ -62,14 +64,52 @@ def _get_or_create_project(db: Session, workspace_id: str, name: str, market: st
     return project
 
 
-def _get_or_create_product(db: Session, project_id: str, name: str) -> Product:
-    product = db.scalar(select(Product).where(Product.project_id == project_id, Product.name == name))
+def _get_or_create_product(db: Session, project_id: str, name: str, product_code: str) -> Product:
+    normalized_code = product_code.strip()
+    if not normalized_code:
+        raise ValueError("product_code is required")
+    product = db.scalar(select(Product).where(Product.product_code == normalized_code))
     if product:
+        if product.name != name:
+            raise ValueError(f"product_code conflict: {normalized_code} is already bound to product_name={product.name}")
+        if product.project_id != project_id:
+            raise ValueError(f"product_code conflict: {normalized_code} belongs to another project")
         return product
-    product = Product(project_id=project_id, name=name)
+    product = Product(project_id=project_id, name=name, product_code=normalized_code)
     db.add(product)
     db.flush()
     return product
+
+
+def _model_snapshot_for_run(db: Session, *, run_provider: str | None, run_model: str | None) -> dict:
+    fallback_provider = run_provider or "openai"
+    fallback_model = run_model or "gpt-4.1"
+    default_cfg = resolve_agent_config(
+        db,
+        agent_name="default",
+        run_provider=fallback_provider,
+        run_model=fallback_model,
+    )
+    generation_cfg = resolve_agent_config(
+        db,
+        agent_name="generation_agent",
+        run_provider=fallback_provider,
+        run_model=fallback_model,
+    )
+    return {
+        "default_text": {
+            "provider_name": default_cfg.get("provider_name"),
+            "model_name": default_cfg.get("model_name"),
+            "api_base_url": default_cfg.get("api_base_url"),
+            "api_key_env": default_cfg.get("api_key_env"),
+        },
+        "generation_text": {
+            "provider_name": generation_cfg.get("provider_name"),
+            "model_name": generation_cfg.get("model_name"),
+            "api_base_url": generation_cfg.get("api_base_url"),
+            "api_key_env": generation_cfg.get("api_key_env"),
+        },
+    }
 
 
 def _get_or_create_campaign(
@@ -102,7 +142,7 @@ def create_run(db: Session, payload: RunCreateRequest) -> PipelineRun:
     stage_plan = stage_plan_for(payload.pipeline_mode)
     workspace = _get_or_create_workspace(db, payload.workspace_name)
     project = _get_or_create_project(db, workspace.id, payload.project_name, payload.market, payload.locale)
-    product = _get_or_create_product(db, project.id, payload.product_name)
+    product = _get_or_create_product(db, project.id, payload.product_name, payload.product_code)
     campaign = _get_or_create_campaign(
         db=db,
         project_id=project.id,
@@ -111,9 +151,17 @@ def create_run(db: Session, payload: RunCreateRequest) -> PipelineRun:
         channel=payload.channel,
         objective=payload.objective,
     )
+    creative_specs = resolve_creative_specs(payload.creative_preset, payload.creative_specs)
+    model_snapshot = _model_snapshot_for_run(
+        db,
+        run_provider=payload.model_provider,
+        run_model=payload.model_name,
+    )
     context_json = payload.context or {}
     context_json.setdefault("business_context", payload.business_context or {})
     context_json.setdefault("category_tags", payload.category_tags or [])
+    context_json["creative_specs"] = creative_specs
+    context_json["model_snapshot"] = model_snapshot
     run = PipelineRun(
         workspace_id=workspace.id,
         project_id=project.id,
@@ -124,8 +172,12 @@ def create_run(db: Session, payload: RunCreateRequest) -> PipelineRun:
         market=payload.market,
         locale=payload.locale,
         pipeline_mode=payload.pipeline_mode,
-        model_provider=payload.model_provider,
-        model_name=payload.model_name,
+        product_code=product.product_code,
+        industry_code=payload.industry_code,
+        creative_preset=payload.creative_preset,
+        creative_specs=creative_specs,
+        model_provider=payload.model_provider or "openai",
+        model_name=payload.model_name or "gpt-4.1",
         variant_count=payload.variant_count,
         enable_research=payload.enable_research,
         manual_research_brief=payload.manual_research_brief,
@@ -225,20 +277,46 @@ def _stage_output_optional(db: Session, run_id: str, stage_name: str) -> dict:
 
 
 def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[dict]:
-    rows = db.scalars(
-        select(GmMemory).where(GmMemory.project_id == run.project_id).order_by(desc(GmMemory.created_at)).limit(20)
+    product_rows = db.scalars(
+        select(GmMemory)
+        .where(
+            GmMemory.project_id == run.project_id,
+            GmMemory.memory_scope == "product",
+            GmMemory.product_code == run.product_code,
+        )
+        .order_by(desc(GmMemory.score_hint), desc(GmMemory.created_at))
+        .limit(10)
     ).all()
-    if not run.category_tags:
-        return [row.content for row in rows[:limit]]
-    tag_set = set(run.category_tags)
-    matched: list[dict] = []
-    for row in rows:
-        tags = set(row.content.get("category_tags", []))
-        if not tags or tags.intersection(tag_set):
-            matched.append(row.content)
-        if len(matched) >= limit:
+    industry_rows = db.scalars(
+        select(GmMemory)
+        .where(
+            GmMemory.project_id == run.project_id,
+            GmMemory.memory_scope == "industry",
+            GmMemory.industry_code == run.industry_code,
+        )
+        .order_by(desc(GmMemory.score_hint), desc(GmMemory.created_at))
+        .limit(10)
+    ).all()
+
+    merged: list[dict] = []
+    seen_fingerprints: set[str] = set()
+    for row in [*product_rows[:5], *industry_rows[:3]]:
+        payload = {
+            "memory_scope": row.memory_scope,
+            "product_code": row.product_code,
+            "industry_code": row.industry_code,
+            "source_type": row.source_type,
+            "score_hint": row.score_hint,
+            "content": row.content or {},
+        }
+        fingerprint = f"{payload['memory_scope']}|{payload['product_code']}|{payload['industry_code']}|{json.dumps(payload['content'], sort_keys=True)}"
+        if fingerprint in seen_fingerprints:
+            continue
+        seen_fingerprints.add(fingerprint)
+        merged.append(payload)
+        if len(merged) >= limit:
             break
-    return matched
+    return merged
 
 
 def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
@@ -249,7 +327,11 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
         "context": run.context_json or {},
         "market": run.market,
         "locale": run.locale,
+        "product_code": run.product_code,
+        "industry_code": run.industry_code,
         "pipeline_mode": run.pipeline_mode,
+        "creative_preset": run.creative_preset,
+        "creative_specs": run.creative_specs or {},
         "variant_count": run.variant_count,
         "enable_research": run.enable_research,
         "manual_research_brief": run.manual_research_brief or "",
@@ -345,6 +427,7 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
                 variants,
                 intake=intake,
                 business_context=task.input_payload.get("business_context", {}),
+                creative_specs=task.input_payload.get("creative_specs", {}),
                 market=run.market,
                 locale=run.locale,
                 provider=provider_name,
@@ -374,6 +457,7 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
             output = runtime.run_video_generation(
                 run.id,
                 scripts,
+                creative_specs=task.input_payload.get("creative_specs", {}),
                 provider=provider_name,
                 model=model_name,
                 runtime_config=runtime_config,

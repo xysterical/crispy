@@ -29,7 +29,10 @@ def test_agent_api_default_and_override(client):
             "workspace_name": "w1",
             "project_name": "p-agentcfg",
             "product_name": "pet toy",
+            "product_code": "PT-001",
+            "industry_code": "pet_toys",
             "campaign_name": "meta-agentcfg-1",
+            "creative_preset": "meta_square_5s",
             "model_provider": "openai",
             "model_name": "gpt-4.1",
         },
@@ -56,12 +59,18 @@ def test_agent_api_generation_image_config(client):
             "image_model_name": "gpt-image-2",
             "image_api_base_url": "https://api.apimart.ai/v1/images/generations",
             "image_api_key_env": "CRISPY_API_KEY_IMAGE",
+            "video_provider_name": "openai",
+            "video_model_name": "douban-seedance-2-0",
+            "video_api_base_url": "https://api.video-provider.ai/v1/videos/generations",
+            "video_api_key_env": "CRISPY_API_KEY_VIDEO",
         },
     )
     assert patch_resp.status_code == 200
     row = patch_resp.json()
     assert row["image_model_name"] == "gpt-image-2"
     assert row["image_api_key_env"] == "CRISPY_API_KEY_IMAGE"
+    assert row["video_model_name"] == "douban-seedance-2-0"
+    assert row["video_api_key_env"] == "CRISPY_API_KEY_VIDEO"
 
     all_rows = client.get("/agent-configs").json()
     gen_rows = [item for item in all_rows if item["agent_name"] == "generation_agent"]
@@ -71,6 +80,8 @@ def test_agent_api_generation_image_config(client):
     assert gen["model_name"] == "kimi-k2.5"
     assert gen["image_provider_name"] == "openai"
     assert gen["image_api_base_url"] == "https://api.apimart.ai/v1/images/generations"
+    assert gen["video_provider_name"] == "openai"
+    assert gen["video_api_base_url"] == "https://api.video-provider.ai/v1/videos/generations"
 
 
 def test_agent_api_page_loads(client, monkeypatch):
@@ -80,7 +91,9 @@ def test_agent_api_page_loads(client, monkeypatch):
     assert "Agent API Configs" in resp.text
     assert "default" in resp.text
     assert "CRISPY_API_KEY_KIMI" in resp.text
-    assert "Generation Image API" in resp.text
+    assert "Generation Agent - Text" in resp.text
+    assert "Generation Agent - Image" in resp.text
+    assert "Generation Agent - Video" in resp.text
 
 
 def test_agent_api_env_vars_endpoint(client, monkeypatch):
@@ -109,3 +122,10 @@ def test_agent_api_env_prefix_validation(client):
     )
     assert image_resp.status_code == 400
     assert "CRISPY_API_KEY_" in image_resp.text
+
+    video_resp = client.patch(
+        "/agent-configs/generation_agent",
+        json={"video_api_key_env": "OPENAI_API_KEY"},
+    )
+    assert video_resp.status_code == 400
+    assert "CRISPY_API_KEY_" in video_resp.text

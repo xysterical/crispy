@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import httpx
 
-from app.providers.llm import ImageGenRequest, MultimodalChatRequest, OpenAICompatibleProvider
+from app.providers.llm import ImageGenRequest, MultimodalChatRequest, OpenAICompatibleProvider, VideoGenRequest
 
 
 class _FakeResponse:
@@ -135,3 +135,28 @@ def test_generate_image_async_task_polling(monkeypatch):
     )
     assert len(result.images) == 1
     assert result.images[0].url == "https://example.com/image.png"
+
+
+def test_generate_video_uses_configured_endpoint(monkeypatch):
+    endpoint = "https://api.video-provider.ai/v1/videos/generations"
+    client = _FakeClient(
+        post_map={
+            endpoint: _FakeResponse(
+                200,
+                {
+                    "model": "douban-seedance-2-0",
+                    "data": [{"video_url": "https://example.com/video.mp4"}],
+                },
+            )
+        }
+    )
+    monkeypatch.setattr("app.providers.llm.httpx.Client", lambda timeout=90.0: client)
+    provider = OpenAICompatibleProvider("custom")
+    result = provider.generate_video(
+        VideoGenRequest(model="douban-seedance-2-0", prompt="dog leash in park", size="9:16"),
+        api_base_url=endpoint,
+        api_key="dummy",
+    )
+    assert len(result.videos) == 1
+    assert result.videos[0].url == "https://example.com/video.mp4"
+    assert client.posted_urls == [endpoint]

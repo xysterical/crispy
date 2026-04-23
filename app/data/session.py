@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from threading import RLock
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
@@ -94,6 +94,7 @@ def switch_database_url(database_url: str) -> str:
         with new_engine.connect():
             pass
         Base.metadata.create_all(bind=new_engine)
+        apply_runtime_migrations(new_engine)
         old_engine = engine
         _session_factory = sessionmaker(autocommit=False, autoflush=False, bind=new_engine, class_=Session)
         engine = new_engine
@@ -110,6 +111,50 @@ def init_db() -> None:
     from app.data import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    apply_runtime_migrations(engine)
+
+
+def _add_column_if_missing(target_engine, table_name: str, column_name: str, ddl_sql: str) -> None:
+    inspector = inspect(target_engine)
+    columns = {item["name"] for item in inspector.get_columns(table_name)}
+    if column_name in columns:
+        return
+    with target_engine.begin() as conn:
+        conn.execute(text(ddl_sql))
+
+
+def apply_runtime_migrations(target_engine) -> None:
+    # lightweight migration path without alembic, compatible with sqlite/postgresql
+    _add_column_if_missing(target_engine, "product", "product_code", "ALTER TABLE product ADD COLUMN product_code VARCHAR(128)")
+    _add_column_if_missing(target_engine, "pipeline_run", "product_code", "ALTER TABLE pipeline_run ADD COLUMN product_code VARCHAR(128)")
+    _add_column_if_missing(target_engine, "pipeline_run", "industry_code", "ALTER TABLE pipeline_run ADD COLUMN industry_code VARCHAR(128)")
+    _add_column_if_missing(target_engine, "pipeline_run", "creative_preset", "ALTER TABLE pipeline_run ADD COLUMN creative_preset VARCHAR(64)")
+    _add_column_if_missing(target_engine, "pipeline_run", "creative_specs", "ALTER TABLE pipeline_run ADD COLUMN creative_specs JSON")
+    _add_column_if_missing(target_engine, "gm_memory", "memory_scope", "ALTER TABLE gm_memory ADD COLUMN memory_scope VARCHAR(32)")
+    _add_column_if_missing(target_engine, "gm_memory", "product_code", "ALTER TABLE gm_memory ADD COLUMN product_code VARCHAR(128)")
+    _add_column_if_missing(target_engine, "gm_memory", "industry_code", "ALTER TABLE gm_memory ADD COLUMN industry_code VARCHAR(128)")
+    _add_column_if_missing(target_engine, "gm_memory", "source_type", "ALTER TABLE gm_memory ADD COLUMN source_type VARCHAR(64)")
+    _add_column_if_missing(target_engine, "gm_memory", "score_hint", "ALTER TABLE gm_memory ADD COLUMN score_hint FLOAT")
+
+    with target_engine.begin() as conn:
+        conn.execute(text("UPDATE product SET product_code = 'legacy_' || id WHERE product_code IS NULL OR product_code = ''"))
+        conn.execute(
+            text(
+                "UPDATE pipeline_run "
+                "SET product_code = (SELECT product.product_code FROM product WHERE product.id = pipeline_run.product_id) "
+                "WHERE product_code IS NULL OR product_code = ''"
+            )
+        )
+        conn.execute(text("UPDATE pipeline_run SET industry_code = 'general' WHERE industry_code IS NULL OR industry_code = ''"))
+        conn.execute(text("UPDATE pipeline_run SET creative_preset = 'meta_square_5s' WHERE creative_preset IS NULL OR creative_preset = ''"))
+        conn.execute(text("UPDATE pipeline_run SET creative_specs = '{}' WHERE creative_specs IS NULL"))
+        conn.execute(text("UPDATE gm_memory SET memory_scope = 'industry' WHERE memory_scope IS NULL OR memory_scope = ''"))
+        conn.execute(text("UPDATE gm_memory SET source_type = 'feedback_import' WHERE source_type IS NULL OR source_type = ''"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_product_product_code ON product(product_code)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pipeline_run_product_code ON pipeline_run(product_code)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pipeline_run_industry_code ON pipeline_run(industry_code)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_gm_memory_scope_product ON gm_memory(memory_scope, product_code)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_gm_memory_scope_industry ON gm_memory(memory_scope, industry_code)"))
 
 
 def get_db() -> Generator[Session, None, None]:

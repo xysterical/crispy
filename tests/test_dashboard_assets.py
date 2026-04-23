@@ -23,7 +23,10 @@ def test_dashboard_data_source_switch(client):
             "workspace_name": "switch_w",
             "project_name": "switch_p",
             "product_name": "switch_product",
+            "product_code": "SW-001",
+            "industry_code": "pet_accessories",
             "campaign_name": "switch_campaign",
+            "creative_preset": "meta_square_5s",
             "pipeline_mode": "copy_image_only",
             "business_context": {"target_audience": "pet owners"},
         },
@@ -67,7 +70,10 @@ def test_artifacts_endpoint_filters_generated_outputs(client):
             "workspace_name": "assets_w",
             "project_name": "assets_p",
             "product_name": "dog leash",
+            "product_code": "DL-TEST-001",
+            "industry_code": "pet_accessories",
             "campaign_name": "assets_campaign",
+            "creative_preset": "meta_square_5s",
             "pipeline_mode": "copy_image_only",
             "business_context": {"target_audience": "dog owners", "primary_cta": "Shop Now"},
         },
@@ -93,3 +99,9 @@ def test_artifacts_endpoint_filters_generated_outputs(client):
     assert search_resp.status_code == 200
     searched = search_resp.json()["items"]
     assert all(item["run_id"] == run_id for item in searched)
+
+    by_code_resp = client.get("/artifacts", params={"product_code": "DL-TEST-001"})
+    assert by_code_resp.status_code == 200
+    by_code_items = by_code_resp.json()["items"]
+    assert len(by_code_items) > 0
+    assert all(item["product_code"] == "DL-TEST-001" for item in by_code_items)

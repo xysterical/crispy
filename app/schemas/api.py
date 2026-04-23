@@ -14,15 +14,19 @@ class RunCreateRequest(BaseModel):
     workspace_name: str
     project_name: str
     product_name: str
+    product_code: str
+    industry_code: str
     campaign_name: str
     channel: str = "meta"
     objective: str = "conversions"
     market: str = "US"
     locale: str = "en-US"
+    creative_preset: str
+    creative_specs: dict = Field(default_factory=dict)
     variant_count: int = 8
     context: dict = Field(default_factory=dict)
-    model_provider: str = "openai"
-    model_name: str = "gpt-4.1"
+    model_provider: str | None = "openai"
+    model_name: str | None = "gpt-4.1"
     pipeline_mode: PipelineMode = "full_multimodal"
     enable_research: bool = False
     manual_research_brief: str = ""
@@ -56,11 +60,15 @@ class RunView(BaseModel):
     workspace_id: str
     project_id: str
     product_id: str
+    product_code: str
+    industry_code: str
     campaign_id: str
     market: str
     locale: str
-    model_provider: str
-    model_name: str
+    model_provider: str | None
+    model_name: str | None
+    creative_preset: str
+    creative_specs: dict = Field(default_factory=dict)
     pipeline_mode: PipelineMode = "full_multimodal"
     enable_research: bool = False
     manual_research_brief: str = ""
@@ -81,6 +89,8 @@ class RunSummary(BaseModel):
     current_stage: str | None
     pipeline_mode: PipelineMode = "full_multimodal"
     project_id: str
+    product_code: str = ""
+    industry_code: str = ""
     updated_at: datetime
 
 
@@ -158,6 +168,11 @@ class AgentApiConfigView(BaseModel):
     image_api_base_url: str | None = None
     image_api_key_env: str | None = None
     image_api_key_available: bool = False
+    video_provider_name: str | None = None
+    video_model_name: str | None = None
+    video_api_base_url: str | None = None
+    video_api_key_env: str | None = None
+    video_api_key_available: bool = False
     extra: dict = Field(default_factory=dict)
     is_default: bool = False
     updated_at: datetime
@@ -172,6 +187,10 @@ class AgentApiConfigPatchRequest(BaseModel):
     image_model_name: str | None = None
     image_api_base_url: str | None = None
     image_api_key_env: str | None = None
+    video_provider_name: str | None = None
+    video_model_name: str | None = None
+    video_api_base_url: str | None = None
+    video_api_key_env: str | None = None
     extra: dict | None = None
 
 
@@ -219,6 +238,7 @@ class ArtifactListItem(BaseModel):
     artifact_type: str
     stage_name: str
     pipeline_mode: PipelineMode | str
+    product_code: str = ""
     uri: str
     preview_text: str = ""
     score: float | None = None
@@ -230,3 +250,16 @@ class ArtifactListResponse(BaseModel):
     page_size: int
     total: int
     items: list[ArtifactListItem] = Field(default_factory=list)
+
+
+class GmMemoryItem(BaseModel):
+    id: str
+    project_id: str
+    run_id: str | None = None
+    memory_scope: str
+    product_code: str | None = None
+    industry_code: str | None = None
+    source_type: str
+    score_hint: float | None = None
+    content: dict = Field(default_factory=dict)
+    created_at: datetime

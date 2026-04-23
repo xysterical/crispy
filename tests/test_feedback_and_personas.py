@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from app.data.models import GmInstructionVersion
+from app.data.models import GmInstructionVersion, GmMemory
 from app.data.session import SessionLocal
 from app.services.runs import execute_next_queued_stage
 
@@ -20,7 +20,10 @@ def test_feedback_import_updates_leaderboard(client):
             "workspace_name": "w1",
             "project_name": "p-feedback",
             "product_name": "pet brush",
+            "product_code": "FB-001",
+            "industry_code": "pet_care",
             "campaign_name": "meta-c1",
+            "creative_preset": "meta_square_5s",
         },
     )
     run = create_resp.json()
@@ -76,12 +79,26 @@ def test_feedback_import_updates_leaderboard(client):
         )
         assert gm_instruction is not None
         assert gm_instruction.version >= 1
+        product_memories = db.scalars(
+            select(GmMemory).where(GmMemory.memory_scope == "product", GmMemory.product_code == "FB-001")
+        ).all()
+        industry_memories = db.scalars(
+            select(GmMemory).where(GmMemory.memory_scope == "industry", GmMemory.industry_code == "pet_care")
+        ).all()
+        assert len(product_memories) >= 1
+        assert len(industry_memories) >= 1
 
     leaderboard = client.get(f"/projects/{project_id}/leaderboard")
     assert leaderboard.status_code == 200
     ranking = leaderboard.json()["ranking"]
     assert ranking[0]["weighted_score"] >= ranking[-1]["weighted_score"]
     assert ranking[0]["creative_key"] == "V1"
+
+    gm_view = client.get("/gm-memory", params={"scope": "product", "product_code": "FB-001"})
+    assert gm_view.status_code == 200
+    gm_rows = gm_view.json()
+    assert len(gm_rows) >= 1
+    assert all(item["memory_scope"] == "product" for item in gm_rows)
 
 
 def test_persona_read_and_patch(client):

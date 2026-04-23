@@ -10,6 +10,7 @@ from app.data.models import (
     GmMemory,
     GmInstructionVersion,
     PerformanceSnapshot,
+    PipelineRun,
     Project,
     Workspace,
 )
@@ -81,6 +82,8 @@ def import_feedback_rows(
 
     snapshot_count = 0
     scored_rows: list[tuple[str, float]] = []
+    memory_by_product: dict[str, list[tuple[str, float]]] = {}
+    memory_by_industry: dict[str, list[tuple[str, float]]] = {}
     for row in rows:
         ctr = _safe_div(row.clicks, row.impressions)
         cpc = _safe_div(row.spend, row.clicks)
@@ -88,6 +91,13 @@ def import_feedback_rows(
         roas = _safe_div(row.revenue, row.spend)
         weighted = _weighted_score(ctr=ctr, cpc=cpc, cpa=cpa, roas=roas, weights=project.metric_weights)
         scored_rows.append((row.creative_key, weighted))
+        run_model = db.get(PipelineRun, row.run_id) if row.run_id else None
+        product_code = run_model.product_code if run_model else ""
+        industry_code = run_model.industry_code if run_model else ""
+        if product_code:
+            memory_by_product.setdefault(product_code, []).append((row.creative_key, weighted))
+        if industry_code:
+            memory_by_industry.setdefault(industry_code, []).append((row.creative_key, weighted))
 
         snapshot = PerformanceSnapshot(
             project_id=project.id,
@@ -112,22 +122,57 @@ def import_feedback_rows(
         snapshot_count += 1
 
     memory = None
+    memory_entries: list[GmMemory] = []
     if scored_rows:
         scored_rows.sort(key=lambda item: item[1], reverse=True)
         top = scored_rows[:3]
         bottom = scored_rows[-3:]
-        memory = GmMemory(
-            project_id=project.id,
-            memory_type="strategy",
-            content={
-                "source": "weekly_csv_import",
-                "top_creatives": top,
-                "underperformers": bottom,
-                "summary": "Preserve top-performing hook patterns and retire low-score variants.",
-                "category_tags": [],
-            },
-        )
-        db.add(memory)
+        for product_code, items in memory_by_product.items():
+            ranked = sorted(items, key=lambda item: item[1], reverse=True)
+            top_product = ranked[:3]
+            bottom_product = ranked[-3:]
+            entry = GmMemory(
+                project_id=project.id,
+                memory_scope="product",
+                product_code=product_code,
+                source_type="feedback_import",
+                score_hint=top_product[0][1] if top_product else None,
+                memory_type="strategy",
+                content={
+                    "source": "weekly_csv_import",
+                    "scope": "product",
+                    "product_code": product_code,
+                    "top_creatives": top_product,
+                    "underperformers": bottom_product,
+                    "summary": "Preserve product-level winning hook patterns and retire low-score variants.",
+                },
+            )
+            db.add(entry)
+            memory_entries.append(entry)
+
+        for industry_code, items in memory_by_industry.items():
+            ranked = sorted(items, key=lambda item: item[1], reverse=True)
+            top_industry = ranked[:3]
+            bottom_industry = ranked[-3:]
+            entry = GmMemory(
+                project_id=project.id,
+                memory_scope="industry",
+                industry_code=industry_code,
+                source_type="feedback_import",
+                score_hint=top_industry[0][1] if top_industry else None,
+                memory_type="strategy",
+                content={
+                    "source": "weekly_csv_import",
+                    "scope": "industry",
+                    "industry_code": industry_code,
+                    "top_creatives": top_industry,
+                    "underperformers": bottom_industry,
+                    "summary": "Keep industry-level winners and avoid repeated low-performing patterns.",
+                },
+            )
+            db.add(entry)
+            memory_entries.append(entry)
+        memory = memory_entries[0] if memory_entries else None
         latest_version = db.scalar(
             select(GmInstructionVersion.version)
             .where(GmInstructionVersion.project_id == project.id)
@@ -145,6 +190,8 @@ def import_feedback_rows(
                     "source": "feedback_import",
                     "winning_patterns": [item[0] for item in top],
                     "avoid_patterns": [item[0] for item in bottom],
+                    "product_memory_count": len(memory_by_product),
+                    "industry_memory_count": len(memory_by_industry),
                     "guidance": "Prioritize winning hooks and avoid low-performing patterns in planning stage.",
                 },
                 is_active=True,

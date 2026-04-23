@@ -28,44 +28,44 @@ def _validate_env_name(env_name: str | None) -> None:
         raise ValueError(f"api_key_env must start with {API_KEY_ENV_PREFIX}")
 
 
-def _image_config_from_extra(extra: dict | None) -> dict[str, Any]:
+def _modality_config_from_extra(extra: dict | None, key: str) -> dict[str, Any]:
     if not isinstance(extra, dict):
         return {}
-    row = extra.get("image_config")
+    row = extra.get(key)
     if not isinstance(row, dict):
         return {}
     return dict(row)
 
 
-def _merge_image_config(
-    image_cfg: dict[str, Any],
+def _merge_modality_config(
+    current_cfg: dict[str, Any],
     *,
-    image_provider_name: str | None,
-    image_model_name: str | None,
-    image_api_base_url: str | None,
-    image_api_key_env: str | None,
+    provider_name: str | None,
+    model_name: str | None,
+    api_base_url: str | None,
+    api_key_env: str | None,
 ) -> dict[str, Any]:
-    merged = dict(image_cfg)
-    if image_provider_name is not None:
-        value = image_provider_name.strip()
+    merged = dict(current_cfg)
+    if provider_name is not None:
+        value = provider_name.strip()
         if value:
             merged["provider_name"] = value
         else:
             merged.pop("provider_name", None)
-    if image_model_name is not None:
-        value = image_model_name.strip()
+    if model_name is not None:
+        value = model_name.strip()
         if value:
             merged["model_name"] = value
         else:
             merged.pop("model_name", None)
-    if image_api_base_url is not None:
-        value = image_api_base_url.strip()
+    if api_base_url is not None:
+        value = api_base_url.strip()
         if value:
             merged["api_base_url"] = value
         else:
             merged.pop("api_base_url", None)
-    if image_api_key_env is not None:
-        value = image_api_key_env.strip()
+    if api_key_env is not None:
+        value = api_key_env.strip()
         if value:
             merged["api_key_env"] = value
         else:
@@ -101,29 +101,47 @@ def upsert_agent_config(
     image_model_name: str | None = None,
     image_api_base_url: str | None = None,
     image_api_key_env: str | None = None,
+    video_provider_name: str | None = None,
+    video_model_name: str | None = None,
+    video_api_base_url: str | None = None,
+    video_api_key_env: str | None = None,
     extra: dict | None,
 ) -> AgentApiConfig:
     _validate_env_name(api_key_env)
     _validate_env_name(image_api_key_env)
+    _validate_env_name(video_api_key_env)
     ensure_default_agent_config(db)
     row = db.scalar(select(AgentApiConfig).where(AgentApiConfig.agent_name == agent_name))
     has_image_patch = any(
         value is not None
         for value in (image_provider_name, image_model_name, image_api_base_url, image_api_key_env)
     )
+    has_video_patch = any(
+        value is not None
+        for value in (video_provider_name, video_model_name, video_api_base_url, video_api_key_env)
+    )
 
     if not row:
         defaults = _default_values()
         extra_payload = dict(extra) if isinstance(extra, dict) else dict(defaults["extra"])
-        merged_image = _merge_image_config(
-            _image_config_from_extra(extra_payload),
-            image_provider_name=image_provider_name,
-            image_model_name=image_model_name,
-            image_api_base_url=image_api_base_url,
-            image_api_key_env=image_api_key_env,
+        merged_image = _merge_modality_config(
+            _modality_config_from_extra(extra_payload, "image_config"),
+            provider_name=image_provider_name,
+            model_name=image_model_name,
+            api_base_url=image_api_base_url,
+            api_key_env=image_api_key_env,
         )
         if merged_image:
             extra_payload["image_config"] = merged_image
+        merged_video = _merge_modality_config(
+            _modality_config_from_extra(extra_payload, "video_config"),
+            provider_name=video_provider_name,
+            model_name=video_model_name,
+            api_base_url=video_api_base_url,
+            api_key_env=video_api_key_env,
+        )
+        if merged_video:
+            extra_payload["video_config"] = merged_video
         row = AgentApiConfig(
             agent_name=agent_name,
             provider_name=provider_name or defaults["provider_name"],
@@ -147,18 +165,30 @@ def upsert_agent_config(
 
     base_extra = dict(extra) if isinstance(extra, dict) else dict(row.extra or {})
     if has_image_patch:
-        merged_image = _merge_image_config(
-            _image_config_from_extra(base_extra),
-            image_provider_name=image_provider_name,
-            image_model_name=image_model_name,
-            image_api_base_url=image_api_base_url,
-            image_api_key_env=image_api_key_env,
+        merged_image = _merge_modality_config(
+            _modality_config_from_extra(base_extra, "image_config"),
+            provider_name=image_provider_name,
+            model_name=image_model_name,
+            api_base_url=image_api_base_url,
+            api_key_env=image_api_key_env,
         )
         if merged_image:
             base_extra["image_config"] = merged_image
         else:
             base_extra.pop("image_config", None)
-    if extra is not None or has_image_patch:
+    if has_video_patch:
+        merged_video = _merge_modality_config(
+            _modality_config_from_extra(base_extra, "video_config"),
+            provider_name=video_provider_name,
+            model_name=video_model_name,
+            api_base_url=video_api_base_url,
+            api_key_env=video_api_key_env,
+        )
+        if merged_video:
+            base_extra["video_config"] = merged_video
+        else:
+            base_extra.pop("video_config", None)
+    if extra is not None or has_image_patch or has_video_patch:
         row.extra = base_extra
 
     db.flush()
@@ -166,8 +196,8 @@ def upsert_agent_config(
 
 
 def _resolved_image_config(default_cfg: AgentApiConfig, agent_cfg: AgentApiConfig | None, text_fallback: dict) -> dict:
-    default_image = _image_config_from_extra(default_cfg.extra)
-    agent_image = _image_config_from_extra(agent_cfg.extra if agent_cfg else None)
+    default_image = _modality_config_from_extra(default_cfg.extra, "image_config")
+    agent_image = _modality_config_from_extra(agent_cfg.extra if agent_cfg else None, "image_config")
     image_provider_name = (
         agent_image.get("provider_name")
         or default_image.get("provider_name")
@@ -194,6 +224,38 @@ def _resolved_image_config(default_cfg: AgentApiConfig, agent_cfg: AgentApiConfi
         "api_base_url": image_api_base_url,
         "api_key_env": image_api_key_env,
         "api_key_available": bool(os.getenv(image_api_key_env)) if image_api_key_env else False,
+    }
+
+
+def _resolved_video_config(default_cfg: AgentApiConfig, agent_cfg: AgentApiConfig | None, text_fallback: dict) -> dict:
+    default_video = _modality_config_from_extra(default_cfg.extra, "video_config")
+    agent_video = _modality_config_from_extra(agent_cfg.extra if agent_cfg else None, "video_config")
+    video_provider_name = (
+        agent_video.get("provider_name")
+        or default_video.get("provider_name")
+        or text_fallback["provider_name"]
+    )
+    video_model_name = (
+        agent_video.get("model_name")
+        or default_video.get("model_name")
+        or "douban-seedance-2-0"
+    )
+    video_api_base_url = (
+        agent_video.get("api_base_url")
+        or default_video.get("api_base_url")
+        or text_fallback["api_base_url"]
+    )
+    video_api_key_env = (
+        agent_video.get("api_key_env")
+        or default_video.get("api_key_env")
+        or text_fallback["api_key_env"]
+    )
+    return {
+        "provider_name": video_provider_name,
+        "model_name": video_model_name,
+        "api_base_url": video_api_base_url,
+        "api_key_env": video_api_key_env,
+        "api_key_available": bool(os.getenv(video_api_key_env)) if video_api_key_env else False,
     }
 
 
@@ -226,6 +288,7 @@ def resolve_agent_config(
         "api_key_env": api_key_env,
     }
     image = _resolved_image_config(default_cfg, agent_cfg, text_fallback)
+    video = _resolved_video_config(default_cfg, agent_cfg, text_fallback)
     return {
         "agent_name": agent_name,
         "provider_name": provider_name,
@@ -239,6 +302,11 @@ def resolve_agent_config(
         "image_api_base_url": image["api_base_url"],
         "image_api_key_env": image["api_key_env"],
         "image_api_key_available": image["api_key_available"],
+        "video_provider_name": video["provider_name"],
+        "video_model_name": video["model_name"],
+        "video_api_base_url": video["api_base_url"],
+        "video_api_key_env": video["api_key_env"],
+        "video_api_key_available": video["api_key_available"],
         "source": "agent_override" if agent_cfg else "default",
     }
 
@@ -246,8 +314,10 @@ def resolve_agent_config(
 def resolve_agent_runtime(config: dict) -> dict:
     api_key_env = config.get("api_key_env")
     image_api_key_env = config.get("image_api_key_env")
+    video_api_key_env = config.get("video_api_key_env")
     api_key = os.getenv(api_key_env) if api_key_env else None
     image_api_key = os.getenv(image_api_key_env) if image_api_key_env else None
+    video_api_key = os.getenv(video_api_key_env) if video_api_key_env else None
     return {
         "api_base_url": config.get("api_base_url"),
         "api_key": api_key,
@@ -260,6 +330,13 @@ def resolve_agent_runtime(config: dict) -> dict:
             "api_base_url": config.get("image_api_base_url"),
             "api_key": image_api_key,
             "extra": ((config.get("extra") or {}).get("image_config") or {}),
+        },
+        "video": {
+            "provider_name": config.get("video_provider_name"),
+            "model_name": config.get("video_model_name"),
+            "api_base_url": config.get("video_api_base_url"),
+            "api_key": video_api_key,
+            "extra": ((config.get("extra") or {}).get("video_config") or {}),
         },
     }
 

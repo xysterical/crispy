@@ -22,7 +22,10 @@ def test_runs_rich_accepts_multimodal_inputs(client):
         "workspace_name": "w-rich",
         "project_name": "p-rich",
         "product_name": "pet wipes rich",
+        "product_code": "PWR-001",
+        "industry_code": "pet_care",
         "campaign_name": "meta-rich",
+        "creative_preset": "meta_square_5s",
         "pipeline_mode": "copy_image_only",
         "business_context": '{"target_audience":"pet owners","primary_cta":"Shop Now","campaign_objective":"conversions"}',
         "category_tags": '["pet_care","hygiene"]',
@@ -49,7 +52,10 @@ def test_runs_rich_rejects_too_many_files(client):
         "workspace_name": "w-rich2",
         "project_name": "p-rich2",
         "product_name": "pet rich2",
+        "product_code": "PR2-001",
+        "industry_code": "pet_care",
         "campaign_name": "meta-rich2",
+        "creative_preset": "meta_square_5s",
     }
     resp = client.post("/runs/rich", data=data, files=files)
     assert resp.status_code == 400

@@ -15,10 +15,19 @@ _PLACEHOLDER_PNG_B64 = (
 
 def _normalize_task_result(result: dict[str, Any]) -> list[dict[str, Any]]:
     image_url = result.get("image_url")
+    video_url = result.get("video_url")
     b64_json = result.get("b64_json")
+    b64_data = result.get("b64_data")
     revised_prompt = result.get("revised_prompt")
-    if image_url or b64_json:
-        return [{"url": image_url, "b64_json": b64_json, "revised_prompt": revised_prompt}]
+    if image_url or video_url or b64_json or b64_data:
+        return [
+            {
+                "url": image_url or video_url,
+                "b64_json": b64_json,
+                "b64_data": b64_data,
+                "revised_prompt": revised_prompt,
+            }
+        ]
     images = result.get("images")
     if isinstance(images, list):
         normalized: list[dict[str, Any]] = []
@@ -37,6 +46,7 @@ def _normalize_task_result(result: dict[str, Any]) -> list[dict[str, Any]]:
                 {
                     "url": final_url,
                     "b64_json": item.get("b64_json"),
+                    "b64_data": item.get("b64_data"),
                     "revised_prompt": item.get("revised_prompt"),
                 }
             )
@@ -87,6 +97,29 @@ class ImageGenResult:
     estimated_cost: float = 0.0
 
 
+@dataclass(slots=True)
+class GeneratedVideo:
+    url: str | None = None
+    b64_data: str | None = None
+    mime_type: str = "video/mp4"
+
+
+@dataclass(slots=True)
+class VideoGenRequest:
+    model: str
+    prompt: str
+    duration_seconds: int = 8
+    size: str = "9:16"
+    n: int = 1
+
+
+@dataclass(slots=True)
+class VideoGenResult:
+    model_used: str
+    videos: list[GeneratedVideo] = field(default_factory=list)
+    estimated_cost: float = 0.0
+
+
 class LlmProvider:
     def chat_complete(
         self,
@@ -106,6 +139,16 @@ class LlmProvider:
         api_key: str | None = None,
         extra: dict | None = None,
     ) -> ImageGenResult:
+        raise NotImplementedError
+
+    def generate_video(
+        self,
+        request: VideoGenRequest,
+        *,
+        api_base_url: str | None = None,
+        api_key: str | None = None,
+        extra: dict | None = None,
+    ) -> VideoGenResult:
         raise NotImplementedError
 
     def complete(
@@ -160,6 +203,16 @@ class StubProvider(LlmProvider):
             images=[GeneratedImage(b64_json=_PLACEHOLDER_PNG_B64, revised_prompt=request.prompt)],
             estimated_cost=0.0,
         )
+
+    def generate_video(
+        self,
+        request: VideoGenRequest,
+        *,
+        api_base_url: str | None = None,
+        api_key: str | None = None,
+        extra: dict | None = None,
+    ) -> VideoGenResult:
+        return VideoGenResult(model_used=request.model, videos=[GeneratedVideo()], estimated_cost=0.0)
 
 
 class OpenAICompatibleProvider(LlmProvider):
@@ -412,6 +465,63 @@ class OpenAICompatibleProvider(LlmProvider):
         return ImageGenResult(
             model_used=str(data.get("model") or request.model),
             images=images,
+            estimated_cost=0.0,
+        )
+
+    def generate_video(
+        self,
+        request: VideoGenRequest,
+        *,
+        api_base_url: str | None = None,
+        api_key: str | None = None,
+        extra: dict | None = None,
+    ) -> VideoGenResult:
+        if not api_base_url or not api_key:
+            return self._stub.generate_video(request, api_base_url=api_base_url, api_key=api_key, extra=extra)
+
+        payload: dict[str, Any] = {
+            "model": request.model,
+            "prompt": request.prompt,
+            "n": request.n,
+            "size": request.size,
+            "duration_seconds": request.duration_seconds,
+        }
+        if isinstance(extra, dict) and isinstance(extra.get("video_payload"), dict):
+            payload = {**payload, **extra["video_payload"]}
+
+        data = self._post_json(
+            self._endpoint_candidates(api_base_url, "/videos/generations"),
+            payload=payload,
+            headers=self._headers(api_key),
+        )
+        task_id = self._extract_task_id(data)
+        if task_id:
+            polled = self._poll_task_result(base_url=api_base_url, task_id=task_id, headers=self._headers(api_key))
+            if isinstance(polled, dict) and polled:
+                task_data = polled.get("data")
+                if isinstance(task_data, dict):
+                    status = str(task_data.get("status") or "").lower()
+                    if status and status not in {"completed", "succeeded", "success"}:
+                        raise RuntimeError(f"video task not completed: status={status}")
+                data = polled
+
+        rows = data.get("data") or []
+        videos: list[GeneratedVideo] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            videos.append(
+                GeneratedVideo(
+                    url=row.get("url") or row.get("video_url"),
+                    b64_data=row.get("b64_data") or row.get("b64_json"),
+                    mime_type=row.get("mime_type") or "video/mp4",
+                )
+            )
+        if not videos:
+            videos.append(GeneratedVideo())
+        return VideoGenResult(
+            model_used=str(data.get("model") or request.model),
+            videos=videos,
             estimated_cost=0.0,
         )
 
