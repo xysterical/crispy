@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.data.session import SessionLocal
 from app.orchestrator.state_machine import STAGE_ORDER, stage_plan_for
 from app.services.runs import execute_next_queued_stage
@@ -135,6 +137,10 @@ def test_pipeline_mode_copy_image_only(client):
     payload = deliverables.json()["deliverables"]
     assert payload["copy_variant"] is not None
     assert payload["video_asset"] is None
+    image_uri = payload["image_assets"][0]["uri"]
+    image_path = Path(image_uri)
+    assert image_path.exists()
+    assert image_path.stat().st_size > 0
 
 
 def test_pipeline_modes_endpoint(client):

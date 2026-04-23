@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+import base64
+import mimetypes
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from app.providers.llm import ProviderRegistry
+import httpx
+
+from app.providers.llm import (
+    ImageGenRequest,
+    MultimodalChatRequest,
+    ProviderRegistry,
+    decode_placeholder_png,
+)
 from app.providers.media import LocalMediaProvider
 from app.schemas.contracts import (
     ComplianceLevel,
@@ -41,17 +51,94 @@ class AgentsRuntime:
         self.providers = ProviderRegistry()
         self.media = LocalMediaProvider()
 
-    def _complete(self, provider: str, model: str, prompt: str, runtime_config: dict | None) -> tuple[str, str, float]:
+    def _chat_complete(
+        self,
+        provider: str,
+        model: str,
+        prompt: str,
+        runtime_config: dict | None,
+        *,
+        image_urls: list[str] | None = None,
+    ) -> tuple[str, str, float]:
         llm = self.providers.get(provider)
-        runtime_config = runtime_config or {}
-        response = llm.complete(
-            prompt,
-            model=model,
-            api_base_url=runtime_config.get("api_base_url"),
-            api_key=runtime_config.get("api_key"),
-            extra=runtime_config.get("extra"),
+        runtime = runtime_config or {}
+        response = llm.chat_complete(
+            MultimodalChatRequest(prompt=prompt, model=model, image_urls=image_urls or []),
+            api_base_url=runtime.get("api_base_url"),
+            api_key=runtime.get("api_key"),
+            extra=runtime.get("extra"),
         )
         return response.text, response.model_used, response.estimated_cost
+
+    def _generate_image(
+        self,
+        *,
+        fallback_provider: str,
+        fallback_model: str,
+        prompt: str,
+        size: str,
+        runtime_config: dict | None,
+    ):
+        runtime = runtime_config or {}
+        image_runtime = runtime.get("image") or {}
+        provider_name = image_runtime.get("provider_name") or fallback_provider
+        model_name = image_runtime.get("model_name") or fallback_model
+        llm = self.providers.get(provider_name)
+        result = llm.generate_image(
+            ImageGenRequest(model=model_name, prompt=prompt, n=1, size=size),
+            api_base_url=image_runtime.get("api_base_url") or runtime.get("api_base_url"),
+            api_key=image_runtime.get("api_key") or runtime.get("api_key"),
+            extra=image_runtime.get("extra") or runtime.get("extra"),
+        )
+        return result, provider_name, model_name
+
+    def _local_image_to_data_url(self, path_str: str) -> str | None:
+        path = Path(path_str)
+        if not path.exists() or not path.is_file():
+            return None
+        raw = path.read_bytes()
+        if not raw:
+            return None
+        mime = mimetypes.guess_type(path.name)[0] or "image/png"
+        encoded = base64.b64encode(raw).decode("ascii")
+        return f"data:{mime};base64,{encoded}"
+
+    def _reference_image_inputs(self, intake: ProductIntake | None) -> list[str]:
+        if not intake:
+            return []
+        rows = intake.image_references or []
+        inputs: list[str] = []
+        for row in rows[:2]:
+            if not isinstance(row, dict):
+                continue
+            uri = row.get("uri")
+            if not isinstance(uri, str):
+                continue
+            data_url = self._local_image_to_data_url(uri)
+            if data_url:
+                inputs.append(data_url)
+        return inputs
+
+    def _download_url_bytes(self, url: str) -> bytes | None:
+        try:
+            with httpx.Client(timeout=90.0) as client:
+                response = client.get(url)
+                response.raise_for_status()
+                return response.content
+        except Exception:
+            return None
+
+    def _materialize_generated_image(self, generated_image) -> tuple[bytes, str]:
+        if generated_image.b64_json:
+            try:
+                return base64.b64decode(generated_image.b64_json), "b64_json"
+            except Exception:
+                pass
+        if generated_image.url:
+            content = self._download_url_bytes(generated_image.url)
+            if content:
+                return content, "url"
+        return decode_placeholder_png(), "placeholder"
 
     def run_intake(
         self,
@@ -63,7 +150,7 @@ class AgentsRuntime:
         runtime_config: dict | None = None,
     ) -> StageOutput:
         prompt = f"Normalize intake payload for creative generation: {payload}"
-        summary, model_used, estimated_cost = self._complete(provider, model, prompt, runtime_config)
+        summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         intake = ProductIntake(
             product_name=payload.get("product_name", "unknown_product"),
             market=payload.get("market", "US"),
@@ -101,7 +188,7 @@ class AgentsRuntime:
             f"Build planning brief in {mode}. intake={intake.model_dump()} "
             f"gm_lessons={gm_lessons[:3]}"
         )
-        summary, model_used, estimated_cost = self._complete(provider, model, prompt, runtime_config)
+        summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         value_props = intake.business_context.get("key_value_props", [])
         strategic_angles = value_props[:3] or [
             "time-saving daily workflow",
@@ -136,7 +223,7 @@ class AgentsRuntime:
         runtime_config: dict | None = None,
     ) -> StageOutput:
         prompt = f"Generate diverse variants from planning: {planning.model_dump()}"
-        summary, model_used, estimated_cost = self._complete(provider, model, prompt, runtime_config)
+        summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         variants = []
         for i in range(variant_count):
             angle = planning.strategic_angles[i % max(1, len(planning.strategic_angles))]
@@ -164,37 +251,127 @@ class AgentsRuntime:
         run_id: str,
         variant_set: VariantSet,
         *,
+        intake: ProductIntake | None,
+        business_context: dict | None,
+        market: str,
+        locale: str,
         provider: str,
         model: str,
         runtime_config: dict | None = None,
     ) -> StageOutput:
-        prompt = f"Generate copy and image prompts from variants: {variant_set.model_dump()}"
-        _, model_used, estimated_cost = self._complete(provider, model, prompt, runtime_config)
+        business_context = business_context or {}
+        visual_summary = "No reference image analysis."
+        estimated_cost = 0.0
+        text_model_used = model
+        reference_inputs = self._reference_image_inputs(intake)
+        if reference_inputs:
+            vision_prompt = (
+                "Analyze uploaded product sample image(s). Return concise product facts for ad generation: "
+                "material, color, structure, wearing position, functional highlights, and what should remain consistent."
+            )
+            try:
+                visual_summary, text_model_used, vision_cost = self._chat_complete(
+                    provider,
+                    model,
+                    vision_prompt,
+                    runtime_config,
+                    image_urls=reference_inputs,
+                )
+                estimated_cost += vision_cost
+            except Exception as exc:
+                visual_summary = f"reference_analysis_failed: {exc}"
+
+        copy_prompt = (
+            f"Generate concise Meta ad copy variants for US {locale}. "
+            f"business_context={business_context}, product_visual_summary={visual_summary}, variants={variant_set.model_dump()}"
+        )
+        try:
+            copy_hint, text_model_used, copy_cost = self._chat_complete(provider, model, copy_prompt, runtime_config)
+            estimated_cost += copy_cost
+        except Exception:
+            copy_hint = "focus on practical outdoor use and comfort control."
+
+        value_props = business_context.get("key_value_props", [])
+        value_line = ", ".join(value_props[:3]) if value_props else "comfort control, durable material, daily reliability"
+        price = business_context.get("price", "$35")
+        audience = business_context.get("target_audience", "dog owners")
+        cta = business_context.get("primary_cta", "Shop Now")
+
         copies: list[CopyVariant] = []
         images: list[ImageAssetRef] = []
+        artifacts: list[dict] = []
+        image_models_used: set[str] = set()
+
         for idx, item in enumerate(variant_set.variants):
             copies.append(
                 CopyVariant(
                     variant_id=item.variant_id,
-                    primary_text=f"{item.variant_id}: Cleaner routines in minutes, less stress for pet and owner.",
-                    headline=f"{item.variant_id}: Daily Pet Care, Simplified",
-                    description=f"Angle: {item.angle}",
-                    call_to_action="Shop Now",
+                    primary_text=(
+                        f"{item.variant_id}: Built for {audience}. "
+                        f"Outdoor-ready leash support with {value_line}. Price {price}."
+                    ),
+                    headline=f"{item.variant_id}: Outdoor Walks, Better Control",
+                    description=f"Angle: {item.angle}. Hint: {copy_hint[:140]}",
+                    call_to_action=cta,
                 )
             )
-            image_uri = self.media.reserve_binary_artifact(run_id, f"copy_image_{idx + 1}.png")
-            images.append(
-                ImageAssetRef(
-                    variant_id=item.variant_id,
-                    uri=image_uri,
-                    aspect_ratio="1:1",
-                    prompt=f"Product hero image for {item.variant_id} with clean home and pet owner.",
-                )
+            image_prompt = (
+                f"Create a 1:1 social media ad image for North American market ({market}, {locale}). "
+                "Show a Labrador outdoors wearing/using the dog leash product naturally. "
+                "Keep product details aligned with this summary: "
+                f"{visual_summary}. "
+                "Style: realistic, brand-safe, no text overlay, sharp product visibility, conversion-oriented."
             )
+            image_uri = ""
+            image_source = "placeholder"
+            image_model = ""
+            image_provider = ""
+            error_text = None
+            try:
+                image_result, image_provider, image_model = self._generate_image(
+                    fallback_provider=provider,
+                    fallback_model=model,
+                    prompt=image_prompt,
+                    size="1:1",
+                    runtime_config=runtime_config,
+                )
+                estimated_cost += image_result.estimated_cost
+                image_models_used.add(image_result.model_used or image_model)
+                selected = image_result.images[0] if image_result.images else None
+                if selected:
+                    image_bytes, image_source = self._materialize_generated_image(selected)
+                else:
+                    image_bytes, image_source = decode_placeholder_png(), "placeholder"
+                image_uri = self.media.write_binary_artifact(run_id, f"copy_image_{idx + 1}.png", image_bytes)
+            except Exception as exc:
+                error_text = str(exc)
+                image_uri = self.media.write_binary_artifact(run_id, f"copy_image_{idx + 1}.png", decode_placeholder_png())
+
+            image_ref = ImageAssetRef(
+                variant_id=item.variant_id,
+                uri=image_uri,
+                aspect_ratio="1:1",
+                prompt=image_prompt,
+            )
+            images.append(image_ref)
+            artifacts.append(
+                {
+                    "type": "generated_image",
+                    "uri": image_uri,
+                    "payload": {
+                        **image_ref.model_dump(),
+                        "source": image_source,
+                        "image_provider": image_provider,
+                        "image_model": image_model,
+                        "error": error_text,
+                    },
+                }
+            )
+
         bundle = CopyImageBundle(copy_variants=copies, image_assets=images)
-        uri = self.media.write_text_artifact(run_id, "copy_image_bundle.json", bundle.model_dump_json(indent=2))
-        artifacts = [{"type": "copy_image_bundle", "uri": uri, "payload": bundle.model_dump()}]
-        artifacts.extend({"type": "generated_image", "uri": img.uri, "payload": img.model_dump()} for img in images)
+        bundle_uri = self.media.write_text_artifact(run_id, "copy_image_bundle.json", bundle.model_dump_json(indent=2))
+        artifacts.insert(0, {"type": "copy_image_bundle", "uri": bundle_uri, "payload": bundle.model_dump()})
+        model_used = f"text={text_model_used};image={','.join(sorted(m for m in image_models_used if m)) or 'placeholder'}"
         return StageOutput(
             payload=bundle.model_dump(),
             model_used=model_used,
@@ -212,7 +389,7 @@ class AgentsRuntime:
         runtime_config: dict | None = None,
     ) -> StageOutput:
         prompt = f"Generate video hooks and scripts: {variant_set.model_dump()}"
-        _, model_used, estimated_cost = self._complete(provider, model, prompt, runtime_config)
+        _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         scripts = []
         for item in variant_set.variants:
             scripts.append(
@@ -250,7 +427,7 @@ class AgentsRuntime:
         runtime_config: dict | None = None,
     ) -> StageOutput:
         prompt = f"Create storyboard frames from scripts: {script_pack.model_dump()}"
-        _, model_used, estimated_cost = self._complete(provider, model, prompt, runtime_config)
+        _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         frames: list[dict] = []
         artifacts: list[dict] = []
         for script in script_pack.scripts:
@@ -284,7 +461,7 @@ class AgentsRuntime:
         runtime_config: dict | None = None,
     ) -> StageOutput:
         prompt = f"Generate videos from script pack: {script_pack.model_dump()}"
-        _, model_used, estimated_cost = self._complete(provider, model, prompt, runtime_config)
+        _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         videos: list[VideoAsset] = []
         artifacts: list[dict] = []
         for script in script_pack.scripts:
@@ -315,7 +492,7 @@ class AgentsRuntime:
         runtime_config: dict | None = None,
     ) -> StageOutput:
         prompt = f"Evaluate and select best variants: {variant_set.model_dump()}"
-        _, model_used, estimated_cost = self._complete(provider, model, prompt, runtime_config)
+        _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         copy_by_variant = {item.variant_id: item for item in copy_bundle.copy_variants}
         video_by_variant = {item.variant_id: item for item in video_bundle.videos}
         ranked: list[RankedVariant] = []

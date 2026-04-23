@@ -26,3 +26,9 @@ class LocalMediaProvider:
             path.write_bytes(b"")
         return str(path)
 
+    def write_binary_artifact(self, run_id: str, filename: str, content: bytes) -> str:
+        run_dir = self.settings.assets_dir / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        path = run_dir / filename
+        path.write_bytes(content)
+        return str(path)

@@ -163,6 +163,27 @@ def _pipeline_mode_views() -> list[PipelineModeView]:
     return views
 
 
+def _serialize_agent_config(row) -> AgentApiConfigView:
+    image_cfg = ((row.extra or {}).get("image_config") or {}) if isinstance(row.extra, dict) else {}
+    image_key_env = image_cfg.get("api_key_env")
+    return AgentApiConfigView(
+        agent_name=row.agent_name,
+        provider_name=row.provider_name,
+        model_name=row.model_name,
+        api_base_url=row.api_base_url,
+        api_key_env=row.api_key_env,
+        api_key_available=api_key_available(row.api_key_env),
+        image_provider_name=image_cfg.get("provider_name"),
+        image_model_name=image_cfg.get("model_name"),
+        image_api_base_url=image_cfg.get("api_base_url"),
+        image_api_key_env=image_key_env,
+        image_api_key_available=api_key_available(image_key_env),
+        extra=row.extra or {},
+        is_default=row.agent_name == "default",
+        updated_at=row.updated_at,
+    )
+
+
 def _dashboard_html() -> str:
     return """
     <html>
@@ -479,6 +500,8 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           input, select {{ width: 100%; padding: 6px; border-radius: 6px; border: 1px solid #c8cfda; box-sizing: border-box; }}
           button {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #bbc2cc; background: #f7f9fc; cursor: pointer; }}
           .muted {{ color: #5a6270; font-size: 12px; }}
+          .panel {{ margin-top: 16px; border: 1px solid #eceef2; border-radius: 10px; padding: 12px; }}
+          .row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
         </style>
       </head>
       <body>
@@ -490,6 +513,20 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           <thead><tr><th>Agent</th><th>Provider</th><th>Model</th><th>Base URL</th><th>API Key Env</th><th>Env Status</th><th>Action</th></tr></thead>
           <tbody id="cfg-body"></tbody>
         </table>
+        <section class="panel">
+          <h2>Generation Image API</h2>
+          <p class="muted">Used by <b>generation_agent</b> in image generation step. Stored in <code>extra.image_config</code>.</p>
+          <div class="row">
+            <div><label>Image Provider</label><input id="img-provider" placeholder="openai" /></div>
+            <div><label>Image Model</label><input id="img-model" placeholder="gpt-image-2" /></div>
+          </div>
+          <div class="row">
+            <div><label>Image Base URL</label><input id="img-base" placeholder="https://api.apimart.ai/v1/images/generations" /></div>
+            <div><label>Image API Key Env</label><select id="img-key"></select></div>
+          </div>
+          <button onclick="saveGenerationImageConfig()">Save Generation Image Config</button>
+          <span id="img-save-msg" class="muted"></span>
+        </section>
         <script>
           const personas = {personas_json};
           const existing = {configs_json};
@@ -524,6 +561,14 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
                 <td><button onclick="save('${{r.agent_name}}')">Save</button></td>`;
               body.appendChild(tr);
             }});
+            renderGenerationImageConfig();
+          }}
+          function renderGenerationImageConfig() {{
+            const cfg = byAgent["generation_agent"] || {{}};
+            document.getElementById("img-provider").value = cfg.image_provider_name || "";
+            document.getElementById("img-model").value = cfg.image_model_name || "";
+            document.getElementById("img-base").value = cfg.image_api_base_url || "";
+            document.getElementById("img-key").innerHTML = envOptions(cfg.image_api_key_env || "");
           }}
           async function save(agentName) {{
             const payload = {{
@@ -533,6 +578,18 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
               api_key_env: document.getElementById(`k-${{agentName}}`).value || null
             }};
             byAgent[agentName] = await api(`/agent-configs/${{agentName}}`, {{ method: "PATCH", body: JSON.stringify(payload) }});
+            render();
+          }}
+          async function saveGenerationImageConfig() {{
+            const payload = {{
+              image_provider_name: document.getElementById("img-provider").value || null,
+              image_model_name: document.getElementById("img-model").value || null,
+              image_api_base_url: document.getElementById("img-base").value || null,
+              image_api_key_env: document.getElementById("img-key").value || null
+            }};
+            const updated = await api("/agent-configs/generation_agent", {{ method: "PATCH", body: JSON.stringify(payload) }});
+            byAgent["generation_agent"] = updated;
+            document.getElementById("img-save-msg").textContent = "saved";
             render();
           }}
           async function init() {{
@@ -559,20 +616,7 @@ def dashboard_page() -> str:
 @router.get("/dashboard/agent-apis", response_class=HTMLResponse)
 def dashboard_agent_apis(db: Session = Depends(get_db)) -> str:
     personas = [PersonaMeta(**row).model_dump(mode="json") for row in list_persona_catalog()]
-    configs = [
-        AgentApiConfigView(
-            agent_name=row.agent_name,
-            provider_name=row.provider_name,
-            model_name=row.model_name,
-            api_base_url=row.api_base_url,
-            api_key_env=row.api_key_env,
-            api_key_available=api_key_available(row.api_key_env),
-            extra=row.extra or {},
-            is_default=row.agent_name == "default",
-            updated_at=row.updated_at,
-        ).model_dump(mode="json")
-        for row in list_agent_configs(db)
-    ]
+    configs = [_serialize_agent_config(row).model_dump(mode="json") for row in list_agent_configs(db)]
     db.commit()
     return _agent_api_dashboard_html(
         personas_json=json.dumps(personas, ensure_ascii=False).replace("</", "<\\/"),
@@ -820,20 +864,7 @@ def patch_agent_persona(agent_name: str, payload: PersonaPatchRequest, db: Sessi
 def get_agent_configs(db: Session = Depends(get_db)) -> list[AgentApiConfigView]:
     rows = list_agent_configs(db)
     db.commit()
-    return [
-        AgentApiConfigView(
-            agent_name=row.agent_name,
-            provider_name=row.provider_name,
-            model_name=row.model_name,
-            api_base_url=row.api_base_url,
-            api_key_env=row.api_key_env,
-            api_key_available=api_key_available(row.api_key_env),
-            extra=row.extra or {},
-            is_default=row.agent_name == "default",
-            updated_at=row.updated_at,
-        )
-        for row in rows
-    ]
+    return [_serialize_agent_config(row) for row in rows]
 
 
 @router.get("/agent-configs/env-vars", response_model=list[str])
@@ -851,20 +882,14 @@ def patch_agent_config(agent_name: str, payload: AgentApiConfigPatchRequest, db:
             model_name=payload.model_name,
             api_base_url=payload.api_base_url,
             api_key_env=payload.api_key_env,
+            image_provider_name=payload.image_provider_name,
+            image_model_name=payload.image_model_name,
+            image_api_base_url=payload.image_api_base_url,
+            image_api_key_env=payload.image_api_key_env,
             extra=payload.extra,
         )
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
-    return AgentApiConfigView(
-        agent_name=row.agent_name,
-        provider_name=row.provider_name,
-        model_name=row.model_name,
-        api_base_url=row.api_base_url,
-        api_key_env=row.api_key_env,
-        api_key_available=api_key_available(row.api_key_env),
-        extra=row.extra or {},
-        is_default=row.agent_name == "default",
-        updated_at=row.updated_at,
-    )
+    return _serialize_agent_config(row)

@@ -263,7 +263,11 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
     if task.stage_name == "divergence":
         return {**base, "planning": _stage_output_optional(db, run.id, "planning")}
     if task.stage_name == "copy_image_generation":
-        return {**base, "variants": _stage_output_optional(db, run.id, "divergence")}
+        return {
+            **base,
+            "variants": _stage_output_optional(db, run.id, "divergence"),
+            "intake": _stage_output_optional(db, run.id, "intake"),
+        }
     if task.stage_name == "video_scripting":
         return {**base, "variants": _stage_output_optional(db, run.id, "divergence")}
     if task.stage_name == "storyboard_image_generation":
@@ -334,9 +338,15 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
             )
         elif task.stage_name == "copy_image_generation":
             variants = VariantSet.model_validate(task.input_payload["variants"])
+            intake_payload = task.input_payload.get("intake") or {}
+            intake = ProductIntake.model_validate(intake_payload) if intake_payload else None
             output = runtime.run_copy_image_generation(
                 run.id,
                 variants,
+                intake=intake,
+                business_context=task.input_payload.get("business_context", {}),
+                market=run.market,
+                locale=run.locale,
                 provider=provider_name,
                 model=model_name,
                 runtime_config=runtime_config,

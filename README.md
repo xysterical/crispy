@@ -86,6 +86,18 @@ Open dashboard
 - `GET /agent-configs/env-vars` list discovered env vars (`CRISPY_API_KEY_` prefix only)
 - `PATCH /agent-configs/{agent}` upsert per-agent API config (fallback to `default` if unset)
 
+## Real API adapter notes
+- Provider adapter now supports OpenAI-compatible endpoints for:
+  - chat: `/chat/completions`
+  - image generation: `/images/generations`
+- Endpoint compatibility rules:
+  - if `api_base_url` already points to a full endpoint (for example `.../images/generations`), Crispy calls it directly;
+  - if `api_base_url` is a root URL (for example `.../v1`), Crispy appends the expected path;
+  - if root URL has no `/v1`, Crispy retries with `/v1/...` fallback for compatibility.
+- `generation_agent` supports dual config:
+  - text config from top-level fields (`provider_name/model_name/api_base_url/api_key_env`)
+  - image config from `extra.image_config` (`provider_name/model_name/api_base_url/api_key_env`)
+
 ## Notes
 - Default provider/model are `openai` + `gpt-4.1` (stubbed provider for deterministic MVP behavior).
 - Dashboard `Research Source` defaults to manual mode (`enable_research=false`) for faster local debugging.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,6 +21,56 @@ def _default_values() -> dict:
         "api_key_env": None,
         "extra": {},
     }
+
+
+def _validate_env_name(env_name: str | None) -> None:
+    if env_name and not env_name.startswith(API_KEY_ENV_PREFIX):
+        raise ValueError(f"api_key_env must start with {API_KEY_ENV_PREFIX}")
+
+
+def _image_config_from_extra(extra: dict | None) -> dict[str, Any]:
+    if not isinstance(extra, dict):
+        return {}
+    row = extra.get("image_config")
+    if not isinstance(row, dict):
+        return {}
+    return dict(row)
+
+
+def _merge_image_config(
+    image_cfg: dict[str, Any],
+    *,
+    image_provider_name: str | None,
+    image_model_name: str | None,
+    image_api_base_url: str | None,
+    image_api_key_env: str | None,
+) -> dict[str, Any]:
+    merged = dict(image_cfg)
+    if image_provider_name is not None:
+        value = image_provider_name.strip()
+        if value:
+            merged["provider_name"] = value
+        else:
+            merged.pop("provider_name", None)
+    if image_model_name is not None:
+        value = image_model_name.strip()
+        if value:
+            merged["model_name"] = value
+        else:
+            merged.pop("model_name", None)
+    if image_api_base_url is not None:
+        value = image_api_base_url.strip()
+        if value:
+            merged["api_base_url"] = value
+        else:
+            merged.pop("api_base_url", None)
+    if image_api_key_env is not None:
+        value = image_api_key_env.strip()
+        if value:
+            merged["api_key_env"] = value
+        else:
+            merged.pop("api_key_env", None)
+    return merged
 
 
 def ensure_default_agent_config(db: Session) -> AgentApiConfig:
@@ -46,21 +97,40 @@ def upsert_agent_config(
     model_name: str | None,
     api_base_url: str | None,
     api_key_env: str | None,
+    image_provider_name: str | None = None,
+    image_model_name: str | None = None,
+    image_api_base_url: str | None = None,
+    image_api_key_env: str | None = None,
     extra: dict | None,
 ) -> AgentApiConfig:
-    if api_key_env and not api_key_env.startswith(API_KEY_ENV_PREFIX):
-        raise ValueError(f"api_key_env must start with {API_KEY_ENV_PREFIX}")
+    _validate_env_name(api_key_env)
+    _validate_env_name(image_api_key_env)
     ensure_default_agent_config(db)
     row = db.scalar(select(AgentApiConfig).where(AgentApiConfig.agent_name == agent_name))
+    has_image_patch = any(
+        value is not None
+        for value in (image_provider_name, image_model_name, image_api_base_url, image_api_key_env)
+    )
+
     if not row:
         defaults = _default_values()
+        extra_payload = dict(extra) if isinstance(extra, dict) else dict(defaults["extra"])
+        merged_image = _merge_image_config(
+            _image_config_from_extra(extra_payload),
+            image_provider_name=image_provider_name,
+            image_model_name=image_model_name,
+            image_api_base_url=image_api_base_url,
+            image_api_key_env=image_api_key_env,
+        )
+        if merged_image:
+            extra_payload["image_config"] = merged_image
         row = AgentApiConfig(
             agent_name=agent_name,
             provider_name=provider_name or defaults["provider_name"],
             model_name=model_name or defaults["model_name"],
             api_base_url=api_base_url if api_base_url is not None else defaults["api_base_url"],
             api_key_env=api_key_env if api_key_env is not None else defaults["api_key_env"],
-            extra=extra if extra is not None else defaults["extra"],
+            extra=extra_payload,
         )
         db.add(row)
         db.flush()
@@ -74,10 +144,57 @@ def upsert_agent_config(
         row.api_base_url = api_base_url or None
     if api_key_env is not None:
         row.api_key_env = api_key_env or None
-    if extra is not None:
-        row.extra = extra
+
+    base_extra = dict(extra) if isinstance(extra, dict) else dict(row.extra or {})
+    if has_image_patch:
+        merged_image = _merge_image_config(
+            _image_config_from_extra(base_extra),
+            image_provider_name=image_provider_name,
+            image_model_name=image_model_name,
+            image_api_base_url=image_api_base_url,
+            image_api_key_env=image_api_key_env,
+        )
+        if merged_image:
+            base_extra["image_config"] = merged_image
+        else:
+            base_extra.pop("image_config", None)
+    if extra is not None or has_image_patch:
+        row.extra = base_extra
+
     db.flush()
     return row
+
+
+def _resolved_image_config(default_cfg: AgentApiConfig, agent_cfg: AgentApiConfig | None, text_fallback: dict) -> dict:
+    default_image = _image_config_from_extra(default_cfg.extra)
+    agent_image = _image_config_from_extra(agent_cfg.extra if agent_cfg else None)
+    image_provider_name = (
+        agent_image.get("provider_name")
+        or default_image.get("provider_name")
+        or text_fallback["provider_name"]
+    )
+    image_model_name = (
+        agent_image.get("model_name")
+        or default_image.get("model_name")
+        or "gpt-image-2"
+    )
+    image_api_base_url = (
+        agent_image.get("api_base_url")
+        or default_image.get("api_base_url")
+        or text_fallback["api_base_url"]
+    )
+    image_api_key_env = (
+        agent_image.get("api_key_env")
+        or default_image.get("api_key_env")
+        or text_fallback["api_key_env"]
+    )
+    return {
+        "provider_name": image_provider_name,
+        "model_name": image_model_name,
+        "api_base_url": image_api_base_url,
+        "api_key_env": image_api_key_env,
+        "api_key_available": bool(os.getenv(image_api_key_env)) if image_api_key_env else False,
+    }
 
 
 def resolve_agent_config(
@@ -101,25 +218,49 @@ def resolve_agent_config(
     )
     api_key_env = (agent_cfg.api_key_env if agent_cfg and agent_cfg.api_key_env else default_cfg.api_key_env)
     api_key_available = bool(os.getenv(api_key_env)) if api_key_env else False
+    api_base_url = agent_cfg.api_base_url if agent_cfg and agent_cfg.api_base_url else default_cfg.api_base_url
+    text_fallback = {
+        "provider_name": provider_name,
+        "model_name": model_name,
+        "api_base_url": api_base_url,
+        "api_key_env": api_key_env,
+    }
+    image = _resolved_image_config(default_cfg, agent_cfg, text_fallback)
     return {
         "agent_name": agent_name,
         "provider_name": provider_name,
         "model_name": model_name,
-        "api_base_url": (agent_cfg.api_base_url if agent_cfg and agent_cfg.api_base_url else default_cfg.api_base_url),
+        "api_base_url": api_base_url,
         "api_key_env": api_key_env,
         "api_key_available": api_key_available,
         "extra": (agent_cfg.extra if agent_cfg and agent_cfg.extra else default_cfg.extra),
+        "image_provider_name": image["provider_name"],
+        "image_model_name": image["model_name"],
+        "image_api_base_url": image["api_base_url"],
+        "image_api_key_env": image["api_key_env"],
+        "image_api_key_available": image["api_key_available"],
         "source": "agent_override" if agent_cfg else "default",
     }
 
 
 def resolve_agent_runtime(config: dict) -> dict:
     api_key_env = config.get("api_key_env")
+    image_api_key_env = config.get("image_api_key_env")
     api_key = os.getenv(api_key_env) if api_key_env else None
+    image_api_key = os.getenv(image_api_key_env) if image_api_key_env else None
     return {
         "api_base_url": config.get("api_base_url"),
         "api_key": api_key,
         "extra": config.get("extra") or {},
+        "provider_name": config.get("provider_name"),
+        "model_name": config.get("model_name"),
+        "image": {
+            "provider_name": config.get("image_provider_name"),
+            "model_name": config.get("image_model_name"),
+            "api_base_url": config.get("image_api_base_url"),
+            "api_key": image_api_key,
+            "extra": ((config.get("extra") or {}).get("image_config") or {}),
+        },
     }
 
 

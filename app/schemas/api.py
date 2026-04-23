@@ -151,6 +151,11 @@ class AgentApiConfigView(BaseModel):
     api_base_url: str | None = None
     api_key_env: str | None = None
     api_key_available: bool = False
+    image_provider_name: str | None = None
+    image_model_name: str | None = None
+    image_api_base_url: str | None = None
+    image_api_key_env: str | None = None
+    image_api_key_available: bool = False
     extra: dict = Field(default_factory=dict)
     is_default: bool = False
     updated_at: datetime
@@ -161,6 +166,10 @@ class AgentApiConfigPatchRequest(BaseModel):
     model_name: str | None = None
     api_base_url: str | None = None
     api_key_env: str | None = None
+    image_provider_name: str | None = None
+    image_model_name: str | None = None
+    image_api_base_url: str | None = None
+    image_api_key_env: str | None = None
     extra: dict | None = None
 
 
