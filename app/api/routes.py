@@ -1,19 +1,33 @@
 from __future__ import annotations
 
 import json
+import mimetypes
+from datetime import datetime, timedelta
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse
-from sqlalchemy import desc, select
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse
+from sqlalchemy import String, cast, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.agents.registry import stage_agent
-from app.data.models import Artifact, PipelineRun, StageTask
-from app.data.session import get_db
+from app.core.config import get_settings
+from app.data.models import Artifact, PipelineRun, ScoreCard as ScoreCardModel, StageTask
+from app.data.session import (
+    get_active_database_url,
+    get_db,
+    list_local_sqlite_database_urls,
+    switch_database_url,
+)
 from app.orchestrator.state_machine import PIPELINE_STAGE_PLANS, PipelineMode
 from app.schemas.api import (
     AgentApiConfigPatchRequest,
     AgentApiConfigView,
+    ArtifactListItem,
+    ArtifactListResponse,
+    DataSourceInfo,
+    DataSourceListResponse,
+    DataSourceSelectRequest,
     DeliverablesResponse,
     FeedbackImportRequest,
     FeedbackImportResponse,
@@ -53,6 +67,16 @@ from app.services.runs import (
 
 
 router = APIRouter()
+DEFAULT_GENERATED_ARTIFACT_TYPES = {
+    "copy_image_bundle",
+    "generated_image",
+    "video_script_pack",
+    "storyboard_pack",
+    "storyboard_frame",
+    "generated_video",
+    "video_bundle",
+    "evaluation_selection",
+}
 
 
 def _load_json_list(raw: str | None, field_name: str) -> list:
@@ -79,6 +103,87 @@ def _load_json_dict(raw: str | None, field_name: str) -> dict:
     return parsed
 
 
+def _stage_task_summary(task: StageTask) -> str:
+    payload = task.output_payload or {}
+    if task.error_message:
+        return f"error: {task.error_message[:160]}"
+    if not payload:
+        return "No output yet."
+    if task.stage_name == "intake":
+        return (
+            f"Intake ready: sku={len(payload.get('sku_summary', []))}, "
+            f"images={len(payload.get('image_references', []))}, videos={len(payload.get('video_references', []))}"
+        )
+    if task.stage_name == "planning":
+        return (
+            f"Planning brief: angles={len(payload.get('strategic_angles', []))}, "
+            f"constraints={len(payload.get('constraints', []))}"
+        )
+    if task.stage_name == "divergence":
+        return f"Variants generated: {len(payload.get('variants', []))}"
+    if task.stage_name == "copy_image_generation":
+        return (
+            f"Copy/Image generated: copy_variants={len(payload.get('copy_variants', []))}, "
+            f"image_assets={len(payload.get('image_assets', []))}"
+        )
+    if task.stage_name == "video_scripting":
+        return f"Video scripts generated: {len(payload.get('scripts', []))}"
+    if task.stage_name == "storyboard_image_generation":
+        return f"Storyboard frames generated: {len(payload.get('frames', []))}"
+    if task.stage_name == "video_generation":
+        return f"Video assets generated: {len(payload.get('videos', []))}"
+    if task.stage_name == "evaluation_selection":
+        selected = payload.get("selected_deliverables", {}) or {}
+        winner = selected.get("winner_variant_id") or "N/A"
+        ranked = ((payload.get("evaluation_result", {}) or {}).get("ranked_variants", [])) or []
+        return f"Evaluation complete: winner={winner}, ranked={len(ranked)}"
+    keys = list(payload.keys())
+    return f"Output keys: {', '.join(keys[:6])}"
+
+
+def _serialize_data_source(database_url: str, active_url: str) -> DataSourceInfo:
+    path = database_url.removeprefix("sqlite:///")
+    resolved = str(Path(path).expanduser().resolve()) if database_url.startswith("sqlite:///") else path
+    return DataSourceInfo(
+        id=database_url,
+        name=Path(resolved).name if resolved else database_url,
+        path=resolved,
+        url=database_url,
+        is_active=database_url == active_url,
+    )
+
+
+def _artifact_preview(payload: dict) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    for key in ("headline", "primary_text", "description", "summary", "reasoning"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:180]
+        if isinstance(value, list) and value:
+            head = value[0]
+            if isinstance(head, str) and head.strip():
+                return head.strip()[:180]
+    if "copy_variants" in payload and isinstance(payload["copy_variants"], list) and payload["copy_variants"]:
+        item = payload["copy_variants"][0]
+        if isinstance(item, dict):
+            text = item.get("headline") or item.get("primary_text") or ""
+            return str(text)[:180]
+    return ""
+
+
+def _parse_date_start(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    return datetime.fromisoformat(raw)
+
+
+def _parse_date_end(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    return datetime.fromisoformat(raw) + timedelta(days=1)
+
+
 def _serialize_run(db: Session, run: PipelineRun) -> RunView:
     tasks = db.scalars(select(StageTask).where(StageTask.run_id == run.id).order_by(StageTask.created_at.asc())).all()
     task_views = [
@@ -90,6 +195,8 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
             review_notes=task.review_notes,
             output_payload=task.output_payload or {},
             metadata_json=task.metadata_json or {},
+            summary=_stage_task_summary(task),
+            raw_ref=task.id,
             error_message=task.error_message,
             started_at=task.started_at,
             completed_at=task.completed_at,
@@ -191,24 +298,41 @@ def _dashboard_html() -> str:
         <title>Crispy Dashboard</title>
         <style>
           body { font-family: ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; color: #1a1d21; background:#f7f9fc; }
-          .grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 18px; align-items: start; }
+          h1, h2, h3 { margin: 0 0 10px 0; }
           .card { border: 1px solid #d9dce1; border-radius: 12px; padding: 16px; background: #fff; }
+          .grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 18px; align-items: start; }
+          .topbar { display:flex; justify-content:space-between; align-items:end; gap:12px; margin-bottom:14px; }
+          .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+          .deliverables { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin-top:10px; }
+          .deliverable-card { border:1px solid #e4e8ef; border-radius:10px; padding:10px; background:#fdfefe; min-height: 180px; }
+          .timeline { margin-top: 12px; max-height: 560px; overflow-y: auto; border:1px solid #e9edf3; border-radius:10px; padding:10px; background:#fff; }
+          .stage-card { border-left: 3px solid #d8e0ea; padding: 8px 10px; margin-bottom: 10px; background:#fbfcfe; border-radius: 8px; }
+          .stage-title { font-weight: 600; margin-bottom: 4px; }
+          .muted { color: #5a6270; font-size: 12px; }
+          .pill { display:inline-block; padding:2px 8px; border-radius:20px; font-size:12px; border:1px solid #d6deea; margin-right:6px; margin-bottom:4px; }
           table { width: 100%; border-collapse: collapse; font-size: 13px; }
           th, td { border-bottom: 1px solid #eceef2; padding: 8px; text-align: left; vertical-align: top; }
           textarea, input, select { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #c8cfda; margin: 4px 0 10px 0; box-sizing: border-box; background: #fff; }
           button { padding: 8px 12px; border-radius: 8px; border: 1px solid #bcc4cf; background: #f4f7fb; cursor: pointer; }
-          .muted { color: #5a6270; font-size: 12px; }
-          .detail-scroll { max-height: 640px; overflow-y: auto; border:1px solid #eef1f5; border-radius: 10px; padding: 10px; background:#fdfefe; }
-          .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-          .stage-card { border: 1px solid #e8edf4; border-radius: 10px; padding: 10px; margin-bottom: 10px; background: #fff; }
-          .stage-title { font-weight: 600; margin-bottom: 6px; }
-          .pill { display:inline-block; padding:2px 8px; border-radius:20px; font-size:12px; border:1px solid #d6deea; margin-right:6px; }
           .hint { padding: 8px 10px; border: 1px solid #e8edf4; border-radius: 8px; background: #f9fbff; margin-bottom: 8px; }
+          .img-preview { width: 100%; border-radius: 8px; border: 1px solid #e7ebf2; object-fit: cover; max-height: 220px; background:#f2f5fa; }
+          pre { white-space: pre-wrap; word-break: break-word; }
+          .links { display:flex; gap:12px; }
         </style>
       </head>
       <body>
         <h1>Crispy Dashboard</h1>
-        <p class="muted">Create run now uses multipart upload and supports mode-specific pipelines. Agent API config: <a href="/dashboard/agent-apis">/dashboard/agent-apis</a></p>
+        <div class="topbar">
+          <div class="links">
+            <a href="/dashboard/agent-apis">Agent API Configs</a>
+            <a href="/dashboard/assets">Asset Library</a>
+          </div>
+          <div style="min-width:420px;">
+            <label>Data Source</label>
+            <select id="data-source-select" onchange="switchDataSource()"></select>
+            <div id="data-source-path" class="muted"></div>
+          </div>
+        </div>
         <div class="grid">
           <section class="card">
             <h2>Runs</h2>
@@ -282,7 +406,7 @@ def _dashboard_html() -> str:
         <div class="grid" style="margin-top:20px;">
           <section class="card">
             <h2>Run Detail</h2>
-            <div id="run-detail" class="detail-scroll">Select a run.</div>
+            <div id="run-detail">Select a run.</div>
           </section>
           <section class="card">
             <h2>Persona Manager</h2>
@@ -295,6 +419,8 @@ def _dashboard_html() -> str:
           let currentRunId = null;
           let currentPersona = null;
           let pipelineModes = [];
+          let dataSources = [];
+          let dataSourceSelectInFlight = false;
 
           function esc(v){ return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
           function toList(raw){ return String(raw || "").split(",").map(s => s.trim()).filter(Boolean); }
@@ -302,11 +428,45 @@ def _dashboard_html() -> str:
             if (!raw || !raw.trim()) return {};
             try { return JSON.parse(raw); } catch (_e) { throw new Error("Advanced Business Context JSON is invalid."); }
           }
+          function mediaUrl(path){ return `/media?path=${encodeURIComponent(path || "")}`; }
 
           async function api(path, options = {}) {
             const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
             if (!res.ok) { throw new Error(await res.text()); }
             return res.headers.get("content-type")?.includes("application/json") ? res.json() : res.text();
+          }
+
+          async function loadDataSources() {
+            const data = await api("/dashboard/data-sources");
+            dataSources = data.items || [];
+            const sel = document.getElementById("data-source-select");
+            sel.innerHTML = "";
+            dataSources.forEach((item) => {
+              const opt = document.createElement("option");
+              opt.value = item.url;
+              opt.textContent = item.name;
+              if (item.is_active) opt.selected = true;
+              sel.appendChild(opt);
+            });
+            const active = dataSources.find((x) => x.is_active);
+            document.getElementById("data-source-path").textContent = active ? active.path : data.active_url;
+          }
+
+          async function switchDataSource() {
+            if (dataSourceSelectInFlight) return;
+            const url = document.getElementById("data-source-select").value;
+            if (!url) return;
+            dataSourceSelectInFlight = true;
+            try {
+              await api("/dashboard/data-sources/select", { method: "POST", body: JSON.stringify({ url }) });
+              await loadDataSources();
+              await refreshRuns();
+              if (currentRunId) {
+                try { await selectRun(currentRunId); } catch (_err) { document.getElementById("run-detail").innerHTML = "Select a run."; }
+              }
+            } finally {
+              dataSourceSelectInFlight = false;
+            }
           }
 
           async function refreshRuns() {
@@ -320,8 +480,47 @@ def _dashboard_html() -> str:
             });
           }
 
-          function renderRunDetail(run){
-            const stageHtml = run.stage_tasks.map((task) => {
+          function renderDeliverables(deliverables) {
+            const winner = deliverables?.winner_variant_id || "-";
+            const copy = deliverables?.deliverables?.copy_variant || null;
+            const images = deliverables?.deliverables?.image_assets || [];
+            const video = deliverables?.deliverables?.video_asset || null;
+            const image = images.length ? images[0] : null;
+            const scoreAction = deliverables?.score?.forecast?.recommended_action || deliverables?.score?.recommended_action || "-";
+            return `
+              <h3>Deliverables Overview</h3>
+              <div class="muted">winner: ${esc(winner)} | recommendation: ${esc(scoreAction)}</div>
+              <div class="deliverables">
+                <article class="deliverable-card">
+                  <div class="stage-title">Copy</div>
+                  ${copy ? `
+                    <div><b>${esc(copy.headline || "-")}</b></div>
+                    <div>${esc(copy.primary_text || "-")}</div>
+                    <div class="muted">CTA: ${esc(copy.call_to_action || "-")}</div>
+                  ` : '<div class="muted">No copy winner yet.</div>'}
+                </article>
+                <article class="deliverable-card">
+                  <div class="stage-title">Image</div>
+                  ${image ? `
+                    <a href="${mediaUrl(image.uri)}" target="_blank">
+                      <img class="img-preview" src="${mediaUrl(image.uri)}" alt="generated image" />
+                    </a>
+                    <div class="muted">${esc(image.aspect_ratio || "1:1")} | ${esc(image.uri)}</div>
+                  ` : '<div class="muted">No image winner yet.</div>'}
+                </article>
+                <article class="deliverable-card">
+                  <div class="stage-title">Video</div>
+                  ${video ? `
+                    <video controls class="img-preview" src="${mediaUrl(video.video_uri)}"></video>
+                    <div class="muted">${esc(video.video_uri)}</div>
+                  ` : '<div class="muted">No video winner yet.</div>'}
+                </article>
+              </div>
+            `;
+          }
+
+          function renderTimeline(run) {
+            const stageHtml = (run.stage_tasks || []).map((task) => {
               const agent = task.metadata_json?.agent_name || "-";
               return `
                 <article class="stage-card">
@@ -331,15 +530,19 @@ def _dashboard_html() -> str:
                     <span class="pill">attempt: ${esc(task.attempt)}</span>
                     <span class="pill">agent: ${esc(agent)}</span>
                   </div>
-                  <div class="muted">started: ${esc(task.started_at || "-")} | completed: ${esc(task.completed_at || "-")}</div>
-                  <div class="muted">review: ${esc(task.review_notes || "-")}</div>
+                  <div>${esc(task.summary || "No summary")}</div>
+                  <div class="muted">started: ${esc(task.started_at || "-")} | completed: ${esc(task.completed_at || "-")} | review: ${esc(task.review_notes || "-")}</div>
                   <details>
-                    <summary>Output JSON</summary>
+                    <summary>Raw JSON</summary>
                     <pre>${esc(JSON.stringify(task.output_payload || {}, null, 2))}</pre>
                   </details>
                 </article>
               `;
             }).join("");
+            return stageHtml || '<span class="muted">No stage logs.</span>';
+          }
+
+          function renderRunDetail(run, deliverables){
             const score = run.latest_scorecard ? `<pre>${esc(JSON.stringify(run.latest_scorecard, null, 2))}</pre>` : `<span class="muted">No score yet.</span>`;
             return `
               <div style="margin-bottom:12px;">
@@ -347,17 +550,21 @@ def _dashboard_html() -> str:
                 <div><span class="pill">status: ${esc(run.status)}</span><span class="pill">stage: ${esc(run.current_stage || "-")}</span><span class="pill">mode: ${esc(run.pipeline_mode)}</span></div>
                 <div class="muted">provider/model: ${esc(run.model_provider)} / ${esc(run.model_name)} | budget: ${esc(run.budget_used)}</div>
               </div>
-              <h3>Stage Logs</h3>
-              ${stageHtml || '<span class="muted">No stage logs.</span>'}
-              <h3>Latest Scorecard</h3>
+              ${renderDeliverables(deliverables)}
+              <h3 style="margin-top:14px;">Stage Timeline</h3>
+              <div class="timeline">${renderTimeline(run)}</div>
+              <h3 style="margin-top:14px;">Latest Scorecard</h3>
               ${score}
             `;
           }
 
           async function selectRun(runId){
             currentRunId = runId;
-            const run = await api(`/runs/${runId}`);
-            document.getElementById("run-detail").innerHTML = renderRunDetail(run);
+            const [run, deliverables] = await Promise.all([
+              api(`/runs/${runId}`),
+              api(`/runs/${runId}/deliverables`).catch(() => ({ run_id: runId, deliverables: {}, score: {} }))
+            ]);
+            document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables);
           }
 
           async function loadPipelineModes(){
@@ -479,7 +686,16 @@ def _dashboard_html() -> str:
 
           refreshResearchHint();
           loadPipelineModes();
-          refreshRuns();
+          loadDataSources().then(async () => {
+            await refreshRuns();
+            const hash = window.location.hash || "";
+            if (hash.startsWith("#run=")) {
+              const runId = hash.replace("#run=", "");
+              if (runId) {
+                try { await selectRun(runId); } catch (_err) {}
+              }
+            }
+          });
           loadPersonas();
           setInterval(refreshRuns, 5000);
         </script>
@@ -603,6 +819,144 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
     """
 
 
+def _assets_dashboard_html() -> str:
+    return """
+    <html>
+      <head>
+        <title>Crispy Asset Library</title>
+        <style>
+          body { font-family: ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; color: #1a1d21; background:#f7f9fc; }
+          .card { border: 1px solid #d9dce1; border-radius: 12px; padding: 16px; background: #fff; margin-bottom: 14px; }
+          .filters { display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap:10px; align-items:end; }
+          .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:12px; }
+          .asset-card { border:1px solid #e4e8ef; border-radius:10px; padding:10px; background:#fff; }
+          input, select { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #c8cfda; box-sizing: border-box; background: #fff; }
+          button { padding: 8px 12px; border-radius: 8px; border: 1px solid #bcc4cf; background: #f4f7fb; cursor: pointer; }
+          .muted { color: #5a6270; font-size: 12px; }
+          .img-preview { width: 100%; border-radius: 8px; border: 1px solid #e7ebf2; object-fit: cover; max-height: 220px; background:#f2f5fa; }
+          .toolbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+          .pill { display:inline-block; padding:2px 8px; border-radius:20px; font-size:12px; border:1px solid #d6deea; margin-right:6px; }
+        </style>
+      </head>
+      <body>
+        <div class="toolbar">
+          <h1>Asset Library</h1>
+          <a href="/dashboard">Back to Dashboard</a>
+        </div>
+        <section class="card">
+          <div class="filters">
+            <div><label>Search</label><input id="q" placeholder="run id / copy text / filename" /></div>
+            <div>
+              <label>Type</label>
+              <select id="artifact_types">
+                <option value="">All generated</option>
+                <option value="generated_image">generated_image</option>
+                <option value="copy_image_bundle">copy_image_bundle</option>
+                <option value="video_script_pack">video_script_pack</option>
+                <option value="storyboard_pack">storyboard_pack</option>
+                <option value="generated_video">generated_video</option>
+                <option value="video_bundle">video_bundle</option>
+                <option value="evaluation_selection">evaluation_selection</option>
+              </select>
+            </div>
+            <div>
+              <label>Pipeline Mode</label>
+              <select id="pipeline_mode">
+                <option value="">All</option>
+                <option value="copy_image_only">copy_image_only</option>
+                <option value="video_only">video_only</option>
+                <option value="full_multimodal">full_multimodal</option>
+              </select>
+            </div>
+            <div>
+              <label>Sort By</label>
+              <select id="sort_by">
+                <option value="created_at">created_at</option>
+                <option value="score">score</option>
+              </select>
+            </div>
+            <div>
+              <label>Order</label>
+              <select id="sort_order">
+                <option value="desc">desc</option>
+                <option value="asc">asc</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:flex; gap:10px; align-items:end; margin-top:10px;">
+            <div><label>Date From</label><input id="date_from" type="date" /></div>
+            <div><label>Date To</label><input id="date_to" type="date" /></div>
+            <div><button onclick="refreshAssets()">Apply</button></div>
+            <div><button onclick="prevPage()">Prev</button> <button onclick="nextPage()">Next</button></div>
+          </div>
+        </section>
+        <section class="card">
+          <div id="stats" class="muted"></div>
+          <div id="asset-grid" class="grid"></div>
+        </section>
+        <script>
+          let page = 1;
+          let pageSize = 20;
+          let total = 0;
+          function esc(v){ return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
+          function mediaUrl(path){ return `/media?path=${encodeURIComponent(path || "")}`; }
+          function queryString(params){
+            const q = new URLSearchParams();
+            Object.entries(params).forEach(([k,v]) => {
+              if (v === null || v === undefined || v === "") return;
+              q.set(k, String(v));
+            });
+            return q.toString();
+          }
+          async function refreshAssets() {
+            const params = {
+              q: document.getElementById("q").value,
+              artifact_types: document.getElementById("artifact_types").value,
+              pipeline_mode: document.getElementById("pipeline_mode").value,
+              sort_by: document.getElementById("sort_by").value,
+              sort_order: document.getElementById("sort_order").value,
+              date_from: document.getElementById("date_from").value,
+              date_to: document.getElementById("date_to").value,
+              page,
+              page_size: pageSize,
+            };
+            const resp = await fetch(`/artifacts?${queryString(params)}`);
+            if (!resp.ok) throw new Error(await resp.text());
+            const data = await resp.json();
+            total = data.total;
+            document.getElementById("stats").textContent = `total=${data.total}, page=${data.page}, page_size=${data.page_size}`;
+            const grid = document.getElementById("asset-grid");
+            grid.innerHTML = "";
+            data.items.forEach((item) => {
+              const el = document.createElement("article");
+              el.className = "asset-card";
+              const isImage = item.artifact_type.includes("image");
+              const isVideo = item.artifact_type.includes("video") || item.uri.endsWith(".mp4");
+              const media = isImage
+                ? `<a href="${mediaUrl(item.uri)}" target="_blank"><img class="img-preview" src="${mediaUrl(item.uri)}" alt="asset"/></a>`
+                : isVideo
+                  ? `<video controls class="img-preview" src="${mediaUrl(item.uri)}"></video>`
+                  : `<div class="muted">No direct preview.</div>`;
+              el.innerHTML = `
+                <div><span class="pill">${esc(item.artifact_type)}</span><span class="pill">${esc(item.pipeline_mode)}</span></div>
+                <div class="muted">run: <a href="/dashboard#run=${esc(item.run_id)}">${esc(item.run_id)}</a></div>
+                ${media}
+                <div style="margin-top:8px;">${esc(item.preview_text || "-")}</div>
+                <div class="muted">score=${esc(item.score ?? "-")} | ${esc(item.created_at)}</div>
+                <div class="muted">${esc(item.uri)}</div>
+              `;
+              grid.appendChild(el);
+            });
+          }
+          function prevPage(){ if (page > 1) { page -= 1; refreshAssets(); } }
+          function nextPage(){ if ((page * pageSize) < total) { page += 1; refreshAssets(); } }
+          refreshAssets();
+        </script>
+      </body>
+    </html>
+    """
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard_root() -> str:
     return _dashboard_html()
@@ -611,6 +965,53 @@ def dashboard_root() -> str:
 @router.get("/dashboard", response_class=HTMLResponse)
 def dashboard_page() -> str:
     return _dashboard_html()
+
+
+@router.get("/dashboard/assets", response_class=HTMLResponse)
+def dashboard_assets_page() -> str:
+    return _assets_dashboard_html()
+
+
+@router.get("/dashboard/data-sources", response_model=DataSourceListResponse)
+def dashboard_data_sources() -> DataSourceListResponse:
+    active_url = get_active_database_url()
+    urls = list_local_sqlite_database_urls()
+    return DataSourceListResponse(
+        active_url=active_url,
+        items=[_serialize_data_source(item, active_url=active_url) for item in urls],
+    )
+
+
+@router.post("/dashboard/data-sources/select", response_model=DataSourceListResponse)
+def dashboard_select_data_source(payload: DataSourceSelectRequest) -> DataSourceListResponse:
+    try:
+        active_url = switch_database_url(payload.url)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"failed to switch data source: {exc}") from exc
+    urls = list_local_sqlite_database_urls()
+    return DataSourceListResponse(
+        active_url=active_url,
+        items=[_serialize_data_source(item, active_url=active_url) for item in urls],
+    )
+
+
+@router.get("/media")
+def media_file(path: str = Query(..., min_length=1)) -> FileResponse:
+    requested = Path(path).expanduser()
+    if not requested.is_absolute():
+        requested = (Path.cwd() / requested).resolve()
+    settings_path = get_settings().assets_dir.resolve()
+    try:
+        requested.relative_to(settings_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="path outside allowed assets directory") from exc
+    if not requested.exists() or not requested.is_file():
+        raise HTTPException(status_code=404, detail="asset file not found")
+    media_type = "application/octet-stream"
+    guessed, _ = mimetypes.guess_type(str(requested))
+    if guessed:
+        media_type = guessed
+    return FileResponse(path=str(requested), media_type=media_type)
 
 
 @router.get("/dashboard/agent-apis", response_class=HTMLResponse)
@@ -762,6 +1163,100 @@ def get_run_variants(run_id: str, db: Session = Depends(get_db)) -> VariantsResp
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return VariantsResponse(run_id=run_id, variants=data.get("variants", []), ranked=data.get("ranked", []))
+
+
+@router.get("/artifacts", response_model=ArtifactListResponse)
+def list_artifacts(
+    q: str | None = Query(default=None),
+    artifact_types: str | None = Query(default=None),
+    pipeline_mode: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    sort_by: str = Query(default="created_at"),
+    sort_order: str = Query(default="desc"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> ArtifactListResponse:
+    types = [item.strip() for item in (artifact_types or "").split(",") if item.strip()]
+    if not types:
+        types = sorted(DEFAULT_GENERATED_ARTIFACT_TYPES)
+    if sort_by not in {"created_at", "score"}:
+        raise HTTPException(status_code=400, detail="sort_by must be created_at or score")
+    if sort_order not in {"asc", "desc"}:
+        raise HTTPException(status_code=400, detail="sort_order must be asc or desc")
+    try:
+        start_dt = _parse_date_start(date_from)
+        end_dt = _parse_date_end(date_to)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"invalid date: {exc}") from exc
+
+    score_expr = (
+        select(func.max(ScoreCardModel.total_score))
+        .where(ScoreCardModel.run_id == Artifact.run_id)
+        .scalar_subquery()
+    )
+    query = (
+        select(
+            Artifact.id,
+            Artifact.run_id,
+            Artifact.artifact_type,
+            Artifact.stage_name,
+            Artifact.uri,
+            Artifact.payload,
+            Artifact.created_at,
+            PipelineRun.pipeline_mode,
+            score_expr.label("score"),
+        )
+        .join(PipelineRun, PipelineRun.id == Artifact.run_id)
+        .where(Artifact.artifact_type.in_(types))
+    )
+
+    if q:
+        pattern = f"%{q.lower()}%"
+        query = query.where(
+            or_(
+                func.lower(Artifact.run_id).like(pattern),
+                func.lower(Artifact.uri).like(pattern),
+                func.lower(cast(Artifact.payload, String)).like(pattern),
+            )
+        )
+    if pipeline_mode:
+        query = query.where(PipelineRun.pipeline_mode == pipeline_mode)
+    if start_dt:
+        query = query.where(Artifact.created_at >= start_dt)
+    if end_dt:
+        query = query.where(Artifact.created_at < end_dt)
+
+    count_stmt = select(func.count()).select_from(query.subquery())
+    total = int(db.scalar(count_stmt) or 0)
+
+    if sort_by == "score":
+        if sort_order == "asc":
+            query = query.order_by(func.coalesce(score_expr, 101.0).asc(), desc(Artifact.created_at))
+        else:
+            query = query.order_by(desc(func.coalesce(score_expr, -1.0)), desc(Artifact.created_at))
+    elif sort_order == "asc":
+        query = query.order_by(Artifact.created_at.asc())
+    else:
+        query = query.order_by(desc(Artifact.created_at))
+
+    rows = db.execute(query.offset((page - 1) * page_size).limit(page_size)).all()
+    items = [
+        ArtifactListItem(
+            artifact_id=row.id,
+            run_id=row.run_id,
+            artifact_type=row.artifact_type,
+            stage_name=row.stage_name,
+            pipeline_mode=row.pipeline_mode,
+            uri=row.uri,
+            preview_text=_artifact_preview(row.payload or {}),
+            score=float(row.score) if row.score is not None else None,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+    return ArtifactListResponse(page=page, page_size=page_size, total=total, items=items)
 
 
 def get_stage_payload(db: Session, run_id: str, stage_name: str) -> dict:

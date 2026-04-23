@@ -40,6 +40,8 @@ class StageTaskView(BaseModel):
     review_notes: str | None = None
     output_payload: dict = Field(default_factory=dict)
     metadata_json: dict = Field(default_factory=dict)
+    summary: str = ""
+    raw_ref: str = ""
     error_message: str | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -192,3 +194,39 @@ class PipelineModeView(BaseModel):
     stages: list[str] = Field(default_factory=list)
     agents: list[str] = Field(default_factory=list)
     agent_count: int = 0
+
+
+class DataSourceInfo(BaseModel):
+    id: str
+    name: str
+    path: str
+    url: str
+    is_active: bool = False
+
+
+class DataSourceListResponse(BaseModel):
+    active_url: str
+    items: list[DataSourceInfo] = Field(default_factory=list)
+
+
+class DataSourceSelectRequest(BaseModel):
+    url: str
+
+
+class ArtifactListItem(BaseModel):
+    artifact_id: str
+    run_id: str
+    artifact_type: str
+    stage_name: str
+    pipeline_mode: PipelineMode | str
+    uri: str
+    preview_text: str = ""
+    score: float | None = None
+    created_at: datetime
+
+
+class ArtifactListResponse(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    items: list[ArtifactListItem] = Field(default_factory=list)
