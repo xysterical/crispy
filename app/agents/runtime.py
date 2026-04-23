@@ -100,6 +100,7 @@ class AgentsRuntime:
         fallback_model: str,
         prompt: str,
         size: str,
+        resolution: str,
         duration_seconds: int,
         runtime_config: dict | None,
     ):
@@ -109,7 +110,14 @@ class AgentsRuntime:
         model_name = video_runtime.get("model_name") or fallback_model
         llm = self.providers.get(provider_name)
         result = llm.generate_video(
-            VideoGenRequest(model=model_name, prompt=prompt, size=size, n=1, duration_seconds=duration_seconds),
+            VideoGenRequest(
+                model=model_name,
+                prompt=prompt,
+                size=size,
+                resolution=resolution,
+                n=1,
+                duration_seconds=duration_seconds,
+            ),
             api_base_url=video_runtime.get("api_base_url") or runtime.get("api_base_url"),
             api_key=video_runtime.get("api_key") or runtime.get("api_key"),
             extra=video_runtime.get("extra") or runtime.get("extra"),
@@ -528,6 +536,7 @@ class AgentsRuntime:
                     fallback_model=model,
                     prompt=video_prompt,
                     size=video_size,
+                    resolution=resolution,
                     duration_seconds=duration_seconds,
                     runtime_config=runtime_config,
                 )
@@ -542,7 +551,7 @@ class AgentsRuntime:
             except Exception as exc:
                 error_text = str(exc)
                 video_uri = self.media.reserve_binary_artifact(run_id, f"{script.variant_id}_sample.mp4")
-            asset = VideoAsset(variant_id=script.variant_id, video_uri=video_uri, duration_seconds=15.0)
+            asset = VideoAsset(variant_id=script.variant_id, video_uri=video_uri, duration_seconds=float(duration_seconds))
             videos.append(asset)
             artifacts.append(
                 {

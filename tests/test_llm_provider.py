@@ -27,6 +27,7 @@ class _FakeClient:
         self.get_map = get_map or {}
         self.timeout = timeout
         self.posted_urls: list[str] = []
+        self.posted_json_by_url: dict[str, dict] = {}
 
     def __enter__(self):
         return self
@@ -36,6 +37,7 @@ class _FakeClient:
 
     def post(self, url: str, json: dict, headers: dict) -> _FakeResponse:
         self.posted_urls.append(url)
+        self.posted_json_by_url[url] = json
         return self.post_map.get(url, _FakeResponse(404, {"error": "not_found"}))
 
     def get(self, url: str, headers: dict | None = None) -> _FakeResponse:
@@ -144,7 +146,7 @@ def test_generate_video_uses_configured_endpoint(monkeypatch):
             endpoint: _FakeResponse(
                 200,
                 {
-                    "model": "douban-seedance-2-0",
+                    "model": "doubao-seedance-2.0",
                     "data": [{"video_url": "https://example.com/video.mp4"}],
                 },
             )
@@ -153,10 +155,65 @@ def test_generate_video_uses_configured_endpoint(monkeypatch):
     monkeypatch.setattr("app.providers.llm.httpx.Client", lambda timeout=90.0: client)
     provider = OpenAICompatibleProvider("custom")
     result = provider.generate_video(
-        VideoGenRequest(model="douban-seedance-2-0", prompt="dog leash in park", size="9:16"),
+        VideoGenRequest(model="doubao-seedance-2.0", prompt="dog leash in park", size="9:16"),
         api_base_url=endpoint,
         api_key="dummy",
     )
     assert len(result.videos) == 1
     assert result.videos[0].url == "https://example.com/video.mp4"
     assert client.posted_urls == [endpoint]
+    sent = client.posted_json_by_url[endpoint]
+    assert sent["duration"] == 8
+    assert sent["resolution"] == "720p"
+    assert "duration_seconds" not in sent
+
+
+def test_generate_video_async_task_polling_and_alias(monkeypatch):
+    endpoint = "https://api.apimart.ai/v1/videos/generations"
+    task_id = "task_video_001"
+    status_url = f"https://api.apimart.ai/v1/tasks/{task_id}?language=en"
+    client = _FakeClient(
+        post_map={
+            endpoint: _FakeResponse(
+                200,
+                {"code": 200, "data": [{"status": "submitted", "task_id": task_id}]},
+            )
+        },
+        get_map={
+            status_url: _FakeResponse(
+                200,
+                {
+                    "code": 200,
+                    "data": {
+                        "status": "completed",
+                        "result": {
+                            "videos": [
+                                {"url": ["https://example.com/video_from_task.mp4"]},
+                            ]
+                        },
+                    },
+                },
+            )
+        },
+    )
+    monkeypatch.setattr("app.providers.llm.httpx.Client", lambda timeout=90.0: client)
+    monkeypatch.setattr("app.providers.llm.time.sleep", lambda _: None)
+    provider = OpenAICompatibleProvider("apimart")
+    result = provider.generate_video(
+        VideoGenRequest(
+            model="douban-seedance-2-0",
+            prompt="dog leash in park",
+            size="9:16",
+            duration_seconds=5,
+            resolution="720p",
+        ),
+        api_base_url=endpoint,
+        api_key="dummy",
+    )
+    assert len(result.videos) == 1
+    assert result.videos[0].url == "https://example.com/video_from_task.mp4"
+    sent = client.posted_json_by_url[endpoint]
+    assert sent["model"] == "doubao-seedance-2.0"
+    assert sent["duration"] == 5
+    assert sent["size"] == "9:16"
+    assert sent["resolution"] == "720p"

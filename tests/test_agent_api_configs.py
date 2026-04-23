@@ -60,7 +60,7 @@ def test_agent_api_generation_image_config(client):
             "image_api_base_url": "https://api.apimart.ai/v1/images/generations",
             "image_api_key_env": "CRISPY_API_KEY_IMAGE",
             "video_provider_name": "openai",
-            "video_model_name": "douban-seedance-2-0",
+            "video_model_name": "doubao-seedance-2.0",
             "video_api_base_url": "https://api.video-provider.ai/v1/videos/generations",
             "video_api_key_env": "CRISPY_API_KEY_VIDEO",
         },
@@ -69,7 +69,7 @@ def test_agent_api_generation_image_config(client):
     row = patch_resp.json()
     assert row["image_model_name"] == "gpt-image-2"
     assert row["image_api_key_env"] == "CRISPY_API_KEY_IMAGE"
-    assert row["video_model_name"] == "douban-seedance-2-0"
+    assert row["video_model_name"] == "doubao-seedance-2.0"
     assert row["video_api_key_env"] == "CRISPY_API_KEY_VIDEO"
 
     all_rows = client.get("/agent-configs").json()

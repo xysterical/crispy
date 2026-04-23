@@ -16,18 +16,29 @@ _PLACEHOLDER_PNG_B64 = (
 def _normalize_task_result(result: dict[str, Any]) -> list[dict[str, Any]]:
     image_url = result.get("image_url")
     video_url = result.get("video_url")
+    direct_url = _first_url(result.get("url"))
     b64_json = result.get("b64_json")
     b64_data = result.get("b64_data")
     revised_prompt = result.get("revised_prompt")
-    if image_url or video_url or b64_json or b64_data:
+    if image_url or video_url or direct_url or b64_json or b64_data:
         return [
             {
-                "url": image_url or video_url,
+                "url": image_url or video_url or direct_url,
                 "b64_json": b64_json,
                 "b64_data": b64_data,
                 "revised_prompt": revised_prompt,
             }
         ]
+    for key in ("image_urls", "video_urls"):
+        urls = result.get(key)
+        if isinstance(urls, list):
+            normalized_from_urls: list[dict[str, Any]] = []
+            for row_url in urls:
+                final_url = _first_url(row_url)
+                if final_url:
+                    normalized_from_urls.append({"url": final_url})
+            if normalized_from_urls:
+                return normalized_from_urls
     images = result.get("images")
     if isinstance(images, list):
         normalized: list[dict[str, Any]] = []
@@ -35,13 +46,7 @@ def _normalize_task_result(result: dict[str, Any]) -> list[dict[str, Any]]:
             if not isinstance(item, dict):
                 continue
             row_url = item.get("url")
-            final_url = None
-            if isinstance(row_url, list) and row_url:
-                first = row_url[0]
-                if isinstance(first, str):
-                    final_url = first
-            elif isinstance(row_url, str):
-                final_url = row_url
+            final_url = _first_url(row_url)
             normalized.append(
                 {
                     "url": final_url,
@@ -52,10 +57,36 @@ def _normalize_task_result(result: dict[str, Any]) -> list[dict[str, Any]]:
             )
         if normalized:
             return normalized
+    videos = result.get("videos")
+    if isinstance(videos, list):
+        normalized_videos: list[dict[str, Any]] = []
+        for item in videos:
+            if not isinstance(item, dict):
+                continue
+            final_url = _first_url(item.get("url")) or _first_url(item.get("video_url")) or _first_url(item.get("video_urls"))
+            normalized_videos.append(
+                {
+                    "url": final_url,
+                    "b64_json": item.get("b64_json"),
+                    "b64_data": item.get("b64_data"),
+                }
+            )
+        if normalized_videos:
+            return normalized_videos
     data = result.get("data")
     if isinstance(data, list):
         return [row for row in data if isinstance(row, dict)]
     return []
+
+
+def _first_url(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and value:
+        first = value[0]
+        if isinstance(first, str):
+            return first
+    return None
 
 
 @dataclass(slots=True)
@@ -110,6 +141,7 @@ class VideoGenRequest:
     prompt: str
     duration_seconds: int = 8
     size: str = "9:16"
+    resolution: str = "720p"
     n: int = 1
 
 
@@ -251,6 +283,8 @@ class OpenAICompatibleProvider(LlmProvider):
         roots: list[str] = []
         if "/images/generations" in base:
             roots.append(base.split("/images/generations")[0])
+        if "/videos/generations" in base:
+            roots.append(base.split("/videos/generations")[0])
         roots.append(base)
         roots.append(base.split("/v1")[0] if "/v1" in base else base)
         candidates: list[str] = []
@@ -454,7 +488,7 @@ class OpenAICompatibleProvider(LlmProvider):
                 continue
             images.append(
                 GeneratedImage(
-                    url=row.get("url"),
+                    url=_first_url(row.get("url")),
                     b64_json=row.get("b64_json"),
                     revised_prompt=row.get("revised_prompt"),
                     mime_type=row.get("mime_type") or "image/png",
@@ -479,12 +513,18 @@ class OpenAICompatibleProvider(LlmProvider):
         if not api_base_url or not api_key:
             return self._stub.generate_video(request, api_base_url=api_base_url, api_key=api_key, extra=extra)
 
+        model_name = request.model
+        if model_name == "douban-seedance-2-0":
+            # Backward-compatible alias used in older configs.
+            model_name = "doubao-seedance-2.0"
+
         payload: dict[str, Any] = {
-            "model": request.model,
+            "model": model_name,
             "prompt": request.prompt,
             "n": request.n,
             "size": request.size,
-            "duration_seconds": request.duration_seconds,
+            "resolution": request.resolution,
+            "duration": request.duration_seconds,
         }
         if isinstance(extra, dict) and isinstance(extra.get("video_payload"), dict):
             payload = {**payload, **extra["video_payload"]}
@@ -512,7 +552,7 @@ class OpenAICompatibleProvider(LlmProvider):
                 continue
             videos.append(
                 GeneratedVideo(
-                    url=row.get("url") or row.get("video_url"),
+                    url=_first_url(row.get("url")) or _first_url(row.get("video_url")) or _first_url(row.get("video_urls")),
                     b64_data=row.get("b64_data") or row.get("b64_json"),
                     mime_type=row.get("mime_type") or "video/mp4",
                 )
@@ -520,7 +560,7 @@ class OpenAICompatibleProvider(LlmProvider):
         if not videos:
             videos.append(GeneratedVideo())
         return VideoGenResult(
-            model_used=str(data.get("model") or request.model),
+            model_used=str(data.get("model") or model_name),
             videos=videos,
             estimated_cost=0.0,
         )

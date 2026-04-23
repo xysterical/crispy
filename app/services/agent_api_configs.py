@@ -238,7 +238,7 @@ def _resolved_video_config(default_cfg: AgentApiConfig, agent_cfg: AgentApiConfi
     video_model_name = (
         agent_video.get("model_name")
         or default_video.get("model_name")
-        or "douban-seedance-2-0"
+        or "doubao-seedance-2.0"
     )
     video_api_base_url = (
         agent_video.get("api_base_url")
