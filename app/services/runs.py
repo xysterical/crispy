@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import UTC, datetime
 import json
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from app.agents.registry import stage_agent
+from app.agents.registry import STAGE_CONTRACT_VERSION, stage_agent, stage_collaborators
 from app.agents.runtime import AgentsRuntime
 from app.data.models import (
     Artifact,
@@ -16,9 +17,16 @@ from app.data.models import (
     Product,
     Project,
     RunStatus,
+    RunVariant,
     ScoreCard as ScoreCardModel,
     StageTask,
+    TaskFailureCategory,
     TaskStatus,
+    VariantAsset,
+    VariantLifecycleStatus,
+    VariantReview,
+    VariantReviewAction,
+    VariantScore,
     Workspace,
 )
 from app.orchestrator.state_machine import next_stage, stage_plan_for
@@ -33,6 +41,7 @@ from app.schemas.contracts import (
 )
 from app.services.agent_api_configs import resolve_agent_config, resolve_agent_runtime
 from app.services.creative_specs import resolve_creative_specs
+from app.services.personas import get_persona
 
 
 runtime = AgentsRuntime()
@@ -81,37 +90,6 @@ def _get_or_create_product(db: Session, project_id: str, name: str, product_code
     return product
 
 
-def _model_snapshot_for_run(db: Session, *, run_provider: str | None, run_model: str | None) -> dict:
-    fallback_provider = run_provider or "openai"
-    fallback_model = run_model or "gpt-4.1"
-    default_cfg = resolve_agent_config(
-        db,
-        agent_name="default",
-        run_provider=fallback_provider,
-        run_model=fallback_model,
-    )
-    generation_cfg = resolve_agent_config(
-        db,
-        agent_name="generation_agent",
-        run_provider=fallback_provider,
-        run_model=fallback_model,
-    )
-    return {
-        "default_text": {
-            "provider_name": default_cfg.get("provider_name"),
-            "model_name": default_cfg.get("model_name"),
-            "api_base_url": default_cfg.get("api_base_url"),
-            "api_key_env": default_cfg.get("api_key_env"),
-        },
-        "generation_text": {
-            "provider_name": generation_cfg.get("provider_name"),
-            "model_name": generation_cfg.get("model_name"),
-            "api_base_url": generation_cfg.get("api_base_url"),
-            "api_key_env": generation_cfg.get("api_key_env"),
-        },
-    }
-
-
 def _get_or_create_campaign(
     db: Session,
     project_id: str,
@@ -136,6 +114,39 @@ def _get_or_create_campaign(
     db.add(campaign)
     db.flush()
     return campaign
+
+
+def _model_snapshot_for_run(db: Session, *, run_provider: str | None, run_model: str | None) -> dict:
+    fallback_provider = run_provider or "openai"
+    fallback_model = run_model or "gpt-4.1"
+    agent_names = ("planning_agent", "copy_image_agent", "video_generation_agent", "evaluation_agent")
+    snapshot = {}
+    default_cfg = resolve_agent_config(
+        db,
+        agent_name="default",
+        run_provider=fallback_provider,
+        run_model=fallback_model,
+    )
+    snapshot["default_text"] = {
+        "provider_name": default_cfg.get("provider_name"),
+        "model_name": default_cfg.get("model_name"),
+        "api_base_url": default_cfg.get("api_base_url"),
+        "api_key_env": default_cfg.get("api_key_env"),
+    }
+    for agent_name in agent_names:
+        cfg = resolve_agent_config(
+            db,
+            agent_name=agent_name,
+            run_provider=fallback_provider,
+            run_model=fallback_model,
+        )
+        snapshot[agent_name] = {
+            "provider_name": cfg.get("provider_name"),
+            "model_name": cfg.get("model_name"),
+            "api_base_url": cfg.get("api_base_url"),
+            "api_key_env": cfg.get("api_key_env"),
+        }
+    return snapshot
 
 
 def create_run(db: Session, payload: RunCreateRequest) -> PipelineRun:
@@ -216,6 +227,13 @@ def get_stage_task(db: Session, run_id: str, stage_name: str) -> StageTask:
     return task
 
 
+def get_run_variant(db: Session, run_id: str, variant_id: str) -> RunVariant:
+    row = db.scalar(select(RunVariant).where(RunVariant.run_id == run_id, RunVariant.variant_id == variant_id))
+    if not row:
+        raise ValueError(f"run variant not found: {run_id}/{variant_id}")
+    return row
+
+
 def latest_scorecard(db: Session, run_id: str) -> ScoreCardModel | None:
     return db.scalar(select(ScoreCardModel).where(ScoreCardModel.run_id == run_id).order_by(desc(ScoreCardModel.created_at)))
 
@@ -238,6 +256,7 @@ def approve_stage(db: Session, run_id: str, notes: str = "") -> PipelineRun:
     task.status = TaskStatus.APPROVED.value
     task.approved_at = utcnow()
     task.review_notes = notes
+    task.failure_category = None
 
     nxt = next_stage(run.current_stage, run.pipeline_mode)
     if nxt is None:
@@ -262,6 +281,7 @@ def reject_stage(db: Session, run_id: str, notes: str = "") -> PipelineRun:
     task.status = TaskStatus.QUEUED.value
     task.rejected_at = utcnow()
     task.review_notes = notes
+    task.failure_category = TaskFailureCategory.HUMAN_REJECT.value
     task.metadata_json = {**(task.metadata_json or {}), "human_feedback": notes}
     run.status = RunStatus.RUNNING.value
     run.updated_at = utcnow()
@@ -371,6 +391,348 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
     return base
 
 
+def _persona_snapshots(db: Session, agent_names: list[str]) -> dict:
+    snapshots: dict = {}
+    for agent_name in agent_names:
+        content, version, source_path = get_persona(db, agent_name)
+        snapshots[agent_name] = {
+            "version": version,
+            "source_path": source_path,
+            "content": content,
+        }
+    return snapshots
+
+
+def _classify_failure(exc: Exception) -> str:
+    message = str(exc).lower()
+    if "timeout" in message:
+        return TaskFailureCategory.TIMEOUT.value
+    if "compliance" in message and "block" in message:
+        return TaskFailureCategory.COMPLIANCE_BLOCK.value
+    if "validation" in message or "pydantic" in message or "schema" in message:
+        return TaskFailureCategory.SCHEMA_ERROR.value
+    if "provider" in message or "request failed" in message or "endpoint" in message or "api" in message:
+        return TaskFailureCategory.PROVIDER_ERROR.value
+    return TaskFailureCategory.UNKNOWN.value
+
+
+def _variant_idempotency_key(stage_name: str, asset_type: str, variant_id: str, discriminator: str = "") -> str:
+    base = f"{stage_name}:{asset_type}:{variant_id}"
+    if discriminator:
+        return f"{base}:{discriminator}"
+    return base
+
+
+def _upsert_run_variant(
+    db: Session,
+    *,
+    run_id: str,
+    variant_id: str,
+    angle: str,
+    hook: str,
+    message: str,
+    rationale: str = "",
+    status: str | None = None,
+) -> RunVariant:
+    row = db.scalar(select(RunVariant).where(RunVariant.run_id == run_id, RunVariant.variant_id == variant_id))
+    now = utcnow()
+    if not row:
+        row = RunVariant(
+            run_id=run_id,
+            variant_id=variant_id,
+            angle=angle,
+            hook=hook,
+            message=message,
+            status=status or VariantLifecycleStatus.DRAFT.value,
+            metadata_json={"strategy_brief": {"angle": angle, "hook": hook, "message": message, "rationale": rationale}},
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+        db.flush()
+        return row
+    row.angle = angle
+    row.hook = hook
+    row.message = message
+    row.updated_at = now
+    row.metadata_json = {
+        **(row.metadata_json or {}),
+        "strategy_brief": {"angle": angle, "hook": hook, "message": message, "rationale": rationale},
+    }
+    if status:
+        row.status = status
+    return row
+
+
+def _upsert_variant_asset(
+    db: Session,
+    *,
+    variant: RunVariant,
+    run_id: str,
+    stage_name: str,
+    asset_type: str,
+    uri: str | None,
+    provider_name: str | None,
+    model_name: str | None,
+    prompt_summary: str | None,
+    payload: dict,
+    idempotency_key: str,
+    failure_category: str | None = None,
+    error_message: str | None = None,
+) -> VariantAsset:
+    row = db.scalar(
+        select(VariantAsset).where(
+            VariantAsset.run_variant_id == variant.id,
+            VariantAsset.idempotency_key == idempotency_key,
+        )
+    )
+    if not row:
+        row = VariantAsset(
+            run_variant_id=variant.id,
+            run_id=run_id,
+            stage_name=stage_name,
+            asset_type=asset_type,
+            uri=uri,
+            provider_name=provider_name,
+            model_name=model_name,
+            prompt_summary=prompt_summary,
+            failure_category=failure_category,
+            error_message=error_message,
+            idempotency_key=idempotency_key,
+            payload=payload,
+        )
+        db.add(row)
+        db.flush()
+        return row
+    row.uri = uri
+    row.provider_name = provider_name
+    row.model_name = model_name
+    row.prompt_summary = prompt_summary
+    row.failure_category = failure_category
+    row.error_message = error_message
+    row.payload = payload
+    return row
+
+
+def _upsert_variant_score(
+    db: Session,
+    *,
+    variant: RunVariant,
+    run_id: str,
+    stage_name: str,
+    score_type: str,
+    total_score: float | None,
+    compliance_level: str | None,
+    recommended_action: str | None,
+    sub_scores: dict,
+    reasons: list[str],
+    forecast: dict,
+    payload: dict,
+) -> VariantScore:
+    row = db.scalar(
+        select(VariantScore).where(
+            VariantScore.run_variant_id == variant.id,
+            VariantScore.score_type == score_type,
+        )
+    )
+    if not row:
+        row = VariantScore(
+            run_variant_id=variant.id,
+            run_id=run_id,
+            stage_name=stage_name,
+            score_type=score_type,
+            total_score=total_score,
+            compliance_level=compliance_level,
+            recommended_action=recommended_action,
+            sub_scores=sub_scores,
+            reasons=reasons,
+            forecast=forecast,
+            payload=payload,
+        )
+        db.add(row)
+        db.flush()
+        return row
+    row.stage_name = stage_name
+    row.total_score = total_score
+    row.compliance_level = compliance_level
+    row.recommended_action = recommended_action
+    row.sub_scores = sub_scores
+    row.reasons = reasons
+    row.forecast = forecast
+    row.payload = payload
+    return row
+
+
+def _variant_library_sync(db: Session, run: PipelineRun, task: StageTask, output_payload: dict) -> None:
+    stage_name = task.stage_name
+    if stage_name == "divergence":
+        for item in output_payload.get("variants", []):
+            _upsert_run_variant(
+                db,
+                run_id=run.id,
+                variant_id=item.get("variant_id", ""),
+                angle=item.get("angle", ""),
+                hook=item.get("hook", ""),
+                message=item.get("message", ""),
+                rationale=item.get("rationale", ""),
+                status=VariantLifecycleStatus.DRAFT.value,
+            )
+        return
+
+    if stage_name == "copy_image_generation":
+        copy_variants = {item.get("variant_id"): item for item in output_payload.get("copy_variants", [])}
+        image_assets = [item for item in output_payload.get("image_assets", []) if item.get("variant_id")]
+        for variant_id, copy_payload in copy_variants.items():
+            variant = get_run_variant(db, run.id, variant_id)
+            _upsert_variant_asset(
+                db,
+                variant=variant,
+                run_id=run.id,
+                stage_name=stage_name,
+                asset_type="copy",
+                uri=None,
+                provider_name=task.metadata_json.get("resolved_api", {}).get("provider_name"),
+                model_name=task.metadata_json.get("resolved_api", {}).get("model_name"),
+                prompt_summary=(copy_payload.get("headline") or copy_payload.get("primary_text") or "")[:240],
+                payload=copy_payload,
+                idempotency_key=_variant_idempotency_key(stage_name, "copy", variant_id),
+            )
+            variant.status = VariantLifecycleStatus.GENERATED.value
+        for image_payload in image_assets:
+            variant = get_run_variant(db, run.id, image_payload["variant_id"])
+            _upsert_variant_asset(
+                db,
+                variant=variant,
+                run_id=run.id,
+                stage_name=stage_name,
+                asset_type="image",
+                uri=image_payload.get("uri"),
+                provider_name=task.metadata_json.get("resolved_api", {}).get("image_provider_name"),
+                model_name=task.metadata_json.get("resolved_api", {}).get("image_model_name"),
+                prompt_summary=(image_payload.get("prompt") or "")[:240],
+                payload=image_payload,
+                idempotency_key=_variant_idempotency_key(stage_name, "image", image_payload["variant_id"]),
+            )
+        return
+
+    if stage_name == "video_scripting":
+        for script_payload in output_payload.get("scripts", []):
+            variant = get_run_variant(db, run.id, script_payload.get("variant_id", ""))
+            _upsert_variant_asset(
+                db,
+                variant=variant,
+                run_id=run.id,
+                stage_name=stage_name,
+                asset_type="video_script",
+                uri=None,
+                provider_name=task.metadata_json.get("resolved_api", {}).get("provider_name"),
+                model_name=task.metadata_json.get("resolved_api", {}).get("model_name"),
+                prompt_summary=(script_payload.get("hook") or "")[:240],
+                payload=script_payload,
+                idempotency_key=_variant_idempotency_key(stage_name, "video_script", script_payload.get("variant_id", "")),
+            )
+            variant.status = VariantLifecycleStatus.GENERATED.value
+        return
+
+    if stage_name == "storyboard_image_generation":
+        for frame_payload in output_payload.get("frames", []):
+            variant = get_run_variant(db, run.id, frame_payload.get("variant_id", ""))
+            _upsert_variant_asset(
+                db,
+                variant=variant,
+                run_id=run.id,
+                stage_name=stage_name,
+                asset_type="storyboard_frame",
+                uri=frame_payload.get("image_uri"),
+                provider_name=task.metadata_json.get("resolved_api", {}).get("provider_name"),
+                model_name=task.metadata_json.get("resolved_api", {}).get("model_name"),
+                prompt_summary=(frame_payload.get("prompt") or "")[:240],
+                payload=frame_payload,
+                idempotency_key=_variant_idempotency_key(
+                    stage_name,
+                    "storyboard_frame",
+                    frame_payload.get("variant_id", ""),
+                    frame_payload.get("frame_id", ""),
+                ),
+            )
+        return
+
+    if stage_name == "video_generation":
+        for video_payload in output_payload.get("videos", []):
+            variant = get_run_variant(db, run.id, video_payload.get("variant_id", ""))
+            _upsert_variant_asset(
+                db,
+                variant=variant,
+                run_id=run.id,
+                stage_name=stage_name,
+                asset_type="video",
+                uri=video_payload.get("video_uri"),
+                provider_name=task.metadata_json.get("resolved_api", {}).get("video_provider_name"),
+                model_name=task.metadata_json.get("resolved_api", {}).get("video_model_name"),
+                prompt_summary=f"video asset for {video_payload.get('variant_id', '')}",
+                payload=video_payload,
+                idempotency_key=_variant_idempotency_key(stage_name, "video", video_payload.get("variant_id", "")),
+            )
+            variant.status = VariantLifecycleStatus.GENERATED.value
+        return
+
+    if stage_name == "evaluation_selection":
+        evaluation = (output_payload.get("evaluation_result") or {})
+        forecast = evaluation.get("forecast") or {}
+        ranked = evaluation.get("ranked_variants") or []
+        winner = ((output_payload.get("selected_deliverables") or {}).get("winner_variant_id")) or None
+        for ranked_payload in ranked:
+            variant = get_run_variant(db, run.id, ranked_payload.get("variant_id", ""))
+            _upsert_variant_score(
+                db,
+                variant=variant,
+                run_id=run.id,
+                stage_name=stage_name,
+                score_type="evaluation",
+                total_score=ranked_payload.get("total_score"),
+                compliance_level=ranked_payload.get("compliance_level"),
+                recommended_action=ranked_payload.get("recommended_action"),
+                sub_scores=ranked_payload.get("sub_scores") or {},
+                reasons=ranked_payload.get("reasons") or [],
+                forecast=forecast,
+                payload=ranked_payload,
+            )
+            _upsert_variant_score(
+                db,
+                variant=variant,
+                run_id=run.id,
+                stage_name=stage_name,
+                score_type="compliance",
+                total_score=None,
+                compliance_level=ranked_payload.get("compliance_level"),
+                recommended_action=ranked_payload.get("recommended_action"),
+                sub_scores={},
+                reasons=ranked_payload.get("compliance_reasons") or [],
+                forecast={},
+                payload={
+                    "risks": ranked_payload.get("compliance_risks") or [],
+                    "reasons": ranked_payload.get("compliance_reasons") or [],
+                },
+            )
+            variant.current_score = ranked_payload.get("total_score")
+            variant.metadata_json = {
+                **(variant.metadata_json or {}),
+                "evaluation": ranked_payload,
+            }
+            variant.is_winner = variant.variant_id == winner
+            variant.shortlisted = variant.variant_id in {item.get("variant_id") for item in evaluation.get("top_k", [])}
+            variant.review_status = ranked_payload.get("recommended_action")
+            variant.regenerate_requested = ranked_payload.get("recommended_action") == "iterate_new_variants"
+            variant.status = (
+                VariantLifecycleStatus.WINNER.value
+                if variant.is_winner
+                else VariantLifecycleStatus.SHORTLISTED.value
+                if variant.shortlisted
+                else variant.status
+            )
+        return
+
+
 def execute_next_queued_stage(db: Session) -> StageTask | None:
     task = db.scalar(select(StageTask).where(StageTask.status == TaskStatus.QUEUED.value).limit(1))
     if not task:
@@ -386,17 +748,25 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
     db.flush()
 
     try:
-        agent_name = stage_agent(task.stage_name)
+        lead_agent = stage_agent(task.stage_name)
+        collaborators = list(stage_collaborators(task.stage_name))
         resolved = resolve_agent_config(
             db,
-            agent_name=agent_name,
+            agent_name=lead_agent,
             run_provider=run.model_provider,
             run_model=run.model_name,
         )
         runtime_config = resolve_agent_runtime(resolved)
         provider_name = resolved["provider_name"]
         model_name = resolved["model_name"]
-        task.metadata_json = {**(task.metadata_json or {}), "agent_name": agent_name, "resolved_api": resolved}
+        task.metadata_json = {
+            **(task.metadata_json or {}),
+            "agent_name": lead_agent,
+            "collaborators": collaborators,
+            "stage_contract_version": STAGE_CONTRACT_VERSION,
+            "resolved_api": resolved,
+            "persona_snapshots": _persona_snapshots(db, [lead_agent, *collaborators]),
+        }
 
         output = None
         if task.stage_name == "intake":
@@ -490,6 +860,7 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
         task.output_payload = output.payload
         task.model_used = output.model_used
         task.completed_at = utcnow()
+        task.failure_category = None
         run.budget_used = float(run.budget_used or 0.0) + output.estimated_cost
         run.updated_at = utcnow()
 
@@ -503,6 +874,8 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
                     payload=artifact["payload"],
                 )
             )
+
+        _variant_library_sync(db, run, task, output.payload)
 
         if task.stage_name == "evaluation_selection" and output.scorecard and output.forecast:
             scorecard = output.scorecard
@@ -527,6 +900,7 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
     except Exception as exc:  # pragma: no cover
         task.status = TaskStatus.FAILED.value
         task.error_message = str(exc)
+        task.failure_category = _classify_failure(exc)
         task.completed_at = utcnow()
         run.status = RunStatus.FAILED.value
         run.updated_at = utcnow()
@@ -534,16 +908,183 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
         return task
 
 
+def _variant_summary(db: Session, run_id: str) -> dict:
+    rows = db.scalars(select(RunVariant).where(RunVariant.run_id == run_id)).all()
+    counter = Counter(row.status for row in rows)
+    return {
+        "total": len(rows),
+        "winner_count": sum(1 for row in rows if row.is_winner),
+        "shortlisted_count": sum(1 for row in rows if row.shortlisted),
+        "regeneration_requested_count": sum(1 for row in rows if row.regenerate_requested),
+        "status_counts": dict(counter),
+    }
+
+
+def _serialize_run_variant(db: Session, row: RunVariant) -> dict:
+    assets = db.scalars(select(VariantAsset).where(VariantAsset.run_variant_id == row.id).order_by(VariantAsset.created_at.asc())).all()
+    reviews = db.scalars(select(VariantReview).where(VariantReview.run_variant_id == row.id).order_by(VariantReview.created_at.asc())).all()
+    scores = db.scalars(select(VariantScore).where(VariantScore.run_variant_id == row.id).order_by(VariantScore.created_at.asc())).all()
+    return {
+        "id": row.id,
+        "run_id": row.run_id,
+        "variant_id": row.variant_id,
+        "angle": row.angle,
+        "hook": row.hook,
+        "message": row.message,
+        "status": row.status,
+        "current_score": row.current_score,
+        "is_winner": row.is_winner,
+        "shortlisted": row.shortlisted,
+        "review_status": row.review_status,
+        "regenerate_requested": row.regenerate_requested,
+        "metadata_json": row.metadata_json or {},
+        "strategy_brief": (row.metadata_json or {}).get("strategy_brief", {}),
+        "assets": [
+            {
+                "id": asset.id,
+                "stage_name": asset.stage_name,
+                "asset_type": asset.asset_type,
+                "uri": asset.uri,
+                "provider_name": asset.provider_name,
+                "model_name": asset.model_name,
+                "prompt_summary": asset.prompt_summary,
+                "failure_category": asset.failure_category,
+                "error_message": asset.error_message,
+                "payload": asset.payload or {},
+                "created_at": asset.created_at,
+            }
+            for asset in assets
+        ],
+        "scores": [
+            {
+                "id": score.id,
+                "stage_name": score.stage_name,
+                "score_type": score.score_type,
+                "total_score": score.total_score,
+                "compliance_level": score.compliance_level,
+                "recommended_action": score.recommended_action,
+                "sub_scores": score.sub_scores or {},
+                "reasons": score.reasons or [],
+                "forecast": score.forecast or {},
+                "payload": score.payload or {},
+                "created_at": score.created_at,
+            }
+            for score in scores
+        ],
+        "reviews": [
+            {
+                "id": review.id,
+                "action": review.action,
+                "comment": review.comment,
+                "tags": review.tags or [],
+                "metadata_json": review.metadata_json or {},
+                "created_at": review.created_at,
+            }
+            for review in reviews
+        ],
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
 def run_deliverables(db: Session, run_id: str) -> dict:
-    eval_task = get_stage_task(db, run_id, "evaluation_selection")
-    payload = eval_task.output_payload or {}
-    return payload.get("selected_deliverables", {})
+    winner = db.scalar(
+        select(RunVariant)
+        .where(RunVariant.run_id == run_id, RunVariant.is_winner.is_(True))
+        .order_by(desc(RunVariant.updated_at))
+        .limit(1)
+    )
+    if not winner:
+        eval_task = get_stage_task(db, run_id, "evaluation_selection")
+        payload = eval_task.output_payload or {}
+        return payload.get("selected_deliverables", {})
+    assets = db.scalars(select(VariantAsset).where(VariantAsset.run_variant_id == winner.id).order_by(VariantAsset.created_at.asc())).all()
+    scores = db.scalars(select(VariantScore).where(VariantScore.run_variant_id == winner.id)).all()
+    copy_asset = next((item for item in assets if item.asset_type == "copy"), None)
+    image_assets = [item.payload for item in assets if item.asset_type == "image"]
+    video_asset = next((item.payload for item in assets if item.asset_type == "video"), None)
+    evaluation = next((item for item in scores if item.score_type == "evaluation"), None)
+    return {
+        "winner_variant_id": winner.variant_id,
+        "copy_variant": (copy_asset.payload if copy_asset else None),
+        "image_assets": image_assets,
+        "video_asset": video_asset,
+        "reasoning": evaluation.reasons if evaluation else [],
+    }
 
 
 def run_variants(db: Session, run_id: str) -> dict:
-    divergence = get_stage_task(db, run_id, "divergence")
+    rows = db.scalars(select(RunVariant).where(RunVariant.run_id == run_id).order_by(RunVariant.variant_id.asc())).all()
     evaluation = get_stage_task(db, run_id, "evaluation_selection")
+    ranked = ((evaluation.output_payload or {}).get("evaluation_result", {}) or {}).get("ranked_variants", [])
     return {
-        "variants": (divergence.output_payload or {}).get("variants", []),
-        "ranked": ((evaluation.output_payload or {}).get("evaluation_result", {}) or {}).get("ranked_variants", []),
+        "variants": [
+            {
+                "variant_id": row.variant_id,
+                "angle": row.angle,
+                "hook": row.hook,
+                "message": row.message,
+                "status": row.status,
+            }
+            for row in rows
+        ],
+        "ranked": ranked,
+        "items": [_serialize_run_variant(db, row) for row in rows],
+        "summary": _variant_summary(db, run_id),
     }
+
+
+def review_variant(
+    db: Session,
+    *,
+    run_id: str,
+    variant_id: str,
+    action: str,
+    comment: str = "",
+    tags: list[str] | None = None,
+    metadata: dict | None = None,
+) -> RunVariant:
+    variant = get_run_variant(db, run_id, variant_id)
+    tags = tags or []
+    metadata = metadata or {}
+    if action == VariantReviewAction.APPROVE.value:
+        variant.status = VariantLifecycleStatus.WINNER.value if variant.is_winner else VariantLifecycleStatus.APPROVED.value
+        variant.review_status = "approved"
+        variant.regenerate_requested = False
+    elif action == VariantReviewAction.REJECT.value:
+        variant.status = VariantLifecycleStatus.REJECTED.value
+        variant.review_status = "rejected"
+    elif action == VariantReviewAction.SHORTLIST.value:
+        variant.status = VariantLifecycleStatus.SHORTLISTED.value
+        variant.shortlisted = True
+        variant.review_status = "shortlisted"
+    elif action == VariantReviewAction.SET_WINNER.value:
+        other_rows = db.scalars(select(RunVariant).where(RunVariant.run_id == run_id)).all()
+        for row in other_rows:
+            if row.id != variant.id and row.is_winner:
+                row.is_winner = False
+                if row.status == VariantLifecycleStatus.WINNER.value:
+                    row.status = VariantLifecycleStatus.SHORTLISTED.value if row.shortlisted else VariantLifecycleStatus.GENERATED.value
+        variant.is_winner = True
+        variant.shortlisted = True
+        variant.status = VariantLifecycleStatus.WINNER.value
+        variant.review_status = "winner"
+    elif action == VariantReviewAction.REQUEST_REGENERATION.value:
+        variant.status = VariantLifecycleStatus.NEEDS_REGENERATION.value
+        variant.regenerate_requested = True
+        variant.review_status = "request_regeneration"
+    else:
+        raise ValueError(f"unsupported variant action: {action}")
+    variant.updated_at = utcnow()
+    db.add(
+        VariantReview(
+            run_variant_id=variant.id,
+            run_id=run_id,
+            action=action,
+            comment=comment,
+            tags=tags,
+            metadata_json=metadata,
+        )
+    )
+    db.flush()
+    return variant

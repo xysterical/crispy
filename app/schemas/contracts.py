@@ -123,6 +123,7 @@ class StageEnvelope(BaseModel):
 class FeedbackRow(BaseModel):
     project_name: str
     creative_key: str
+    variant_id: str | None = None
     campaign_name: str | None = None
     run_id: str | None = None
     impressions: int = 0
@@ -175,6 +176,7 @@ class VariantCandidate(BaseModel):
     angle: str
     hook: str
     message: str
+    rationale: str = ""
 
 
 class VariantSet(BaseModel):
@@ -224,6 +226,9 @@ class RankedVariant(BaseModel):
     sub_scores: dict[str, float] = Field(default_factory=dict)
     compliance_level: ComplianceLevel = ComplianceLevel.LOW
     reasons: list[str] = Field(default_factory=list)
+    compliance_risks: list[str] = Field(default_factory=list)
+    compliance_reasons: list[str] = Field(default_factory=list)
+    recommended_action: str = "manual_review"
 
 
 class EvaluationResult(BaseModel):

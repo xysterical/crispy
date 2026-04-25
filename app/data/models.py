@@ -44,6 +44,34 @@ class TaskStatus(StrEnum):
     FAILED = "failed"
 
 
+class TaskFailureCategory(StrEnum):
+    PROVIDER_ERROR = "provider_error"
+    SCHEMA_ERROR = "schema_error"
+    COMPLIANCE_BLOCK = "compliance_block"
+    TIMEOUT = "timeout"
+    HUMAN_REJECT = "human_reject"
+    UNKNOWN = "unknown"
+
+
+class VariantLifecycleStatus(StrEnum):
+    DRAFT = "draft"
+    GENERATED = "generated"
+    SHORTLISTED = "shortlisted"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    NEEDS_REGENERATION = "needs_regeneration"
+    WINNER = "winner"
+    FAILED = "failed"
+
+
+class VariantReviewAction(StrEnum):
+    APPROVE = "approve_variant"
+    REJECT = "reject_variant"
+    SHORTLIST = "shortlist_variant"
+    SET_WINNER = "set_winner"
+    REQUEST_REGENERATION = "request_regeneration"
+
+
 class Workspace(Base):
     __tablename__ = "workspace"
 
@@ -144,6 +172,7 @@ class PipelineRun(Base):
     stage_tasks: Mapped[list["StageTask"]] = relationship(back_populates="run", cascade="all, delete-orphan")
     artifacts: Mapped[list["Artifact"]] = relationship(back_populates="run", cascade="all, delete-orphan")
     scorecards: Mapped[list["ScoreCard"]] = relationship(back_populates="run", cascade="all, delete-orphan")
+    variants: Mapped[list["RunVariant"]] = relationship(cascade="all, delete-orphan")
 
 
 class StageTask(Base):
@@ -159,6 +188,7 @@ class StageTask(Base):
     output_payload: Mapped[dict] = mapped_column(json_type(), default=dict)
     review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_category: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
     metadata_json: Mapped[dict] = mapped_column(json_type(), default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -169,6 +199,89 @@ class StageTask(Base):
 
     run: Mapped[PipelineRun] = relationship(back_populates="stage_tasks")
     scorecards: Mapped[list["ScoreCard"]] = relationship(back_populates="stage_task")
+
+
+class RunVariant(Base):
+    __tablename__ = "run_variant"
+    __table_args__ = (UniqueConstraint("run_id", "variant_id", name="uq_run_variant_run_variant"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(ForeignKey("pipeline_run.id"), nullable=False)
+    variant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    angle: Mapped[str] = mapped_column(Text, default="")
+    hook: Mapped[str] = mapped_column(Text, default="")
+    message: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(32), default=VariantLifecycleStatus.DRAFT.value)
+    current_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_winner: Mapped[bool] = mapped_column(Boolean, default=False)
+    shortlisted: Mapped[bool] = mapped_column(Boolean, default=False)
+    review_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    regenerate_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    metadata_json: Mapped[dict] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    assets: Mapped[list["VariantAsset"]] = relationship(back_populates="variant", cascade="all, delete-orphan")
+    reviews: Mapped[list["VariantReview"]] = relationship(back_populates="variant", cascade="all, delete-orphan")
+    scores: Mapped[list["VariantScore"]] = relationship(back_populates="variant", cascade="all, delete-orphan")
+
+
+class VariantAsset(Base):
+    __tablename__ = "variant_asset"
+    __table_args__ = (UniqueConstraint("run_variant_id", "idempotency_key", name="uq_variant_asset_dedupe"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_variant_id: Mapped[str] = mapped_column(ForeignKey("run_variant.id"), nullable=False)
+    run_id: Mapped[str] = mapped_column(ForeignKey("pipeline_run.id"), nullable=False)
+    stage_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    asset_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    uri: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    provider_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    prompt_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_category: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    payload: Mapped[dict] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    variant: Mapped["RunVariant"] = relationship(back_populates="assets")
+
+
+class VariantReview(Base):
+    __tablename__ = "variant_review"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_variant_id: Mapped[str] = mapped_column(ForeignKey("run_variant.id"), nullable=False)
+    run_id: Mapped[str] = mapped_column(ForeignKey("pipeline_run.id"), nullable=False)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags: Mapped[list[str]] = mapped_column(json_type(), default=list)
+    metadata_json: Mapped[dict] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    variant: Mapped["RunVariant"] = relationship(back_populates="reviews")
+
+
+class VariantScore(Base):
+    __tablename__ = "variant_score"
+    __table_args__ = (UniqueConstraint("run_variant_id", "score_type", name="uq_variant_score_type"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_variant_id: Mapped[str] = mapped_column(ForeignKey("run_variant.id"), nullable=False)
+    run_id: Mapped[str] = mapped_column(ForeignKey("pipeline_run.id"), nullable=False)
+    stage_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    score_type: Mapped[str] = mapped_column(String(32), nullable=False, default="evaluation")
+    total_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    compliance_level: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    recommended_action: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sub_scores: Mapped[dict] = mapped_column(json_type(), default=dict)
+    reasons: Mapped[list[str]] = mapped_column(json_type(), default=list)
+    forecast: Mapped[dict] = mapped_column(json_type(), default=dict)
+    payload: Mapped[dict] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    variant: Mapped["RunVariant"] = relationship(back_populates="scores")
 
 
 class Artifact(Base):

@@ -41,14 +41,19 @@ def test_pipeline_run_can_progress_with_human_gates(client):
     assert run["model_name"] == "gpt-4.1"
     assert run["pipeline_mode"] == "full_multimodal"
     assert run["enable_research"] is False
+    assert run["variant_summary"]["total"] == 0
 
     for stage in STAGE_ORDER:
         _run_worker_once()
         run = client.get(f"/runs/{run_id}").json()
         assert run["current_stage"] == stage
         assert run["status"] == "waiting_review"
+        current_task = [t for t in run["stage_tasks"] if t["stage_name"] == stage][0]
+        assert current_task["metadata_json"]["stage_contract_version"] == "commercial-pilot-v1"
+        assert current_task["metadata_json"]["persona_snapshots"]
 
         if stage == "divergence":
+            assert run["variant_summary"]["total"] == run["variant_count"]
             rej = client.post(f"/runs/{run_id}/reject", json={"notes": "need stronger variant split"})
             assert rej.status_code == 200
             _run_worker_once()
@@ -97,12 +102,67 @@ def test_run_deliverables_and_variants_endpoints(client):
     variants_payload = variants.json()
     assert len(variants_payload["variants"]) > 0
     assert len(variants_payload["ranked"]) > 0
+    assert len(variants_payload["items"]) == 8
+    assert variants_payload["summary"]["winner_count"] == 1
+    assert variants_payload["items"][0]["assets"]
+    assert variants_payload["items"][0]["scores"]
 
     deliverables = client.get(f"/runs/{run_id}/deliverables")
     assert deliverables.status_code == 200
     deliverables_payload = deliverables.json()
     assert deliverables_payload["winner_variant_id"] is not None
     assert "copy_variant" in deliverables_payload["deliverables"]
+
+
+def test_variant_review_endpoints_update_variant_library(client):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-variant-review",
+            "project_name": "p-variant-review",
+            "product_name": "pet brush",
+            "product_code": "VR-001",
+            "industry_code": "pet_care",
+            "campaign_name": "meta-us-review",
+            "creative_preset": "meta_square_5s",
+        },
+    )
+    run_id = create_resp.json()["id"]
+    for stage in STAGE_ORDER:
+        _run_worker_once()
+        if stage != STAGE_ORDER[-1]:
+            client.post(f"/runs/{run_id}/advance", json={"notes": "ok"})
+
+    variants_payload = client.get(f"/runs/{run_id}/variants").json()
+    target = variants_payload["items"][1]["variant_id"]
+
+    shortlist = client.post(
+        f"/runs/{run_id}/variants/{target}/select",
+        json={"shortlist": True, "comment": "keep for review"},
+    )
+    assert shortlist.status_code == 200
+    assert shortlist.json()["shortlisted"] is True
+
+    regen = client.post(
+        f"/runs/{run_id}/variants/{target}/regenerate",
+        json={"reason": "need a different hook"},
+    )
+    assert regen.status_code == 200
+    assert regen.json()["regenerate_requested"] is True
+
+    winner = client.post(
+        f"/runs/{run_id}/variants/{target}/select",
+        json={"winner": True, "comment": "manual winner"},
+    )
+    assert winner.status_code == 200
+    assert winner.json()["is_winner"] is True
+
+    review = client.post(
+        f"/runs/{run_id}/variants/{target}/review",
+        json={"action": "approve_variant", "comment": "approved by operator"},
+    )
+    assert review.status_code == 200
+    assert review.json()["review_status"] == "approved"
 
 
 def test_pipeline_mode_copy_image_only(client):
@@ -236,3 +296,57 @@ def test_creative_preset_is_materialized_into_run(client):
             assert assets[0]["aspect_ratio"] == "9:16"
             break
         client.post(f"/runs/{run['id']}/advance", json={"notes": "ok"})
+
+
+def test_runs_preflight_reports_video_generation_incompatibility(client):
+    patch_resp = client.patch(
+        "/agent-configs/video_generation_agent",
+        json={
+            "video_provider_name": "deepseek",
+            "video_model_name": "deepseek-v3.2",
+            "video_api_base_url": "https://api.deepseek.com/v1/chat/completions",
+        },
+    )
+    assert patch_resp.status_code == 200
+
+    resp = client.post(
+        "/runs/preflight",
+        json={
+            "pipeline_mode": "video_only",
+            "has_image_inputs": False,
+            "has_video_inputs": False,
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["ok"] is False
+    assert payload["severity"] == "error"
+    keys = [row["key"] for row in payload["checks"]]
+    assert "video_generation.video_generation" in keys
+
+
+def test_runs_preflight_reports_intake_video_understanding_incompatibility(client):
+    patch_resp = client.patch(
+        "/agent-configs/gm_orchestrator",
+        json={
+            "provider_name": "deepseek",
+            "model_name": "deepseek-v3.2",
+            "api_base_url": "https://api.deepseek.com/v1",
+        },
+    )
+    assert patch_resp.status_code == 200
+
+    resp = client.post(
+        "/runs/preflight",
+        json={
+            "pipeline_mode": "copy_image_only",
+            "has_image_inputs": False,
+            "has_video_inputs": True,
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["ok"] is False
+    assert payload["severity"] == "error"
+    keys = [row["key"] for row in payload["checks"]]
+    assert "intake.video_understanding" in keys

@@ -49,7 +49,7 @@ def test_agent_api_default_and_override(client):
 
 def test_agent_api_generation_image_config(client):
     patch_resp = client.patch(
-        "/agent-configs/generation_agent",
+        "/agent-configs/copy_image_agent",
         json={
             "provider_name": "kimi",
             "model_name": "kimi-k2.5",
@@ -73,7 +73,7 @@ def test_agent_api_generation_image_config(client):
     assert row["video_api_key_env"] == "CRISPY_API_KEY_VIDEO"
 
     all_rows = client.get("/agent-configs").json()
-    gen_rows = [item for item in all_rows if item["agent_name"] == "generation_agent"]
+    gen_rows = [item for item in all_rows if item["agent_name"] == "copy_image_agent"]
     assert len(gen_rows) == 1
     gen = gen_rows[0]
     assert gen["provider_name"] == "kimi"
@@ -91,9 +91,9 @@ def test_agent_api_page_loads(client, monkeypatch):
     assert "Agent API Configs" in resp.text
     assert "default" in resp.text
     assert "CRISPY_API_KEY_KIMI" in resp.text
-    assert "Generation Agent - Text" in resp.text
-    assert "Generation Agent - Image" in resp.text
-    assert "Generation Agent - Video" in resp.text
+    assert "Copy Image Agent - Text" in resp.text
+    assert "Copy Image Agent - Image" in resp.text
+    assert "Video Generation Agent - Video" in resp.text
 
 
 def test_agent_api_env_vars_endpoint(client, monkeypatch):
@@ -110,21 +110,21 @@ def test_agent_api_env_vars_endpoint(client, monkeypatch):
 
 def test_agent_api_env_prefix_validation(client):
     resp = client.patch(
-        "/agent-configs/generation_agent",
+        "/agent-configs/copy_image_agent",
         json={"api_key_env": "OPENAI_API_KEY"},
     )
     assert resp.status_code == 400
     assert "CRISPY_API_KEY_" in resp.text
 
     image_resp = client.patch(
-        "/agent-configs/generation_agent",
+        "/agent-configs/copy_image_agent",
         json={"image_api_key_env": "OPENAI_API_KEY"},
     )
     assert image_resp.status_code == 400
     assert "CRISPY_API_KEY_" in image_resp.text
 
     video_resp = client.patch(
-        "/agent-configs/generation_agent",
+        "/agent-configs/copy_image_agent",
         json={"video_api_key_env": "OPENAI_API_KEY"},
     )
     assert video_resp.status_code == 400

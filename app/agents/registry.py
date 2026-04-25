@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+STAGE_CONTRACT_VERSION = "commercial-pilot-v1"
+
+
 @dataclass(frozen=True, slots=True)
 class AgentSpec:
     name: str
@@ -14,19 +17,40 @@ class AgentSpec:
     order: int
 
 
+@dataclass(frozen=True, slots=True)
+class StageAssignment:
+    lead_agent: str
+    collaborators: tuple[str, ...] = ()
+    contract_version: str = STAGE_CONTRACT_VERSION
+
+
 AGENT_SPECS: tuple[AgentSpec, ...] = (
     AgentSpec(
         name="gm_orchestrator",
         display_name="GM Orchestrator",
         stage="manager",
-        role="global_strategy",
+        role="run_governance",
         relative_path="gm/gm_orchestrator.md",
         order=0,
         default_content="""# GM Orchestrator
-- Own stage gating and final decision quality.
-- Convert historical feedback into next-round strategy memory.
-- Prioritize ROI and enforce compliance hard gates.
-- Track model usage and budget spend for each run.
+## Mission
+Own run governance, strategy continuity, and review readiness across the full multimodal pipeline.
+
+## Responsibilities
+- Normalize intake into execution-ready facts and constraints.
+- Decide which downstream agents receive which context.
+- Preserve product, industry, budget, and compliance constraints.
+- Record enough runtime metadata for audit and replay.
+
+## Must Output
+- Run-normalized intake summary.
+- Explicit constraints and review questions for the next stage.
+- Governance metadata: assumptions, risks, fallback path.
+
+## Cannot Do
+- Cannot invent unsupported product claims.
+- Cannot silently drop user constraints or uploaded asset facts.
+- Cannot declare a publish winner without evaluation evidence.
 """,
     ),
     AgentSpec(
@@ -37,64 +61,190 @@ AGENT_SPECS: tuple[AgentSpec, ...] = (
         relative_path="stages/01_research_agent.md",
         order=10,
         default_content="""# Research Agent
-- Produce practical US market insights with clear evidence links.
-- Identify competitor patterns, audience segments, and risk claims.
-- Output concise, execution-ready market brief.
+## Mission
+Produce competitor, audience, and claim-risk intelligence when research is enabled.
+
+## Must Output
+- Audience insights and purchase triggers.
+- Competitor patterns and white-space observations.
+- Forbidden or risky claim guidance.
+- Source-backed notes or explicit statement that research was skipped.
+
+## Review Questions
+- Are the recommendations grounded in evidence?
+- Did the brief isolate claim risk and messaging opportunities?
 """,
     ),
     AgentSpec(
-        name="ideation_agent",
-        display_name="Ideation Agent",
-        stage="ideation",
-        role="creative_planning",
-        relative_path="stages/02_ideation_agent.md",
+        name="planning_agent",
+        display_name="Planning Agent",
+        stage="planning",
+        role="creative_strategy",
+        relative_path="stages/02_planning_agent.md",
         order=20,
-        default_content="""# Ideation Agent
-- Create diverse hook matrix with explicit emotional targets.
-- Build 8 hypothesis-led variants with clear rationale.
-- Respect forbidden claim constraints from research stage.
+        default_content="""# Planning Agent
+## Mission
+Convert intake, research, and GM memory into an execution-ready creative strategy brief.
+
+## Must Output
+- Strategic angles.
+- Audience priorities.
+- Positioning statement.
+- Narrative constraints and no-go claims.
+- Review questions for variant planning.
+
+## Cannot Do
+- Cannot create final ad assets.
+- Cannot override product truths from intake.
 """,
     ),
     AgentSpec(
-        name="generation_agent",
-        display_name="Generation Agent",
-        stage="generation",
-        role="asset_generation",
-        relative_path="stages/03_generation_agent.md",
+        name="variant_strategy_agent",
+        display_name="Variant Strategy Agent",
+        stage="divergence",
+        role="variant_design",
+        relative_path="stages/03_variant_strategy_agent.md",
         order=30,
-        default_content="""# Generation Agent
-- Generate Meta-first ad copy, image prompts, and video sample plan.
-- Maintain en-US tone and direct response style.
-- Keep creative outputs auditable and variant-tagged.
+        default_content="""# Variant Strategy Agent
+## Mission
+Design a variant hypothesis matrix that is meaningfully different across hooks, angles, and tests.
+
+## Must Output
+- Variant ID.
+- Angle.
+- Hook.
+- Message hypothesis.
+- Experiment rationale.
+
+## Review Questions
+- Are variants sufficiently differentiated?
+- Does each variant test a distinct commercial hypothesis?
 """,
     ),
     AgentSpec(
-        name="scoring_agent",
-        display_name="Scoring Agent",
-        stage="scoring",
-        role="quality_scoring",
-        relative_path="stages/04_scoring_agent.md",
+        name="copy_image_agent",
+        display_name="Copy Image Agent",
+        stage="copy_image_generation",
+        role="copy_and_image_generation",
+        relative_path="stages/04_copy_image_agent.md",
         order=40,
-        default_content="""# Scoring Agent
-- Score quality across attraction, clarity, brand alignment, compliance, and AI naturalness.
-- Provide explainable reasons for each sub-score.
-- Output conversion forecast (0-100) with confidence.
+        default_content="""# Copy Image Agent
+## Mission
+Generate copy and image outputs for each approved variant without breaking product truths.
+
+## Must Output
+- Variant-bound copy objects.
+- Variant-bound image prompt and image asset metadata.
+- Prompt summary, model metadata, and failure notes.
+
+## Cannot Do
+- Cannot merge different variants into one asset.
+- Cannot output images that obscure product visibility.
+""",
+    ),
+    AgentSpec(
+        name="video_script_agent",
+        display_name="Video Script Agent",
+        stage="video_scripting",
+        role="video_script_generation",
+        relative_path="stages/05_video_script_agent.md",
+        order=50,
+        default_content="""# Video Script Agent
+## Mission
+Write hook, script, and shot list for each variant's video path.
+
+## Must Output
+- Hook.
+- Script.
+- Shot list.
+- Variant rationale notes.
+""",
+    ),
+    AgentSpec(
+        name="storyboard_agent",
+        display_name="Storyboard Agent",
+        stage="storyboard_image_generation",
+        role="storyboard_generation",
+        relative_path="stages/06_storyboard_agent.md",
+        order=60,
+        default_content="""# Storyboard Agent
+## Mission
+Translate scripts into storyboard frame plans and visual prompts per variant.
+
+## Must Output
+- Frame IDs.
+- Frame prompts.
+- Image references or placeholders.
+- Review questions for motion continuity.
+""",
+    ),
+    AgentSpec(
+        name="video_generation_agent",
+        display_name="Video Generation Agent",
+        stage="video_generation",
+        role="video_generation",
+        relative_path="stages/07_video_generation_agent.md",
+        order=70,
+        default_content="""# Video Generation Agent
+## Mission
+Generate video deliverables per variant and preserve execution metadata.
+
+## Must Output
+- Video URI.
+- Duration.
+- Provider/model metadata.
+- Failure category and error notes when generation degrades.
+""",
+    ),
+    AgentSpec(
+        name="evaluation_agent",
+        display_name="Evaluation Agent",
+        stage="evaluation_selection",
+        role="variant_ranking",
+        relative_path="stages/08_evaluation_agent.md",
+        order=80,
+        default_content="""# Evaluation Agent
+## Mission
+Rank all variants and recommend next action for review without deleting losers.
+
+## Must Output
+- Per-variant total score.
+- Sub-scores.
+- Compliance recommendation input.
+- Recommended action and reviewer notes.
 """,
     ),
     AgentSpec(
         name="compliance_agent",
         display_name="Compliance Agent",
-        stage="scoring",
+        stage="evaluation_selection",
         role="compliance_guard",
-        relative_path="stages/05_compliance_agent.md",
-        order=50,
+        relative_path="stages/09_compliance_agent.md",
+        order=90,
         default_content="""# Compliance Agent
-- Enforce high-risk hard block and medium-risk manual review policy.
-- Flag legal exaggerations and synthetic AI-feel artifacts.
-- Return explicit risk reasons and review recommendations.
+## Mission
+Produce independent compliance judgment for each variant.
+
+## Must Output
+- Compliance level.
+- Risks.
+- Block/manual review/pass recommendation.
+- Reasons that can be shown to reviewers.
 """,
     ),
 )
+
+
+STAGE_ASSIGNMENTS: dict[str, StageAssignment] = {
+    "intake": StageAssignment(lead_agent="gm_orchestrator"),
+    "planning": StageAssignment(lead_agent="planning_agent", collaborators=("research_agent", "gm_orchestrator")),
+    "divergence": StageAssignment(lead_agent="variant_strategy_agent", collaborators=("planning_agent",)),
+    "copy_image_generation": StageAssignment(lead_agent="copy_image_agent", collaborators=("gm_orchestrator",)),
+    "video_scripting": StageAssignment(lead_agent="video_script_agent", collaborators=("gm_orchestrator",)),
+    "storyboard_image_generation": StageAssignment(lead_agent="storyboard_agent", collaborators=("video_script_agent",)),
+    "video_generation": StageAssignment(lead_agent="video_generation_agent", collaborators=("storyboard_agent",)),
+    "evaluation_selection": StageAssignment(lead_agent="evaluation_agent", collaborators=("compliance_agent", "gm_orchestrator")),
+}
 
 
 def get_agent_spec(agent_name: str) -> AgentSpec:
@@ -104,15 +254,13 @@ def get_agent_spec(agent_name: str) -> AgentSpec:
     raise KeyError(f"unknown agent: {agent_name}")
 
 
+def stage_assignment(stage_name: str) -> StageAssignment:
+    return STAGE_ASSIGNMENTS.get(stage_name, StageAssignment(lead_agent="gm_orchestrator"))
+
+
 def stage_agent(stage_name: str) -> str:
-    mapping = {
-        "intake": "gm_orchestrator",
-        "planning": "ideation_agent",
-        "divergence": "ideation_agent",
-        "copy_image_generation": "generation_agent",
-        "video_scripting": "generation_agent",
-        "storyboard_image_generation": "generation_agent",
-        "video_generation": "generation_agent",
-        "evaluation_selection": "scoring_agent",
-    }
-    return mapping.get(stage_name, "gm_orchestrator")
+    return stage_assignment(stage_name).lead_agent
+
+
+def stage_collaborators(stage_name: str) -> tuple[str, ...]:
+    return stage_assignment(stage_name).collaborators

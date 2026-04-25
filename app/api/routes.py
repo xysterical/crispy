@@ -40,9 +40,15 @@ from app.schemas.api import (
     PipelineModeView,
     ReviewActionRequest,
     RunCreateRequest,
+    RunPreflightRequest,
+    RunPreflightResponse,
+    RunVariantView,
     RunSummary,
     RunView,
     StageTaskView,
+    VariantRegenerateRequest,
+    VariantReviewRequest,
+    VariantSelectRequest,
     VariantsResponse,
 )
 from app.schemas.contracts import ComplianceLevel, ConversionForecast, ScoreCard
@@ -57,12 +63,14 @@ from app.services.feedback import import_feedback_rows, project_leaderboard
 from app.services.intake_assets import process_uploaded_payloads
 from app.services.personas import get_persona, list_persona_catalog, persona_info, update_persona
 from app.services.creative_specs import list_creative_presets
+from app.services.capability_preflight import preflight_run_capabilities
 from app.services.runs import (
     approve_stage,
     create_run,
     get_run,
     latest_scorecard,
     reject_stage,
+    review_variant,
     run_deliverables,
     run_variants,
 )
@@ -246,6 +254,7 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
         created_at=run.created_at,
         updated_at=run.updated_at,
         stage_tasks=task_views,
+        variant_summary=run_variants(db, run.id).get("summary", {}),
         latest_scorecard=scorecard,
         latest_forecast=forecast,
     )
@@ -463,6 +472,35 @@ def _dashboard_html() -> str:
             max-height: 220px;
             background:#f2f5fa;
           }
+          .variant-board {
+            display:grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap:10px;
+            margin-top:10px;
+          }
+          .variant-card {
+            border:1px solid #deebe2;
+            border-radius:12px;
+            padding:11px;
+            background:#fdfefe;
+          }
+          .variant-head {
+            display:flex;
+            justify-content:space-between;
+            gap:8px;
+            align-items:flex-start;
+            margin-bottom:8px;
+          }
+          .variant-actions {
+            display:flex;
+            gap:6px;
+            flex-wrap:wrap;
+            margin-top:8px;
+          }
+          .variant-actions button {
+            padding: 6px 8px;
+            font-size: 12px;
+          }
           pre {
             white-space: pre-wrap;
             word-break: break-word;
@@ -484,6 +522,7 @@ def _dashboard_html() -> str:
             .app-shell { width: calc(100% - 12px); margin-top: 10px; }
             .row { grid-template-columns: 1fr; gap: 0; }
             .deliverables { grid-template-columns: 1fr; }
+            .variant-board { grid-template-columns: 1fr; }
             .hero { flex-direction: column; align-items: flex-start; }
           }
         </style>
@@ -746,6 +785,85 @@ def _dashboard_html() -> str:
             `;
           }
 
+          function latestScore(item, scoreType){
+            const rows = (item?.scores || []).filter((row) => row.score_type === scoreType);
+            return rows.length ? rows[rows.length - 1] : null;
+          }
+
+          function assetsByType(item, type){
+            return (item?.assets || []).filter((asset) => asset.asset_type === type);
+          }
+
+          async function variantAction(runId, variantId, endpoint, body){
+            await api(endpoint, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body)
+            });
+            await selectRun(runId);
+          }
+
+          function renderVariantBoard(runId, variants){
+            const items = variants?.items || [];
+            const summary = variants?.summary || {};
+            const header = `<div class="muted">variants: ${esc(summary.total || 0)} | shortlisted: ${esc(summary.shortlisted_count || 0)} | winners: ${esc(summary.winner_count || 0)} | regen requests: ${esc(summary.regeneration_requested_count || 0)}</div>`;
+            if (!items.length) {
+              return `<h3 style="margin-top:14px;">Variant Board</h3>${header}<div class="run-detail-empty">No variants materialized yet.</div>`;
+            }
+            const cards = items.map((item) => {
+              const copy = assetsByType(item, "copy")[0]?.payload || null;
+              const images = assetsByType(item, "image");
+              const image = images[0] || null;
+              const script = assetsByType(item, "video_script")[0]?.payload || null;
+              const storyboardCount = assetsByType(item, "storyboard_frame").length;
+              const video = assetsByType(item, "video")[0]?.payload || null;
+              const evaluation = latestScore(item, "evaluation");
+              const compliance = latestScore(item, "compliance");
+              return `
+                <article class="variant-card">
+                  <div class="variant-head">
+                    <div>
+                      <div class="stage-title">${esc(item.variant_id)} · ${esc(item.angle || "-")}</div>
+                      <div class="muted">${esc(item.hook || "-")}</div>
+                    </div>
+                    <div style="text-align:right;">
+                      <span class="pill">status: ${esc(item.status)}</span>
+                      ${item.is_winner ? '<span class="pill">winner</span>' : ''}
+                      ${item.shortlisted ? '<span class="pill">shortlisted</span>' : ''}
+                    </div>
+                  </div>
+                  <div><b>Message</b>: ${esc(item.message || "-")}</div>
+                  <div class="muted" style="margin-top:4px;">strategy: ${esc(item.strategy_brief?.rationale || "-")}</div>
+                  <div style="margin-top:8px;"><b>Copy</b>: ${esc(copy?.headline || "-")}</div>
+                  <div class="muted">${esc(copy?.primary_text || "-")}</div>
+                  <div style="margin-top:8px;"><b>Image</b></div>
+                  ${image ? `
+                    <a href="${mediaUrl(image.uri)}" target="_blank">
+                      <img class="img-preview" src="${mediaUrl(image.uri)}" alt="variant image" />
+                    </a>
+                  ` : '<div class="muted">No image asset.</div>'}
+                  <div style="margin-top:8px;"><b>Script</b>: ${esc(script?.hook || "-")}</div>
+                  <div class="muted">${esc(script?.script || "-")}</div>
+                  <div class="muted" style="margin-top:4px;">storyboard frames: ${esc(storyboardCount)} | video: ${video ? esc(video.video_uri || "-") : "none"}</div>
+                  <div style="margin-top:8px;">
+                    <span class="pill">score: ${esc(evaluation?.total_score ?? "-")}</span>
+                    <span class="pill">action: ${esc(evaluation?.recommended_action || "-")}</span>
+                    <span class="pill">compliance: ${esc(compliance?.compliance_level || evaluation?.compliance_level || "-")}</span>
+                  </div>
+                  <div class="muted" style="margin-top:4px;">${esc((compliance?.reasons || evaluation?.reasons || []).join(" | ") || "-")}</div>
+                  <div class="variant-actions">
+                    <button onclick="variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/review', {action:'approve_variant', comment:'approved from dashboard'})">Approve</button>
+                    <button onclick="variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/review', {action:'reject_variant', comment:'rejected from dashboard'})">Reject</button>
+                    <button onclick="variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/select', {shortlist:true, comment:'shortlisted from dashboard'})">Shortlist</button>
+                    <button class="primary" onclick="variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/select', {winner:true, comment:'winner chosen from dashboard'})">Set Winner</button>
+                    <button onclick="variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/regenerate', {reason:'dashboard regeneration request'})">Regenerate</button>
+                  </div>
+                </article>
+              `;
+            }).join("");
+            return `<h3 style="margin-top:14px;">Variant Board</h3>${header}<div class="variant-board">${cards}</div>`;
+          }
+
           function renderTimeline(run) {
             const stageHtml = (run.stage_tasks || []).map((task) => {
               const agent = task.metadata_json?.agent_name || "-";
@@ -769,7 +887,7 @@ def _dashboard_html() -> str:
             return stageHtml || '<span class="muted">No stage logs.</span>';
           }
 
-          function renderRunDetail(run, deliverables){
+          function renderRunDetail(run, deliverables, variants){
             const score = run.latest_scorecard ? `<pre>${esc(JSON.stringify(run.latest_scorecard, null, 2))}</pre>` : `<span class="muted">No score yet.</span>`;
             return `
               <div style="margin-bottom:12px;">
@@ -778,8 +896,10 @@ def _dashboard_html() -> str:
                 <div class="muted">provider/model: ${esc(run.model_provider)} / ${esc(run.model_name)} | budget: ${esc(run.budget_used)}</div>
                 <div class="muted">product_code: ${esc(run.product_code)} | industry_code: ${esc(run.industry_code)} | creative_preset: ${esc(run.creative_preset)}</div>
                 <div class="muted">creative_specs: ${esc(JSON.stringify(run.creative_specs || {}))}</div>
+                <div class="muted">variant_summary: ${esc(JSON.stringify(run.variant_summary || {}))}</div>
               </div>
               ${renderDeliverables(deliverables)}
+              ${renderVariantBoard(run.id, variants)}
               <h3 style="margin-top:14px;">Stage Timeline</h3>
               <div class="timeline">${renderTimeline(run)}</div>
               <h3 style="margin-top:14px;">Latest Scorecard</h3>
@@ -789,11 +909,12 @@ def _dashboard_html() -> str:
 
           async function selectRun(runId){
             currentRunId = runId;
-            const [run, deliverables] = await Promise.all([
+            const [run, deliverables, variants] = await Promise.all([
               api(`/runs/${runId}`),
-              api(`/runs/${runId}/deliverables`).catch(() => ({ run_id: runId, deliverables: {}, score: {} }))
+              api(`/runs/${runId}/deliverables`).catch(() => ({ run_id: runId, deliverables: {}, score: {} })),
+              api(`/runs/${runId}/variants`).catch(() => ({ run_id: runId, items: [], summary: {}, variants: [], ranked: [] }))
             ]);
-            document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables);
+            document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables, variants);
           }
 
           async function loadPipelineModes(){
@@ -829,10 +950,54 @@ def _dashboard_html() -> str:
             }
           }
 
+          function detectInputKinds(files){
+            let hasImageInputs = false;
+            let hasVideoInputs = false;
+            for (let i = 0; i < files.length; i++) {
+              const name = (files[i].name || "").toLowerCase();
+              if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".webp")) hasImageInputs = true;
+              if (name.endsWith(".mp4") || name.endsWith(".mov") || name.endsWith(".m4v")) hasVideoInputs = true;
+            }
+            return { hasImageInputs, hasVideoInputs };
+          }
+
+          function preflightDetail(preflight){
+            const rows = (preflight.checks || []).filter((row) => row.severity !== "ok");
+            if (!rows.length) return preflight.summary || "No compatibility risk detected.";
+            return rows.map((row) => {
+              const scope = [row.stage_name, row.agent_name].filter(Boolean).join(" / ");
+              return `[${row.severity.toUpperCase()}] ${scope ? scope + ": " : ""}${row.message}`;
+            }).join("\\n");
+          }
+
           async function createRun(event){
             event.preventDefault();
             const msg = document.getElementById("create-msg");
             try {
+              const files = document.getElementById("input_files").files;
+              const mediaFlags = detectInputKinds(files);
+              const preflight = await api("/runs/preflight", {
+                method: "POST",
+                body: JSON.stringify({
+                  pipeline_mode: document.getElementById("pipeline_mode").value,
+                  has_image_inputs: mediaFlags.hasImageInputs,
+                  has_video_inputs: mediaFlags.hasVideoInputs,
+                }),
+              });
+              const detailText = preflightDetail(preflight);
+              if (preflight.severity === "error") {
+                window.alert(`Run preflight failed.\\n\\n${detailText}`);
+                throw new Error(detailText);
+              }
+              if (preflight.severity === "warn") {
+                const proceed = window.confirm(`Run preflight has warnings. Continue?\\n\\n${detailText}`);
+                if (!proceed) {
+                  msg.className = "status-msg muted";
+                  msg.textContent = "Create canceled after preflight warning.";
+                  return;
+                }
+              }
+
               const businessContext = {
                 product_description: document.getElementById("product_description").value,
                 target_audience: document.getElementById("target_audience").value,
@@ -861,7 +1026,6 @@ def _dashboard_html() -> str:
               payload.append("enable_research", document.getElementById("research_mode").value === "autonomous_web" ? "true" : "false");
               payload.append("manual_research_brief", document.getElementById("manual_research_brief").value);
               payload.append("business_context", JSON.stringify(businessContext));
-              const files = document.getElementById("input_files").files;
               for (let i = 0; i < files.length; i++) payload.append("files", files[i]);
               const resp = await fetch("/runs/rich", { method: "POST", body: payload });
               if (!resp.ok) throw new Error(await resp.text());
@@ -1473,7 +1637,7 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
               <h1>Agent API Configs</h1>
               <div class="subtitle">Fallback rule: if agent config missing, use <b>default</b>.</div>
               <div class="subtitle">Security: only env var names are stored. Prefix required: <b>{API_KEY_ENV_PREFIX}</b>.</div>
-              <div class="subtitle">Generation endpoint is unified in this table: <b>Generation Agent - Text / Image / Video</b>.</div>
+              <div class="subtitle">Multimodal agents expose modality-specific rows for image and video generation.</div>
             </div>
             <a class="nav-link" href="/dashboard">Back to Dashboard</a>
           </header>
@@ -1493,14 +1657,20 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           const byAgent = Object.fromEntries(existing.map(c => [c.agent_name, c]));
           const baseRows = [{{ agent_name: "default", display_name: "Default Fallback", stage: "global" }}, ...personas];
           const rows = baseRows.flatMap((r) => {{
-            if (r.agent_name !== "generation_agent") {{
-              return [{{ row_key: `${{r.agent_name}}__text`, agent_name: r.agent_name, mode: "text", title: (r.display_name || r.agent_name), source: r.agent_name }}];
+            const title = (r.display_name || r.agent_name);
+            if (r.agent_name === "copy_image_agent") {{
+              return [
+                {{ row_key: "copy_image_agent__text", agent_name: "copy_image_agent", mode: "text", title: "Copy Image Agent - Text", source: "copy_image_agent" }},
+                {{ row_key: "copy_image_agent__image", agent_name: "copy_image_agent", mode: "image", title: "Copy Image Agent - Image", source: "copy_image_agent" }},
+              ];
             }}
-            return [
-              {{ row_key: "generation_agent__text", agent_name: "generation_agent", mode: "text", title: "Generation Agent - Text", source: "generation_agent" }},
-              {{ row_key: "generation_agent__image", agent_name: "generation_agent", mode: "image", title: "Generation Agent - Image", source: "generation_agent" }},
-              {{ row_key: "generation_agent__video", agent_name: "generation_agent", mode: "video", title: "Generation Agent - Video", source: "generation_agent" }},
-            ];
+            if (r.agent_name === "video_generation_agent") {{
+              return [
+                {{ row_key: "video_generation_agent__text", agent_name: "video_generation_agent", mode: "text", title: "Video Generation Agent - Text", source: "video_generation_agent" }},
+                {{ row_key: "video_generation_agent__video", agent_name: "video_generation_agent", mode: "video", title: "Video Generation Agent - Video", source: "video_generation_agent" }},
+              ];
+            }}
+            return [{{ row_key: `${{r.agent_name}}__text`, agent_name: r.agent_name, mode: "text", title, source: r.agent_name }}];
           }});
           async function api(path, options = {{}}) {{
             const res = await fetch(path, {{ headers: {{ "Content-Type": "application/json" }}, ...options }});
@@ -1929,6 +2099,17 @@ def get_creative_presets() -> dict[str, dict]:
     return list_creative_presets()
 
 
+@router.post("/runs/preflight", response_model=RunPreflightResponse)
+def preflight_pipeline_run(payload: RunPreflightRequest, db: Session = Depends(get_db)) -> RunPreflightResponse:
+    result = preflight_run_capabilities(
+        db,
+        pipeline_mode=payload.pipeline_mode,
+        has_image_inputs=payload.has_image_inputs,
+        has_video_inputs=payload.has_video_inputs,
+    )
+    return RunPreflightResponse(**result)
+
+
 @router.get("/runs", response_model=list[RunSummary])
 def list_runs(db: Session = Depends(get_db)) -> list[RunSummary]:
     runs = db.scalars(select(PipelineRun).order_by(desc(PipelineRun.created_at)).limit(50)).all()
@@ -2115,7 +2296,95 @@ def get_run_variants(run_id: str, db: Session = Depends(get_db)) -> VariantsResp
         data = run_variants(db, run_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return VariantsResponse(run_id=run_id, variants=data.get("variants", []), ranked=data.get("ranked", []))
+    return VariantsResponse(
+        run_id=run_id,
+        variants=data.get("variants", []),
+        ranked=data.get("ranked", []),
+        items=[RunVariantView(**item) for item in data.get("items", [])],
+        summary=data.get("summary", {}),
+    )
+
+
+@router.post("/runs/{run_id}/variants/{variant_id}/review", response_model=RunVariantView)
+def post_variant_review(
+    run_id: str,
+    variant_id: str,
+    payload: VariantReviewRequest,
+    db: Session = Depends(get_db),
+) -> RunVariantView:
+    try:
+        variant = review_variant(
+            db,
+            run_id=run_id,
+            variant_id=variant_id,
+            action=payload.action,
+            comment=payload.comment,
+            tags=payload.tags,
+        )
+        db.commit()
+        data = next(item for item in run_variants(db, run_id)["items"] if item["variant_id"] == variant.variant_id)
+    except (ValueError, StopIteration) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return RunVariantView(**data)
+
+
+@router.post("/runs/{run_id}/variants/{variant_id}/select", response_model=RunVariantView)
+def post_variant_select(
+    run_id: str,
+    variant_id: str,
+    payload: VariantSelectRequest,
+    db: Session = Depends(get_db),
+) -> RunVariantView:
+    try:
+        if payload.winner:
+            review_variant(
+                db,
+                run_id=run_id,
+                variant_id=variant_id,
+                action="set_winner",
+                comment=payload.comment,
+            )
+        elif payload.shortlist:
+            review_variant(
+                db,
+                run_id=run_id,
+                variant_id=variant_id,
+                action="shortlist_variant",
+                comment=payload.comment,
+            )
+        else:
+            raise ValueError("select requires shortlist or winner")
+        db.commit()
+        data = next(item for item in run_variants(db, run_id)["items"] if item["variant_id"] == variant_id)
+    except (ValueError, StopIteration) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return RunVariantView(**data)
+
+
+@router.post("/runs/{run_id}/variants/{variant_id}/regenerate", response_model=RunVariantView)
+def post_variant_regenerate(
+    run_id: str,
+    variant_id: str,
+    payload: VariantRegenerateRequest,
+    db: Session = Depends(get_db),
+) -> RunVariantView:
+    try:
+        review_variant(
+            db,
+            run_id=run_id,
+            variant_id=variant_id,
+            action="request_regeneration",
+            comment=payload.reason,
+            metadata={"target_stage": payload.target_stage},
+        )
+        db.commit()
+        data = next(item for item in run_variants(db, run_id)["items"] if item["variant_id"] == variant_id)
+    except (ValueError, StopIteration) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return RunVariantView(**data)
 
 
 @router.get("/artifacts", response_model=ArtifactListResponse)

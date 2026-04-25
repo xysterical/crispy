@@ -359,6 +359,7 @@ class AgentsRuntime:
                     angle=angle,
                     hook=f"{variant_id}: {angle} with fast daily benefit framing",
                     message=f"{variant_id}: practical result-first messaging for conversion objective.",
+                    rationale=f"Test whether `{angle}` performs as the lead commercial promise for {variant_id}.",
                 )
             )
         variant_set = VariantSet(variants=variants)
@@ -489,27 +490,32 @@ class AgentsRuntime:
                 aspect_ratio=image_size,
                 prompt=image_prompt,
             )
+            image_payload = {
+                **image_ref.model_dump(),
+                "source": image_source,
+                "image_provider": image_provider,
+                "image_model": image_model,
+                "error": error_text,
+            }
             images.append(image_ref)
             artifacts.append(
                 {
                     "type": "generated_image",
                     "uri": image_uri,
-                    "payload": {
-                        **image_ref.model_dump(),
-                        "source": image_source,
-                        "image_provider": image_provider,
-                        "image_model": image_model,
-                        "error": error_text,
-                    },
+                    "payload": image_payload,
                 }
             )
 
         bundle = CopyImageBundle(copy_variants=copies, image_assets=images)
+        bundle_payload = {
+            "copy_variants": [item.model_dump() for item in copies],
+            "image_assets": [artifact["payload"] for artifact in artifacts if artifact["type"] == "generated_image"],
+        }
         bundle_uri = self.media.write_text_artifact(run_id, "copy_image_bundle.json", bundle.model_dump_json(indent=2))
-        artifacts.insert(0, {"type": "copy_image_bundle", "uri": bundle_uri, "payload": bundle.model_dump()})
+        artifacts.insert(0, {"type": "copy_image_bundle", "uri": bundle_uri, "payload": bundle_payload})
         model_used = f"text={text_model_used};image={','.join(sorted(m for m in image_models_used if m)) or 'placeholder'}"
         return StageOutput(
-            payload=bundle.model_dump(),
+            payload=bundle_payload,
             model_used=model_used,
             estimated_cost=estimated_cost,
             artifacts=artifacts,
@@ -581,6 +587,7 @@ class AgentsRuntime:
                     "frame_id": f"{script.variant_id}_F{idx + 1}",
                     "prompt": f"Storyboard frame {idx + 1} for {script.variant_id}",
                     "image_uri": frame_uri,
+                    "source": "placeholder",
                 }
                 frames.append(frame)
                 artifacts.append({"type": "storyboard_frame", "uri": frame_uri, "payload": frame})
@@ -646,26 +653,29 @@ class AgentsRuntime:
                 error_text = str(exc)
                 video_uri = self.media.reserve_binary_artifact(run_id, f"{script.variant_id}_sample.mp4")
             asset = VideoAsset(variant_id=script.variant_id, video_uri=video_uri, duration_seconds=float(duration_seconds))
-            videos.append(asset)
+            video_payload = {
+                **asset.model_dump(),
+                "source": source,
+                "video_provider": provider_used,
+                "video_model": model_used,
+                "error": error_text,
+                "prompt": video_prompt,
+            }
+            videos.append(VideoAsset.model_validate(video_payload))
             artifacts.append(
                 {
                     "type": "generated_video",
                     "uri": video_uri,
-                    "payload": {
-                        **asset.model_dump(),
-                        "source": source,
-                        "video_provider": provider_used,
-                        "video_model": model_used,
-                        "error": error_text,
-                    },
+                    "payload": video_payload,
                 }
             )
         bundle = VideoBundle(videos=videos)
+        bundle_payload = {"videos": [artifact["payload"] for artifact in artifacts if artifact["type"] == "generated_video"]}
         uri = self.media.write_text_artifact(run_id, "video_bundle.json", bundle.model_dump_json(indent=2))
-        artifacts.append({"type": "video_bundle", "uri": uri, "payload": bundle.model_dump()})
+        artifacts.append({"type": "video_bundle", "uri": uri, "payload": bundle_payload})
         final_model_used = f"text={text_model_used};video={','.join(sorted(m for m in video_models_used if m)) or 'placeholder'}"
         return StageOutput(
-            payload=bundle.model_dump(),
+            payload=bundle_payload,
             model_used=final_model_used,
             estimated_cost=estimated_cost,
             artifacts=artifacts,
@@ -695,14 +705,19 @@ class AgentsRuntime:
             clarity = min(100.0, 50.0 + len((copy.primary_text if copy else "")) * 0.28)
             video_fit = 72.0 if video_by_variant.get(item.variant_id) else 40.0
             compliance = 90.0
+            compliance_risks: list[str] = []
+            compliance_reasons: list[str] = []
             if script and ("guaranteed cure" in script.script.lower()):
                 compliance = 15.0
+                compliance_risks.append("legal_high_risk")
+                compliance_reasons.append("Detected prohibited cure-style claim in script.")
             ai_naturalness = 86.0
             total = round(
                 hook_strength * 0.28 + clarity * 0.22 + video_fit * 0.20 + compliance * 0.20 + ai_naturalness * 0.10,
                 2,
             )
             level = ComplianceLevel.LOW if compliance >= 80 else ComplianceLevel.HIGH
+            recommended_action = "approve_variant" if total >= 70 and level == ComplianceLevel.LOW else "manual_review" if level == ComplianceLevel.LOW else "request_regeneration"
             ranked.append(
                 RankedVariant(
                     variant_id=item.variant_id,
@@ -719,6 +734,9 @@ class AgentsRuntime:
                         f"angle={item.angle}",
                         "balanced copy/video quality" if total >= 60 else "needs stronger creative contrast",
                     ],
+                    compliance_risks=compliance_risks,
+                    compliance_reasons=compliance_reasons or ["No major compliance issues detected."],
+                    recommended_action=recommended_action,
                 )
             )
         ranked.sort(key=lambda x: x.total_score, reverse=True)

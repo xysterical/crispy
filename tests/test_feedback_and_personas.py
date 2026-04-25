@@ -47,6 +47,7 @@ def test_feedback_import_updates_leaderboard(client):
                 {
                     "project_name": "p-feedback",
                     "creative_key": "V1",
+                    "variant_id": "V1",
                     "run_id": run_id,
                     "impressions": 1000,
                     "clicks": 35,
@@ -57,6 +58,7 @@ def test_feedback_import_updates_leaderboard(client):
                 {
                     "project_name": "p-feedback",
                     "creative_key": "V2",
+                    "variant_id": "V2",
                     "run_id": run_id,
                     "impressions": 1200,
                     "clicks": 18,
@@ -87,6 +89,7 @@ def test_feedback_import_updates_leaderboard(client):
         ).all()
         assert len(product_memories) >= 1
         assert len(industry_memories) >= 1
+        assert "top_variants" in (product_memories[0].content or {})
 
     leaderboard = client.get(f"/projects/{project_id}/leaderboard")
     assert leaderboard.status_code == 200

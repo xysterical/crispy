@@ -79,6 +79,7 @@ class RunView(BaseModel):
     created_at: datetime
     updated_at: datetime
     stage_tasks: list[StageTaskView] = Field(default_factory=list)
+    variant_summary: dict = Field(default_factory=dict)
     latest_scorecard: ScoreCard | None = None
     latest_forecast: ConversionForecast | None = None
 
@@ -147,6 +148,29 @@ class FeedbackImportRequest(BaseModel):
     file_name: str = "manual_import.csv"
 
 
+class VariantReviewRequest(BaseModel):
+    action: Literal[
+        "approve_variant",
+        "reject_variant",
+        "shortlist_variant",
+        "set_winner",
+        "request_regeneration",
+    ]
+    comment: str = ""
+    tags: list[str] = Field(default_factory=list)
+
+
+class VariantSelectRequest(BaseModel):
+    shortlist: bool = False
+    winner: bool = False
+    comment: str = ""
+
+
+class VariantRegenerateRequest(BaseModel):
+    reason: str
+    target_stage: str | None = None
+
+
 class PersonaMeta(BaseModel):
     agent_name: str
     display_name: str
@@ -201,10 +225,71 @@ class DeliverablesResponse(BaseModel):
     score: dict = Field(default_factory=dict)
 
 
+class VariantAssetView(BaseModel):
+    id: str
+    stage_name: str
+    asset_type: str
+    uri: str | None = None
+    provider_name: str | None = None
+    model_name: str | None = None
+    prompt_summary: str | None = None
+    failure_category: str | None = None
+    error_message: str | None = None
+    payload: dict = Field(default_factory=dict)
+    created_at: datetime
+
+
+class VariantReviewView(BaseModel):
+    id: str
+    action: str
+    comment: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    metadata_json: dict = Field(default_factory=dict)
+    created_at: datetime
+
+
+class VariantScoreView(BaseModel):
+    id: str
+    stage_name: str
+    score_type: str
+    total_score: float | None = None
+    compliance_level: str | None = None
+    recommended_action: str | None = None
+    sub_scores: dict = Field(default_factory=dict)
+    reasons: list[str] = Field(default_factory=list)
+    forecast: dict = Field(default_factory=dict)
+    payload: dict = Field(default_factory=dict)
+    created_at: datetime
+
+
+class RunVariantView(BaseModel):
+    id: str
+    run_id: str
+    variant_id: str
+    angle: str = ""
+    hook: str = ""
+    message: str = ""
+    status: str
+    current_score: float | None = None
+    is_winner: bool = False
+    shortlisted: bool = False
+    review_status: str | None = None
+    regenerate_requested: bool = False
+    metadata_json: dict = Field(default_factory=dict)
+    strategy_brief: dict = Field(default_factory=dict)
+    assets: list[VariantAssetView] = Field(default_factory=list)
+    scores: list[VariantScoreView] = Field(default_factory=list)
+    reviews: list[VariantReviewView] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
 class VariantsResponse(BaseModel):
     run_id: str
     variants: list[dict] = Field(default_factory=list)
     ranked: list[dict] = Field(default_factory=list)
+    items: list[RunVariantView] = Field(default_factory=list)
+    summary: dict = Field(default_factory=dict)
 
 
 class PipelineModeView(BaseModel):
@@ -263,3 +348,24 @@ class GmMemoryItem(BaseModel):
     score_hint: float | None = None
     content: dict = Field(default_factory=dict)
     created_at: datetime
+
+
+class RunPreflightRequest(BaseModel):
+    pipeline_mode: PipelineMode = "full_multimodal"
+    has_image_inputs: bool = False
+    has_video_inputs: bool = False
+
+
+class CapabilityCheckItem(BaseModel):
+    key: str
+    severity: Literal["ok", "warn", "error"]
+    message: str
+    stage_name: str | None = None
+    agent_name: str | None = None
+
+
+class RunPreflightResponse(BaseModel):
+    ok: bool = True
+    severity: Literal["ok", "warn", "error"] = "ok"
+    summary: str = ""
+    checks: list[CapabilityCheckItem] = Field(default_factory=list)

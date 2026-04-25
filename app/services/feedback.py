@@ -12,6 +12,8 @@ from app.data.models import (
     PerformanceSnapshot,
     PipelineRun,
     Project,
+    RunVariant,
+    VariantAsset,
     Workspace,
 )
 from app.schemas.contracts import FeedbackRow
@@ -62,6 +64,32 @@ def _get_workspace_project(db: Session, workspace_name: str, project_name: str) 
     return workspace, project
 
 
+def _latest_variant_asset(run_variant_id: str, asset_type: str, db: Session) -> VariantAsset | None:
+    return db.scalar(
+        select(VariantAsset)
+        .where(VariantAsset.run_variant_id == run_variant_id, VariantAsset.asset_type == asset_type)
+        .order_by(desc(VariantAsset.created_at))
+        .limit(1)
+    )
+
+
+def _variant_pattern_payload(db: Session, variant: RunVariant | None) -> dict:
+    if not variant:
+        return {}
+    copy_asset = _latest_variant_asset(variant.id, "copy", db)
+    image_asset = _latest_variant_asset(variant.id, "image", db)
+    script_asset = _latest_variant_asset(variant.id, "video_script", db)
+    return {
+        "variant_id": variant.variant_id,
+        "angle": variant.angle,
+        "hook": variant.hook,
+        "message": variant.message,
+        "visual_pattern": ((image_asset.payload or {}).get("prompt") if image_asset else None),
+        "copy_pattern": ((copy_asset.payload or {}).get("headline") if copy_asset else None),
+        "script_pattern": ((script_asset.payload or {}).get("hook") if script_asset else None),
+    }
+
+
 def import_feedback_rows(
     db: Session,
     *,
@@ -81,28 +109,40 @@ def import_feedback_rows(
     db.add(import_record)
 
     snapshot_count = 0
-    scored_rows: list[tuple[str, float]] = []
-    memory_by_product: dict[str, list[tuple[str, float]]] = {}
-    memory_by_industry: dict[str, list[tuple[str, float]]] = {}
+    scored_rows: list[tuple[str, float, dict]] = []
+    memory_by_product: dict[str, list[tuple[str, float, dict]]] = {}
+    memory_by_industry: dict[str, list[tuple[str, float, dict]]] = {}
     for row in rows:
+        resolved_variant_id = row.variant_id or row.creative_key
         ctr = _safe_div(row.clicks, row.impressions)
         cpc = _safe_div(row.spend, row.clicks)
         cpa = _safe_div(row.spend, row.conversions)
         roas = _safe_div(row.revenue, row.spend)
         weighted = _weighted_score(ctr=ctr, cpc=cpc, cpa=cpa, roas=roas, weights=project.metric_weights)
-        scored_rows.append((row.creative_key, weighted))
+        run_variant = (
+            db.scalar(
+                select(RunVariant).where(
+                    RunVariant.run_id == row.run_id,
+                    RunVariant.variant_id == resolved_variant_id,
+                )
+            )
+            if row.run_id and resolved_variant_id
+            else None
+        )
+        pattern_payload = _variant_pattern_payload(db, run_variant)
+        scored_rows.append((resolved_variant_id, weighted, pattern_payload))
         run_model = db.get(PipelineRun, row.run_id) if row.run_id else None
         product_code = run_model.product_code if run_model else ""
         industry_code = run_model.industry_code if run_model else ""
         if product_code:
-            memory_by_product.setdefault(product_code, []).append((row.creative_key, weighted))
+            memory_by_product.setdefault(product_code, []).append((resolved_variant_id, weighted, pattern_payload))
         if industry_code:
-            memory_by_industry.setdefault(industry_code, []).append((row.creative_key, weighted))
+            memory_by_industry.setdefault(industry_code, []).append((resolved_variant_id, weighted, pattern_payload))
 
         snapshot = PerformanceSnapshot(
             project_id=project.id,
             run_id=row.run_id,
-            creative_key=row.creative_key,
+            creative_key=resolved_variant_id,
             metrics={
                 "impressions": row.impressions,
                 "clicks": row.clicks,
@@ -142,9 +182,15 @@ def import_feedback_rows(
                     "source": "weekly_csv_import",
                     "scope": "product",
                     "product_code": product_code,
-                    "top_creatives": top_product,
-                    "underperformers": bottom_product,
-                    "summary": "Preserve product-level winning hook patterns and retire low-score variants.",
+                    "top_variants": [
+                        {"variant_id": variant_id, "weighted_score": score, "pattern": pattern}
+                        for variant_id, score, pattern in top_product
+                    ],
+                    "underperformers": [
+                        {"variant_id": variant_id, "weighted_score": score, "pattern": pattern}
+                        for variant_id, score, pattern in bottom_product
+                    ],
+                    "summary": "Preserve product-level winning hook, visual, and script patterns and retire low-score variants.",
                 },
             )
             db.add(entry)
@@ -165,9 +211,15 @@ def import_feedback_rows(
                     "source": "weekly_csv_import",
                     "scope": "industry",
                     "industry_code": industry_code,
-                    "top_creatives": top_industry,
-                    "underperformers": bottom_industry,
-                    "summary": "Keep industry-level winners and avoid repeated low-performing patterns.",
+                    "top_variants": [
+                        {"variant_id": variant_id, "weighted_score": score, "pattern": pattern}
+                        for variant_id, score, pattern in top_industry
+                    ],
+                    "underperformers": [
+                        {"variant_id": variant_id, "weighted_score": score, "pattern": pattern}
+                        for variant_id, score, pattern in bottom_industry
+                    ],
+                    "summary": "Keep industry-level winning angle and visual/script patterns, avoid repeated low-performing variants.",
                 },
             )
             db.add(entry)
@@ -188,8 +240,8 @@ def import_feedback_rows(
                 content={
                     "version": next_version,
                     "source": "feedback_import",
-                    "winning_patterns": [item[0] for item in top],
-                    "avoid_patterns": [item[0] for item in bottom],
+                    "winning_patterns": [item[2] or {"variant_id": item[0]} for item in top],
+                    "avoid_patterns": [item[2] or {"variant_id": item[0]} for item in bottom],
                     "product_memory_count": len(memory_by_product),
                     "industry_memory_count": len(memory_by_industry),
                     "guidance": "Prioritize winning hooks and avoid low-performing patterns in planning stage.",

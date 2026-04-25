@@ -130,6 +130,7 @@ def apply_runtime_migrations(target_engine) -> None:
     _add_column_if_missing(target_engine, "pipeline_run", "industry_code", "ALTER TABLE pipeline_run ADD COLUMN industry_code VARCHAR(128)")
     _add_column_if_missing(target_engine, "pipeline_run", "creative_preset", "ALTER TABLE pipeline_run ADD COLUMN creative_preset VARCHAR(64)")
     _add_column_if_missing(target_engine, "pipeline_run", "creative_specs", "ALTER TABLE pipeline_run ADD COLUMN creative_specs JSON")
+    _add_column_if_missing(target_engine, "stage_task", "failure_category", "ALTER TABLE stage_task ADD COLUMN failure_category VARCHAR(32)")
     _add_column_if_missing(target_engine, "gm_memory", "memory_scope", "ALTER TABLE gm_memory ADD COLUMN memory_scope VARCHAR(32)")
     _add_column_if_missing(target_engine, "gm_memory", "product_code", "ALTER TABLE gm_memory ADD COLUMN product_code VARCHAR(128)")
     _add_column_if_missing(target_engine, "gm_memory", "industry_code", "ALTER TABLE gm_memory ADD COLUMN industry_code VARCHAR(128)")
@@ -155,6 +156,13 @@ def apply_runtime_migrations(target_engine) -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pipeline_run_industry_code ON pipeline_run(industry_code)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_gm_memory_scope_product ON gm_memory(memory_scope, product_code)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_gm_memory_scope_industry ON gm_memory(memory_scope, industry_code)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stage_task_failure_category ON stage_task(failure_category)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_run_variant_run_id ON run_variant(run_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_run_variant_status ON run_variant(status)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_variant_asset_run_variant ON variant_asset(run_variant_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_variant_asset_run_id ON variant_asset(run_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_variant_review_run_variant ON variant_review(run_variant_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_variant_score_run_variant ON variant_score(run_variant_id)"))
 
 
 def get_db() -> Generator[Session, None, None]:
