@@ -60,11 +60,17 @@ class AgentsRuntime:
         runtime_config: dict | None,
         *,
         image_urls: list[str] | None = None,
+        video_urls: list[str] | None = None,
     ) -> tuple[str, str, float]:
         llm = self.providers.get(provider)
         runtime = runtime_config or {}
         response = llm.chat_complete(
-            MultimodalChatRequest(prompt=prompt, model=model, image_urls=image_urls or []),
+            MultimodalChatRequest(
+                prompt=prompt,
+                model=model,
+                image_urls=image_urls or [],
+                video_urls=video_urls or [],
+            ),
             api_base_url=runtime.get("api_base_url"),
             api_key=runtime.get("api_key"),
             extra=runtime.get("extra"),
@@ -135,6 +141,21 @@ class AgentsRuntime:
         encoded = base64.b64encode(raw).decode("ascii")
         return f"data:{mime};base64,{encoded}"
 
+    def _local_video_to_data_url(self, path_str: str, *, max_bytes: int = 20 * 1024 * 1024) -> str | None:
+        path = Path(path_str)
+        if not path.exists() or not path.is_file():
+            return None
+        raw = path.read_bytes()
+        if not raw:
+            return None
+        if len(raw) > max_bytes:
+            return None
+        mime = mimetypes.guess_type(path.name)[0] or "video/mp4"
+        if not mime.startswith("video/"):
+            mime = "video/mp4"
+        encoded = base64.b64encode(raw).decode("ascii")
+        return f"data:{mime};base64,{encoded}"
+
     def _reference_image_inputs(self, intake: ProductIntake | None) -> list[str]:
         if not intake:
             return []
@@ -147,6 +168,22 @@ class AgentsRuntime:
             if not isinstance(uri, str):
                 continue
             data_url = self._local_image_to_data_url(uri)
+            if data_url:
+                inputs.append(data_url)
+        return inputs
+
+    def _reference_video_inputs(self, intake: ProductIntake | None) -> list[str]:
+        if not intake:
+            return []
+        rows = intake.video_references or []
+        inputs: list[str] = []
+        for row in rows[:1]:
+            if not isinstance(row, dict):
+                continue
+            uri = row.get("uri")
+            if not isinstance(uri, str):
+                continue
+            data_url = self._local_video_to_data_url(uri)
             if data_url:
                 inputs.append(data_url)
         return inputs
@@ -193,8 +230,6 @@ class AgentsRuntime:
         model: str,
         runtime_config: dict | None = None,
     ) -> StageOutput:
-        prompt = f"Normalize intake payload for creative generation: {payload}"
-        summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         intake = ProductIntake(
             product_name=payload.get("product_name", "unknown_product"),
             market=payload.get("market", "US"),
@@ -207,6 +242,52 @@ class AgentsRuntime:
             image_references=payload.get("context", {}).get("input_assets", {}).get("sample_images", []),
             video_references=payload.get("context", {}).get("input_assets", {}).get("sample_videos", []),
         )
+        estimated_cost = 0.0
+        model_used = model
+        image_inputs = self._reference_image_inputs(intake)
+        video_inputs = self._reference_video_inputs(intake)
+        media_summary = ""
+        if image_inputs or video_inputs:
+            media_prompt = (
+                "Analyze uploaded product media and output concise ad-useful facts: "
+                "product appearance, material clues, fit/wearing method, usage scenes, motion cues, "
+                "do-not-change constraints, and quality/compliance cautions."
+            )
+            try:
+                media_summary, media_model_used, media_cost = self._chat_complete(
+                    provider,
+                    model,
+                    media_prompt,
+                    runtime_config,
+                    image_urls=image_inputs,
+                    video_urls=video_inputs,
+                )
+                model_used = media_model_used
+                estimated_cost += media_cost
+            except Exception as exc:
+                if image_inputs:
+                    try:
+                        media_summary, media_model_used, media_cost = self._chat_complete(
+                            provider,
+                            model,
+                            media_prompt,
+                            runtime_config,
+                            image_urls=image_inputs,
+                        )
+                        model_used = media_model_used
+                        estimated_cost += media_cost
+                    except Exception as image_exc:
+                        media_summary = f"media_analysis_failed: {exc}; image_fallback_failed: {image_exc}"
+                else:
+                    media_summary = f"media_analysis_failed: {exc}"
+
+        prompt = (
+            f"Normalize intake payload for creative generation. payload={payload}. "
+            f"asset_media_summary={media_summary}"
+        )
+        summary, model_used, llm_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        estimated_cost += llm_cost
+        intake.asset_media_summary = media_summary
         normalized = {**intake.model_dump(), "llm_summary": summary}
         uri = self.media.write_text_artifact(run_id, "intake_summary.json", intake.model_dump_json(indent=2))
         return StageOutput(
@@ -308,7 +389,11 @@ class AgentsRuntime:
         creative_specs = creative_specs or {}
         image_size = str(creative_specs.get("image_size") or "1:1")
         resolution = str(creative_specs.get("resolution") or "720p")
-        visual_summary = "No reference image analysis."
+        visual_summary = (
+            intake.asset_media_summary.strip()
+            if intake and intake.asset_media_summary
+            else "No reference media analysis."
+        )
         estimated_cost = 0.0
         text_model_used = model
         reference_inputs = self._reference_image_inputs(intake)
@@ -325,6 +410,8 @@ class AgentsRuntime:
                     runtime_config,
                     image_urls=reference_inputs,
                 )
+                if intake and intake.asset_media_summary:
+                    visual_summary = f"{intake.asset_media_summary}\n\nImage-focus details:\n{visual_summary}"
                 estimated_cost += vision_cost
             except Exception as exc:
                 visual_summary = f"reference_analysis_failed: {exc}"
@@ -433,11 +520,18 @@ class AgentsRuntime:
         run_id: str,
         variant_set: VariantSet,
         *,
+        intake: ProductIntake | None,
         provider: str,
         model: str,
         runtime_config: dict | None = None,
     ) -> StageOutput:
-        prompt = f"Generate video hooks and scripts: {variant_set.model_dump()}"
+        media_summary = ""
+        if intake and intake.asset_media_summary:
+            media_summary = intake.asset_media_summary
+        prompt = (
+            "Generate video hooks and scripts with the product context. "
+            f"media_summary={media_summary}, variants={variant_set.model_dump()}"
+        )
         _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         scripts = []
         for item in variant_set.variants:

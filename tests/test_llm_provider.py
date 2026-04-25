@@ -78,6 +78,41 @@ def test_chat_complete_endpoint_fallback_to_v1(monkeypatch):
     assert client.posted_urls[1].endswith("/v1/chat/completions")
 
 
+def test_chat_complete_multimodal_with_video_url(monkeypatch):
+    endpoint = "https://api.moonshot.cn/v1/chat/completions"
+    client = _FakeClient(
+        post_map={
+            endpoint: _FakeResponse(
+                200,
+                {
+                    "model": "kimi-k2.6",
+                    "choices": [{"message": {"content": "media ok"}}],
+                    "usage": {"prompt_tokens": 12, "completion_tokens": 4},
+                },
+            )
+        }
+    )
+    monkeypatch.setattr("app.providers.llm.httpx.Client", lambda timeout=90.0: client)
+    provider = OpenAICompatibleProvider("kimi")
+    result = provider.chat_complete(
+        MultimodalChatRequest(
+            prompt="请描述上传的图片和视频",
+            model="kimi-k2.6",
+            image_urls=["data:image/png;base64,AAAA"],
+            video_urls=["data:video/mp4;base64,BBBB"],
+        ),
+        api_base_url="https://api.moonshot.cn/v1",
+        api_key="dummy",
+    )
+    assert result.text == "media ok"
+    payload = client.posted_json_by_url[endpoint]
+    assert payload["model"] == "kimi-k2.6"
+    content = payload["messages"][0]["content"]
+    assert content[0]["type"] == "text"
+    assert any(part.get("type") == "image_url" for part in content)
+    assert any(part.get("type") == "video_url" for part in content)
+
+
 def test_generate_image_uses_full_endpoint_without_extra_append(monkeypatch):
     endpoint = "https://api.apimart.ai/v1/images/generations"
     client = _FakeClient(

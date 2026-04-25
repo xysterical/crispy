@@ -103,6 +103,7 @@ class MultimodalChatRequest:
     prompt: str
     model: str
     image_urls: list[str] = field(default_factory=list)
+    video_urls: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -420,10 +421,12 @@ class OpenAICompatibleProvider(LlmProvider):
             return self._stub.chat_complete(request, api_base_url=api_base_url, api_key=api_key, extra=extra)
 
         messages: list[dict[str, Any]]
-        if request.image_urls:
+        if request.image_urls or request.video_urls:
             content: list[dict[str, Any]] = [{"type": "text", "text": request.prompt}]
             for image_url in request.image_urls:
                 content.append({"type": "image_url", "image_url": {"url": image_url}})
+            for video_url in request.video_urls:
+                content.append({"type": "video_url", "video_url": {"url": video_url}})
             messages = [{"role": "user", "content": content}]
         else:
             messages = [{"role": "user", "content": request.prompt}]

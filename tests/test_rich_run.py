@@ -17,6 +17,7 @@ def test_runs_rich_accepts_multimodal_inputs(client):
     files = [
         ("files", ("sku.csv", io.BytesIO(csv_content), "text/csv")),
         ("files", ("sample.jpg", io.BytesIO(b"fakeimage"), "image/jpeg")),
+        ("files", ("sample.mp4", io.BytesIO(b"fakevideo"), "video/mp4")),
     ]
     data = {
         "workspace_name": "w-rich",
@@ -44,6 +45,8 @@ def test_runs_rich_accepts_multimodal_inputs(client):
     assert intake_task["status"] == "waiting_review"
     assert len(intake_task["output_payload"]["sku_summary"]) >= 1
     assert len(intake_task["output_payload"]["url_references"]) == 1
+    assert len(intake_task["output_payload"]["video_references"]) == 1
+    assert "asset_media_summary" in intake_task["output_payload"]
 
 
 def test_runs_rich_rejects_too_many_files(client):

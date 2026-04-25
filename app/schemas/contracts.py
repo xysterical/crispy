@@ -159,6 +159,7 @@ class ProductIntake(BaseModel):
     sku_summary: list[dict] = Field(default_factory=list)
     image_references: list[dict] = Field(default_factory=list)
     video_references: list[dict] = Field(default_factory=list)
+    asset_media_summary: str = ""
 
 
 class PlanningBrief(BaseModel):
