@@ -18,10 +18,23 @@ def test_agent_api_default_and_override(client):
 
     patch_resp = client.patch(
         "/agent-configs/gm_orchestrator",
-        json={"provider_name": "openai", "model_name": "gpt-4.1-mini"},
+        json={
+            "provider_name": "kimi",
+            "model_name": "kimi-k2.6",
+            "api_base_url": "https://api.moonshot.cn/v1",
+            "api_key_env": "CRISPY_API_KEY_KIMI",
+            "thinking_mode": "disabled",
+            "thinking_budget_tokens": 800,
+            "max_output_tokens": 1200,
+            "request_timeout_seconds": 30,
+        },
     )
     assert patch_resp.status_code == 200
-    assert patch_resp.json()["model_name"] == "gpt-4.1-mini"
+    assert patch_resp.json()["model_name"] == "kimi-k2.6"
+    assert patch_resp.json()["thinking_mode"] == "disabled"
+    assert patch_resp.json()["thinking_budget_tokens"] == 800
+    assert patch_resp.json()["max_output_tokens"] == 1200
+    assert patch_resp.json()["request_timeout_seconds"] == 30
 
     create_resp = client.post(
         "/runs",
@@ -44,7 +57,9 @@ def test_agent_api_default_and_override(client):
     run_view = client.get(f"/runs/{run_id}").json()
     intake_task = [t for t in run_view["stage_tasks"] if t["stage_name"] == "intake"][0]
     assert intake_task["metadata_json"]["resolved_api"]["source"] == "agent_override"
-    assert intake_task["metadata_json"]["resolved_api"]["model_name"] == "gpt-4.1-mini"
+    assert intake_task["metadata_json"]["resolved_api"]["model_name"] == "kimi-k2.6"
+    assert intake_task["metadata_json"]["resolved_api"]["thinking_mode"] == "disabled"
+    assert intake_task["metadata_json"]["resolved_api"]["thinking_applied"] is False
 
 
 def test_agent_api_generation_image_config(client):

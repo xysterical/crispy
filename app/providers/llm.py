@@ -218,6 +218,12 @@ class LlmProvider:
         )
 
 
+class ProviderRequestError(RuntimeError):
+    def __init__(self, message: str, errors: list[dict[str, Any]] | None = None) -> None:
+        super().__init__(message)
+        self.errors = errors or []
+
+
 class StubProvider(LlmProvider):
     def __init__(self, provider_name: str) -> None:
         self.provider_name = provider_name
@@ -338,26 +344,39 @@ class OpenAICompatibleProvider(LlmProvider):
                 deduped.append(item)
         return deduped
 
-    def _post_json(self, candidates: list[str], payload: dict, headers: dict[str, str]) -> dict[str, Any]:
+    def _post_json(
+        self,
+        candidates: list[str],
+        payload: dict,
+        headers: dict[str, str],
+        *,
+        timeout_seconds: float = 90.0,
+    ) -> dict[str, Any]:
         last_error: Exception | None = None
-        with httpx.Client(timeout=90.0) as client:
+        errors: list[dict[str, Any]] = []
+        with httpx.Client(timeout=timeout_seconds) as client:
             for idx, url in enumerate(candidates):
                 try:
                     response = client.post(url, json=payload, headers=headers)
                 except httpx.HTTPError as exc:
                     last_error = exc
+                    errors.append({"url": url, "error_type": type(exc).__name__, "message": str(exc)[:1000]})
                     continue
                 if response.status_code in {404, 405} and idx < len(candidates) - 1:
                     last_error = RuntimeError(f"{response.status_code} from {url}")
+                    errors.append({"url": url, "status_code": response.status_code, "body": response.text[:1000]})
                     continue
-                response.raise_for_status()
+                if response.status_code >= 400:
+                    errors.append({"url": url, "status_code": response.status_code, "body": response.text[:1000]})
+                    last_error = RuntimeError(f"{response.status_code} from {url}: {response.text[:300]}")
+                    continue
                 data = response.json()
                 if not isinstance(data, dict):
                     raise RuntimeError(f"invalid response json type from {url}")
                 return data
         if last_error:
-            raise RuntimeError("request failed for all endpoint candidates") from last_error
-        raise RuntimeError("no endpoint candidates")
+            raise ProviderRequestError("request failed for all endpoint candidates", errors) from last_error
+        raise ProviderRequestError("no endpoint candidates", errors)
 
     def _extract_chat_text(self, payload: dict[str, Any]) -> str:
         choices = payload.get("choices") or []
@@ -394,6 +413,12 @@ class OpenAICompatibleProvider(LlmProvider):
 
     def _extract_task_status(self, payload: dict[str, Any]) -> str | None:
         data = payload.get("data")
+        if isinstance(data, list) and data:
+            first = data[0]
+            if isinstance(first, dict):
+                status = first.get("status")
+                if isinstance(status, str) and status:
+                    return status.lower()
         if isinstance(data, dict):
             status = data.get("status")
             if isinstance(status, str) and status:
@@ -479,11 +504,26 @@ class OpenAICompatibleProvider(LlmProvider):
         payload = {"model": request.model, "messages": messages}
         if isinstance(extra, dict) and isinstance(extra.get("chat_payload"), dict):
             payload = {**payload, **extra["chat_payload"]}
+        if isinstance(extra, dict):
+            max_tokens = extra.get("max_output_tokens")
+            if max_tokens and "max_tokens" not in payload:
+                payload["max_tokens"] = int(max_tokens)
+            thinking_mode = extra.get("thinking_mode") or "auto"
+            thinking_budget = extra.get("thinking_budget_tokens")
+            supports_kimi_thinking = self.provider_name == "kimi" and request.model.startswith("kimi-k")
+            if supports_kimi_thinking and "thinking" not in payload:
+                if thinking_mode == "disabled":
+                    payload["thinking"] = {"type": "disabled"}
+                elif thinking_mode == "enabled" and thinking_budget:
+                    payload["thinking"] = {"type": "enabled", "budget_tokens": int(thinking_budget)}
+            payload.pop("temperature", None) if self.provider_name == "kimi" and request.model.startswith("kimi-k2.6") else None
+        timeout_seconds = float((extra or {}).get("request_timeout_seconds") or 90)
 
         data = self._post_json(
             self._endpoint_candidates(api_base_url, "/chat/completions"),
             payload=payload,
             headers=self._headers(api_key),
+            timeout_seconds=timeout_seconds,
         )
         usage = data.get("usage") or {}
         return LlmResponse(
@@ -518,6 +558,7 @@ class OpenAICompatibleProvider(LlmProvider):
             self._endpoint_candidates(api_base_url, "/images/generations"),
             payload=payload,
             headers=self._headers(api_key),
+            timeout_seconds=float((extra or {}).get("request_timeout_seconds") or 90),
         )
         task_id = self._extract_task_id(data)
         if task_id:
@@ -583,6 +624,7 @@ class OpenAICompatibleProvider(LlmProvider):
             self._endpoint_candidates(api_base_url, "/videos/generations"),
             payload=payload,
             headers=self._headers(api_key),
+            timeout_seconds=float((extra or {}).get("request_timeout_seconds") or 90),
         )
         task_id = self._extract_task_id(data)
         status = self._extract_task_status(data)

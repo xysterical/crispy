@@ -71,6 +71,7 @@ from app.services.runs import (
     get_run,
     latest_scorecard,
     reject_stage,
+    refresh_async_assets,
     refresh_video_task_assets,
     review_variant,
     run_deliverables,
@@ -306,6 +307,8 @@ def _serialize_agent_config(row) -> AgentApiConfigView:
     image_key_env = image_cfg.get("api_key_env")
     video_cfg = ((row.extra or {}).get("video_config") or {}) if isinstance(row.extra, dict) else {}
     video_key_env = video_cfg.get("api_key_env")
+    thinking_mode = row.thinking_mode or "auto"
+    thinking_applied = bool(row.provider_name == "kimi" and row.model_name.startswith("kimi-k") and thinking_mode != "disabled")
     return AgentApiConfigView(
         agent_name=row.agent_name,
         provider_name=row.provider_name,
@@ -323,6 +326,11 @@ def _serialize_agent_config(row) -> AgentApiConfigView:
         video_api_base_url=video_cfg.get("api_base_url"),
         video_api_key_env=video_key_env,
         video_api_key_available=api_key_available(video_key_env),
+        thinking_mode=row.thinking_mode or "auto",
+        thinking_budget_tokens=row.thinking_budget_tokens,
+        max_output_tokens=row.max_output_tokens,
+        request_timeout_seconds=row.request_timeout_seconds,
+        thinking_applied=thinking_applied,
         extra=row.extra or {},
         is_default=row.agent_name == "default",
         updated_at=row.updated_at,
@@ -842,6 +850,11 @@ def _dashboard_html() -> str:
             await selectRun(runId);
           }
 
+          async function refreshAsyncAssets(runId){
+            await api(`/runs/${runId}/assets/refresh`, { method: "POST" });
+            await selectRun(runId);
+          }
+
           function renderVariantBoard(runId, variants){
             const items = variants?.items || [];
             const summary = variants?.summary || {};
@@ -855,9 +868,14 @@ def _dashboard_html() -> str:
               const image = images[0] || null;
               const script = assetsByType(item, "video_script")[0]?.payload || null;
               const storyboardCount = assetsByType(item, "storyboard_frame").length;
-              const video = assetsByType(item, "video")[0]?.payload || null;
+              const videoAsset = assetsByType(item, "video")[0] || null;
+              const video = videoAsset?.payload || null;
               const evaluation = latestScore(item, "evaluation");
               const compliance = latestScore(item, "compliance");
+              const videoStatus = video?.generation_status || videoAsset?.failure_category || "none";
+              const videoTask = video?.external_task_id || "-";
+              const videoProvider = video?.video_provider || videoAsset?.provider_name || "-";
+              const videoModel = video?.video_model || videoAsset?.model_name || "-";
               return `
                 <article class="variant-card">
                   <div class="variant-head">
@@ -884,6 +902,13 @@ def _dashboard_html() -> str:
                   <div style="margin-top:8px;"><b>Script</b>: ${esc(script?.hook || "-")}</div>
                   <div class="muted">${esc(script?.script || "-")}</div>
                   <div class="muted" style="margin-top:4px;">storyboard frames: ${esc(storyboardCount)} | video: ${video ? esc(video.video_uri || "-") : "none"}</div>
+                  ${video ? `
+                    <div class="muted" style="margin-top:4px;">
+                      video status: ${esc(videoStatus)} | task: ${esc(videoTask)} | provider/model: ${esc(videoProvider)} / ${esc(videoModel)}
+                      ${videoAsset?.failure_category ? ` | failure: ${esc(videoAsset.failure_category)}` : ''}
+                      ${videoAsset?.error_message ? ` | error: ${esc(videoAsset.error_message)}` : ''}
+                    </div>
+                  ` : ''}
                   ${video?.video_uri ? `
                     <div style="margin-top:8px;">
                       <a href="${mediaViewUrl(video.video_uri)}" target="_blank" class="muted">Open video</a>
@@ -942,6 +967,7 @@ def _dashboard_html() -> str:
                 <div class="muted">product_code: ${esc(run.product_code)} | industry_code: ${esc(run.industry_code)} | creative_preset: ${esc(run.creative_preset)}</div>
                 <div class="muted">creative_specs: ${esc(JSON.stringify(run.creative_specs || {}))}</div>
                 <div class="muted">variant_summary: ${esc(JSON.stringify(run.variant_summary || {}))}</div>
+                <div style="margin-top:8px;"><button onclick="refreshAsyncAssets('${run.id}')">Refresh async assets</button></div>
               </div>
               ${renderDeliverables(deliverables)}
               ${renderVariantBoard(run.id, variants)}
@@ -1604,6 +1630,11 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             gap: 12px;
             margin-bottom: 14px;
           }}
+          .page-actions {{
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 10px;
+          }}
           h1, h2 {{ margin: 0; line-height: 1.25; }}
           h1 {{ font-size: 27px; letter-spacing: -0.02em; }}
           h2 {{ font-size: 19px; margin-bottom: 10px; }}
@@ -1627,10 +1658,28 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             box-shadow: 0 8px 24px rgba(30, 62, 50, 0.07);
             backdrop-filter: blur(4px);
           }}
+          .secondary-btn {{
+            background: #f8fbf8;
+          }}
           .table-wrap {{ overflow: auto; border: 1px solid var(--line); border-radius: 12px; }}
           table {{ width: 100%; border-collapse: collapse; font-size: 13px; min-width: 920px; }}
           th, td {{ border-bottom: 1px solid #e8eee8; padding: 9px 10px; text-align: left; vertical-align: top; }}
           thead th {{ background: #f8fbf8; font-weight: 700; color: #295345; }}
+          .advanced-col {{
+            min-width: 120px;
+            max-width: 220px;
+            opacity: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            transition: min-width 220ms ease, max-width 220ms ease, padding 180ms ease, opacity 160ms ease;
+          }}
+          table.advanced-collapsed .advanced-col {{
+            min-width: 0;
+            max-width: 0;
+            padding-left: 0;
+            padding-right: 0;
+            opacity: 0;
+          }}
           input, select {{
             width: 100%;
             padding: 8px 9px;
@@ -1686,10 +1735,13 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             </div>
             <a class="nav-link" href="/dashboard">Back to Dashboard</a>
           </header>
+          <div class="page-actions">
+            <button id="toggle-advanced-cols" class="secondary-btn" onclick="toggleAdvancedCols()">Show Advanced Columns</button>
+          </div>
           <section class="card">
             <div class="table-wrap">
-              <table>
-                <thead><tr><th>Agent</th><th>Provider</th><th>Model</th><th>Base URL</th><th>API Key Env</th><th>Env Status</th><th>Action</th></tr></thead>
+              <table id="cfg-table" class="advanced-collapsed">
+                <thead><tr><th>Agent</th><th>Provider</th><th>Model</th><th>Base URL</th><th>API Key Env</th><th>Thinking</th><th class="advanced-col">Budget</th><th class="advanced-col">Max Tokens</th><th class="advanced-col">Timeout</th><th>Env Status</th><th>Action</th></tr></thead>
                 <tbody id="cfg-body"></tbody>
               </table>
             </div>
@@ -1699,6 +1751,7 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           const personas = {personas_json};
           const existing = {configs_json};
           let envVars = {env_vars_json};
+          let advancedColsVisible = false;
           const byAgent = Object.fromEntries(existing.map(c => [c.agent_name, c]));
           const baseRows = [{{ agent_name: "default", display_name: "Default Fallback", stage: "global" }}, ...personas];
           const rows = baseRows.flatMap((r) => {{
@@ -1729,6 +1782,18 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             names.forEach((name) => {{ base.push(`<option value="${{name}}"${{selected===name?" selected":""}}>${{name}}</option>`); }});
             return base.join("");
           }}
+          function applyAdvancedColsVisibility() {{
+            const table = document.getElementById("cfg-table");
+            if (table) {{
+              table.classList.toggle("advanced-collapsed", !advancedColsVisible);
+            }}
+            const btn = document.getElementById("toggle-advanced-cols");
+            btn.textContent = advancedColsVisible ? "Hide Advanced Columns" : "Show Advanced Columns";
+          }}
+          function toggleAdvancedCols() {{
+            advancedColsVisible = !advancedColsVisible;
+            applyAdvancedColsVisibility();
+          }}
           function render() {{
             const body = document.getElementById("cfg-body");
             body.innerHTML = "";
@@ -1739,6 +1804,10 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
               const baseUrl = r.mode === "text" ? (cfg.api_base_url || "") : (r.mode === "image" ? (cfg.image_api_base_url || "") : (cfg.video_api_base_url || ""));
               const keyEnv = r.mode === "text" ? (cfg.api_key_env || "") : (r.mode === "image" ? (cfg.image_api_key_env || "") : (cfg.video_api_key_env || ""));
               const keyFound = r.mode === "text" ? cfg.api_key_available : (r.mode === "image" ? cfg.image_api_key_available : cfg.video_api_key_available);
+              const thinkingMode = r.mode === "text" ? (cfg.thinking_mode || "auto") : "";
+              const thinkingBudget = r.mode === "text" ? (cfg.thinking_budget_tokens || "") : "";
+              const maxTokens = r.mode === "text" ? (cfg.max_output_tokens || "") : "";
+              const requestTimeout = r.mode === "text" ? (cfg.request_timeout_seconds || "") : "";
               const tr = document.createElement("tr");
               const envStatus = keyEnv
                 ? (keyFound ? '<span class="badge">found</span>' : '<span class="badge badge-missing">missing</span>')
@@ -1749,10 +1818,15 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
                 <td><input id="m-${{r.row_key}}" value="${{model}}" /></td>
                 <td><input id="b-${{r.row_key}}" value="${{baseUrl}}" /></td>
                 <td><select id="k-${{r.row_key}}">${{envOptions(keyEnv)}}</select></td>
+                <td>${{r.mode === "text" ? `<select id="t-${{r.row_key}}"><option value="auto"${{thinkingMode==="auto"?" selected":""}}>auto</option><option value="enabled"${{thinkingMode==="enabled"?" selected":""}}>enabled</option><option value="disabled"${{thinkingMode==="disabled"?" selected":""}}>disabled</option></select>` : '<span class="muted">-</span>'}}</td>
+                <td class="advanced-col">${{r.mode === "text" ? `<input id="g-${{r.row_key}}" value="${{thinkingBudget}}" placeholder="optional" />` : '<span class="muted">-</span>'}}</td>
+                <td class="advanced-col">${{r.mode === "text" ? `<input id="o-${{r.row_key}}" value="${{maxTokens}}" placeholder="1200" />` : '<span class="muted">-</span>'}}</td>
+                <td class="advanced-col">${{r.mode === "text" ? `<input id="x-${{r.row_key}}" value="${{requestTimeout}}" placeholder="90" />` : '<span class="muted">-</span>'}}</td>
                 <td>${{envStatus}}</td>
                 <td><button onclick="save('${{r.row_key}}')">Save</button></td>`;
               body.appendChild(tr);
             }});
+            applyAdvancedColsVisibility();
           }}
           async function save(rowKey) {{
             const row = rows.find((r) => r.row_key === rowKey);
@@ -1763,7 +1837,19 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             const api_key_env = document.getElementById(`k-${{rowKey}}`).value || null;
             let payload = {{}};
             if (row.mode === "text") {{
-              payload = {{ provider_name, model_name, api_base_url, api_key_env }};
+              const max_output_tokens = document.getElementById(`o-${{rowKey}}`).value;
+              const thinking_budget_tokens = document.getElementById(`g-${{rowKey}}`).value;
+              const request_timeout_seconds = document.getElementById(`x-${{rowKey}}`).value;
+              payload = {{
+                provider_name,
+                model_name,
+                api_base_url,
+                api_key_env,
+                thinking_mode: document.getElementById(`t-${{rowKey}}`).value,
+                thinking_budget_tokens: thinking_budget_tokens ? Number(thinking_budget_tokens) : null,
+                max_output_tokens: max_output_tokens ? Number(max_output_tokens) : null,
+                request_timeout_seconds: request_timeout_seconds ? Number(request_timeout_seconds) : null
+              }};
             }} else if (row.mode === "image") {{
               payload = {{
                 image_provider_name: provider_name,
@@ -2443,6 +2529,17 @@ def post_run_video_refresh(run_id: str, db: Session = Depends(get_db)) -> dict:
     return result
 
 
+@router.post("/runs/{run_id}/assets/refresh")
+def post_run_assets_refresh(run_id: str, db: Session = Depends(get_db)) -> dict:
+    try:
+        result = refresh_async_assets(db, run_id)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return result
+
+
 @router.post("/runs/{run_id}/variants/{variant_id}/review", response_model=RunVariantView)
 def post_variant_review(
     run_id: str,
@@ -2750,6 +2847,10 @@ def patch_agent_config(agent_name: str, payload: AgentApiConfigPatchRequest, db:
             video_model_name=payload.video_model_name,
             video_api_base_url=payload.video_api_base_url,
             video_api_key_env=payload.video_api_key_env,
+            thinking_mode=payload.thinking_mode,
+            thinking_budget_tokens=payload.thinking_budget_tokens,
+            max_output_tokens=payload.max_output_tokens,
+            request_timeout_seconds=payload.request_timeout_seconds,
             extra=payload.extra,
         )
     except ValueError as exc:

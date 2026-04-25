@@ -19,6 +19,10 @@ def _default_values() -> dict:
         "model_name": "gpt-4.1",
         "api_base_url": None,
         "api_key_env": None,
+        "thinking_mode": "auto",
+        "thinking_budget_tokens": None,
+        "max_output_tokens": None,
+        "request_timeout_seconds": None,
         "extra": {},
     }
 
@@ -105,11 +109,24 @@ def upsert_agent_config(
     video_model_name: str | None = None,
     video_api_base_url: str | None = None,
     video_api_key_env: str | None = None,
+    thinking_mode: str | None = None,
+    thinking_budget_tokens: int | None = None,
+    max_output_tokens: int | None = None,
+    request_timeout_seconds: int | None = None,
     extra: dict | None,
 ) -> AgentApiConfig:
     _validate_env_name(api_key_env)
     _validate_env_name(image_api_key_env)
     _validate_env_name(video_api_key_env)
+    if thinking_mode is not None and thinking_mode not in {"auto", "enabled", "disabled"}:
+        raise ValueError("thinking_mode must be one of: auto, enabled, disabled")
+    for field_name, value in {
+        "thinking_budget_tokens": thinking_budget_tokens,
+        "max_output_tokens": max_output_tokens,
+        "request_timeout_seconds": request_timeout_seconds,
+    }.items():
+        if value is not None and value <= 0:
+            raise ValueError(f"{field_name} must be a positive integer")
     ensure_default_agent_config(db)
     row = db.scalar(select(AgentApiConfig).where(AgentApiConfig.agent_name == agent_name))
     has_image_patch = any(
@@ -148,6 +165,10 @@ def upsert_agent_config(
             model_name=model_name or defaults["model_name"],
             api_base_url=api_base_url if api_base_url is not None else defaults["api_base_url"],
             api_key_env=api_key_env if api_key_env is not None else defaults["api_key_env"],
+            thinking_mode=thinking_mode or defaults["thinking_mode"],
+            thinking_budget_tokens=thinking_budget_tokens,
+            max_output_tokens=max_output_tokens,
+            request_timeout_seconds=request_timeout_seconds,
             extra=extra_payload,
         )
         db.add(row)
@@ -162,6 +183,14 @@ def upsert_agent_config(
         row.api_base_url = api_base_url or None
     if api_key_env is not None:
         row.api_key_env = api_key_env or None
+    if thinking_mode is not None:
+        row.thinking_mode = thinking_mode or "auto"
+    if thinking_budget_tokens is not None:
+        row.thinking_budget_tokens = thinking_budget_tokens
+    if max_output_tokens is not None:
+        row.max_output_tokens = max_output_tokens
+    if request_timeout_seconds is not None:
+        row.request_timeout_seconds = request_timeout_seconds
 
     base_extra = dict(extra) if isinstance(extra, dict) else dict(row.extra or {})
     if has_image_patch:
@@ -289,6 +318,8 @@ def resolve_agent_config(
     }
     image = _resolved_image_config(default_cfg, agent_cfg, text_fallback)
     video = _resolved_video_config(default_cfg, agent_cfg, text_fallback)
+    thinking_mode = (agent_cfg.thinking_mode if agent_cfg and agent_cfg.thinking_mode else default_cfg.thinking_mode) or "auto"
+    supports_thinking = provider_name == "kimi" and model_name.startswith("kimi-k")
     return {
         "agent_name": agent_name,
         "provider_name": provider_name,
@@ -296,6 +327,23 @@ def resolve_agent_config(
         "api_base_url": api_base_url,
         "api_key_env": api_key_env,
         "api_key_available": api_key_available,
+        "thinking_mode": thinking_mode,
+        "thinking_applied": bool(supports_thinking and thinking_mode != "disabled"),
+        "thinking_budget_tokens": (
+            agent_cfg.thinking_budget_tokens
+            if agent_cfg and agent_cfg.thinking_budget_tokens is not None
+            else default_cfg.thinking_budget_tokens
+        ),
+        "max_output_tokens": (
+            agent_cfg.max_output_tokens
+            if agent_cfg and agent_cfg.max_output_tokens is not None
+            else default_cfg.max_output_tokens
+        ),
+        "request_timeout_seconds": (
+            agent_cfg.request_timeout_seconds
+            if agent_cfg and agent_cfg.request_timeout_seconds is not None
+            else default_cfg.request_timeout_seconds
+        ),
         "extra": (agent_cfg.extra if agent_cfg and agent_cfg.extra else default_cfg.extra),
         "image_provider_name": image["provider_name"],
         "image_model_name": image["model_name"],
@@ -324,6 +372,10 @@ def resolve_agent_runtime(config: dict) -> dict:
         "extra": config.get("extra") or {},
         "provider_name": config.get("provider_name"),
         "model_name": config.get("model_name"),
+        "thinking_mode": config.get("thinking_mode") or "auto",
+        "thinking_budget_tokens": config.get("thinking_budget_tokens"),
+        "max_output_tokens": config.get("max_output_tokens"),
+        "request_timeout_seconds": config.get("request_timeout_seconds"),
         "image": {
             "provider_name": config.get("image_provider_name"),
             "model_name": config.get("image_model_name"),

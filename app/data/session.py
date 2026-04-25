@@ -141,6 +141,10 @@ def apply_runtime_migrations(target_engine) -> None:
     _add_column_if_missing(target_engine, "gm_memory", "industry_code", "ALTER TABLE gm_memory ADD COLUMN industry_code VARCHAR(128)")
     _add_column_if_missing(target_engine, "gm_memory", "source_type", "ALTER TABLE gm_memory ADD COLUMN source_type VARCHAR(64)")
     _add_column_if_missing(target_engine, "gm_memory", "score_hint", "ALTER TABLE gm_memory ADD COLUMN score_hint FLOAT")
+    _add_column_if_missing(target_engine, "agent_api_config", "thinking_mode", "ALTER TABLE agent_api_config ADD COLUMN thinking_mode VARCHAR(16)")
+    _add_column_if_missing(target_engine, "agent_api_config", "thinking_budget_tokens", "ALTER TABLE agent_api_config ADD COLUMN thinking_budget_tokens INTEGER")
+    _add_column_if_missing(target_engine, "agent_api_config", "max_output_tokens", "ALTER TABLE agent_api_config ADD COLUMN max_output_tokens INTEGER")
+    _add_column_if_missing(target_engine, "agent_api_config", "request_timeout_seconds", "ALTER TABLE agent_api_config ADD COLUMN request_timeout_seconds INTEGER")
 
     with target_engine.begin() as conn:
         conn.execute(text("UPDATE product SET product_code = 'legacy_' || id WHERE product_code IS NULL OR product_code = ''"))
@@ -161,6 +165,7 @@ def apply_runtime_migrations(target_engine) -> None:
         conn.execute(text("UPDATE pipeline_run SET category_tags = '[]' WHERE category_tags IS NULL"))
         conn.execute(text("UPDATE gm_memory SET memory_scope = 'industry' WHERE memory_scope IS NULL OR memory_scope = ''"))
         conn.execute(text("UPDATE gm_memory SET source_type = 'feedback_import' WHERE source_type IS NULL OR source_type = ''"))
+        conn.execute(text("UPDATE agent_api_config SET thinking_mode = 'auto' WHERE thinking_mode IS NULL OR thinking_mode = ''"))
         conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_product_product_code ON product(product_code)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pipeline_run_product_code ON pipeline_run(product_code)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pipeline_run_industry_code ON pipeline_run(industry_code)"))

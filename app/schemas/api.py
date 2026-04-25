@@ -197,6 +197,11 @@ class AgentApiConfigView(BaseModel):
     video_api_base_url: str | None = None
     video_api_key_env: str | None = None
     video_api_key_available: bool = False
+    thinking_mode: Literal["auto", "enabled", "disabled"] = "auto"
+    thinking_budget_tokens: int | None = None
+    max_output_tokens: int | None = None
+    request_timeout_seconds: int | None = None
+    thinking_applied: bool = False
     extra: dict = Field(default_factory=dict)
     is_default: bool = False
     updated_at: datetime
@@ -215,6 +220,10 @@ class AgentApiConfigPatchRequest(BaseModel):
     video_model_name: str | None = None
     video_api_base_url: str | None = None
     video_api_key_env: str | None = None
+    thinking_mode: Literal["auto", "enabled", "disabled"] | None = None
+    thinking_budget_tokens: int | None = None
+    max_output_tokens: int | None = None
+    request_timeout_seconds: int | None = None
     extra: dict | None = None
 
 

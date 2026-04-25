@@ -984,6 +984,9 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
         task.status = TaskStatus.FAILED.value
         task.error_message = str(exc)
         task.failure_category = _classify_failure(exc)
+        provider_errors = getattr(exc, "errors", None)
+        if provider_errors:
+            task.metadata_json = {**(task.metadata_json or {}), "provider_errors": provider_errors}
         task.completed_at = utcnow()
         run.status = RunStatus.FAILED.value
         run.updated_at = utcnow()
@@ -1173,6 +1176,10 @@ def refresh_video_task_assets(db: Session, run_id: str) -> dict:
         asset.error_message = error_message
     db.flush()
     return {"refreshed": refreshed, "completed": completed, "summary": _variant_summary(db, run_id)}
+
+
+def refresh_async_assets(db: Session, run_id: str) -> dict:
+    return refresh_video_task_assets(db, run_id)
 
 
 def review_variant(

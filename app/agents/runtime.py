@@ -65,6 +65,10 @@ class AgentsRuntime:
     ) -> tuple[str, str, float]:
         llm = self.providers.get(provider)
         runtime = runtime_config or {}
+        extra = dict(runtime.get("extra") or {})
+        for key in ("thinking_mode", "thinking_budget_tokens", "max_output_tokens", "request_timeout_seconds"):
+            if runtime.get(key) is not None:
+                extra[key] = runtime.get(key)
         response = llm.chat_complete(
             MultimodalChatRequest(
                 prompt=prompt,
@@ -74,7 +78,7 @@ class AgentsRuntime:
             ),
             api_base_url=runtime.get("api_base_url"),
             api_key=runtime.get("api_key"),
-            extra=runtime.get("extra"),
+            extra=extra,
         )
         return response.text, response.model_used, response.estimated_cost
 
@@ -511,6 +515,7 @@ class AgentsRuntime:
             image_model = ""
             image_provider = ""
             error_text = None
+            provider_errors: list[dict] = []
             existing_image_path = self.media.settings.assets_dir / run_id / f"copy_image_{idx + 1}.png"
             try:
                 if existing_image_path.exists() and existing_image_path.stat().st_size > 1024:
@@ -534,6 +539,7 @@ class AgentsRuntime:
                     image_uri = self.media.write_binary_artifact(run_id, f"copy_image_{idx + 1}.png", image_bytes)
             except Exception as exc:
                 error_text = str(exc)
+                provider_errors = getattr(exc, "errors", []) or []
                 image_uri = self.media.write_binary_artifact(run_id, f"copy_image_{idx + 1}.png", decode_placeholder_png())
 
             image_ref = ImageAssetRef(
@@ -548,6 +554,7 @@ class AgentsRuntime:
                 "image_provider": image_provider,
                 "image_model": image_model,
                 "error": error_text,
+                "provider_errors": provider_errors,
             }
             images.append(image_ref)
             artifacts.append(
@@ -677,6 +684,7 @@ class AgentsRuntime:
                 image_provider = ""
                 image_model = ""
                 frame_error = error_text
+                provider_errors: list[dict] = []
                 try:
                     image_result, image_provider, image_model = self._generate_image(
                         fallback_provider=provider,
@@ -700,6 +708,7 @@ class AgentsRuntime:
                         frame_error = None
                 except Exception as exc:
                     frame_error = str(exc)
+                    provider_errors = getattr(exc, "errors", []) or []
                     frame_uri = self.media.write_binary_artifact(
                         run_id,
                         f"{script.variant_id}_storyboard_{idx + 1}.png",
@@ -714,6 +723,7 @@ class AgentsRuntime:
                     "image_provider": image_provider,
                     "image_model": image_model,
                     "error": frame_error,
+                    "provider_errors": provider_errors,
                 }
                 frames.append(frame)
                 artifacts.append({"type": "storyboard_frame", "uri": frame_uri, "payload": frame})
@@ -764,6 +774,7 @@ class AgentsRuntime:
             external_task_id = None
             result_url = None
             raw_response: dict = {}
+            provider_errors: list[dict] = []
             video_uri = ""
             existing_video_path = self.media.settings.assets_dir / run_id / f"{script.variant_id}_sample.mp4"
             try:
@@ -802,6 +813,7 @@ class AgentsRuntime:
                     video_models_used.add(video_result.model_used or model_used)
             except Exception as exc:
                 error_text = str(exc)
+                provider_errors = getattr(exc, "errors", []) or []
                 video_uri = self.media.reserve_binary_artifact(run_id, f"{script.variant_id}_sample.mp4")
             asset = VideoAsset(variant_id=script.variant_id, video_uri=video_uri, duration_seconds=float(duration_seconds))
             video_payload = {
@@ -815,6 +827,7 @@ class AgentsRuntime:
                 "generation_status": generation_status,
                 "result_url": result_url,
                 "raw_response": raw_response,
+                "provider_errors": provider_errors,
                 "quality_constraints": {
                     "leash_connection_required": True,
                     "reject_missing_or_floating_clip": True,

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.data.models import VariantAsset
 from app.data.session import SessionLocal
+from app.providers.llm import GeneratedVideo, VideoGenResult
 from app.orchestrator.state_machine import STAGE_ORDER, stage_plan_for
 from app.services.runs import execute_next_queued_stage
 
@@ -350,3 +352,82 @@ def test_runs_preflight_reports_intake_video_understanding_incompatibility(clien
     assert payload["severity"] == "error"
     keys = [row["key"] for row in payload["checks"]]
     assert "intake.video_understanding" in keys
+
+
+def test_assets_refresh_recovers_external_video_task(client, monkeypatch):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-refresh",
+            "project_name": "p-refresh",
+            "product_name": "dog leash",
+            "product_code": "DL-REFRESH-001",
+            "industry_code": "pet_accessories",
+            "campaign_name": "meta-refresh",
+            "pipeline_mode": "video_only",
+            "creative_preset": "meta_vertical_5s",
+        },
+    )
+    run_id = create_resp.json()["id"]
+    for stage in ["intake", "planning", "divergence"]:
+        _run_worker_once()
+        client.post(f"/runs/{run_id}/advance", json={"notes": "ok"})
+
+    with SessionLocal() as db:
+        variant = db.query(VariantAsset).filter(VariantAsset.run_id == run_id).first()
+        assert variant is None
+        from app.data.models import RunVariant
+
+        run_variant = db.query(RunVariant).filter(RunVariant.run_id == run_id, RunVariant.variant_id == "V1").one()
+        db.add(
+            VariantAsset(
+                run_variant_id=run_variant.id,
+                run_id=run_id,
+                stage_name="video_generation",
+                asset_type="video",
+                uri=f"assets/{run_id}/V1_sample.mp4",
+                provider_name="stub",
+                model_name="stub-video",
+                prompt_summary="video asset for V1",
+                idempotency_key="test-refresh-video-v1",
+                payload={
+                    "variant_id": "V1",
+                    "video_uri": f"assets/{run_id}/V1_sample.mp4",
+                    "external_task_id": "task_refresh_1",
+                    "generation_status": "processing",
+                    "source": "external_task_pending",
+                },
+            )
+        )
+        db.commit()
+
+    class FakeProvider:
+        def poll_video_task(self, **kwargs):
+            return VideoGenResult(
+                model_used="stub-video",
+                task_id=kwargs["task_id"],
+                status="completed",
+                videos=[
+                    GeneratedVideo(
+                        url="https://example.com/video.mp4",
+                        task_id=kwargs["task_id"],
+                        status="completed",
+                    )
+                ],
+            )
+
+    monkeypatch.setattr("app.services.runs.runtime.providers.get", lambda _name: FakeProvider())
+    monkeypatch.setattr("app.services.runs.runtime._materialize_generated_video", lambda _selected: (b"fake-video-bytes", "url"))
+
+    resp = client.post(f"/runs/{run_id}/assets/refresh")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["refreshed"] == 1
+    assert payload["completed"] == 1
+
+    variants = client.get(f"/runs/{run_id}/variants").json()
+    v1 = next(item for item in variants["items"] if item["variant_id"] == "V1")
+    video = next(asset for asset in v1["assets"] if asset["asset_type"] == "video")
+    assert video["payload"]["generation_status"] == "completed"
+    assert Path(video["uri"]).exists()
+    assert Path(video["uri"]).read_bytes() == b"fake-video-bytes"
