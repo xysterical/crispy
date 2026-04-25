@@ -1006,10 +1006,189 @@ def _variant_summary(db: Session, run_id: str) -> dict:
     }
 
 
-def _serialize_run_variant(db: Session, row: RunVariant) -> dict:
+def _asset_payload_status(asset: VariantAsset) -> str:
+    payload = asset.payload or {}
+    if asset.failure_category:
+        return "failed"
+    status = str(payload.get("generation_status") or payload.get("status") or "").lower()
+    if status in {"submitted", "queued", "pending", "processing", "running"}:
+        return "processing"
+    if status in {"completed", "succeeded", "success", "ready"}:
+        return "completed"
+    if asset.uri:
+        return "completed"
+    return "missing"
+
+
+def _uri_file_issue(uri: str | None, *, minimum_bytes: int = 1) -> str | None:
+    if not uri:
+        return "missing_uri"
+    if uri.startswith(("http://", "https://")):
+        return None
+    path = Path(uri)
+    if not path.exists():
+        return "missing_file"
+    if path.is_file() and path.stat().st_size < minimum_bytes:
+        return "empty_file"
+    return None
+
+
+def _required_asset_types_for_run(run: PipelineRun | None) -> set[str]:
+    if not run:
+        return set()
+    mode = run.pipeline_mode
+    if mode == "copy_image_only":
+        return {"copy", "image"}
+    if mode == "video_only":
+        return {"video_script", "storyboard_frame", "video"}
+    return {"copy", "image", "video_script", "storyboard_frame", "video"}
+
+
+def _latest_score(scores: list[VariantScore], score_type: str) -> VariantScore | None:
+    rows = [score for score in scores if score.score_type == score_type]
+    return rows[-1] if rows else None
+
+
+def _variant_quality_summary(
+    *,
+    run: PipelineRun | None,
+    row: RunVariant,
+    assets: list[VariantAsset],
+    reviews: list[VariantReview],
+    scores: list[VariantScore],
+) -> dict:
+    asset_counts = Counter(asset.asset_type for asset in assets)
+    asset_status_counts = Counter(_asset_payload_status(asset) for asset in assets)
+    required_asset_types = _required_asset_types_for_run(run)
+    missing_required_assets = sorted(asset_type for asset_type in required_asset_types if not asset_counts.get(asset_type))
+    media_issues: list[dict] = []
+    for asset in assets:
+        if asset.asset_type == "image":
+            issue = _uri_file_issue(asset.uri)
+        elif asset.asset_type == "video":
+            issue = _uri_file_issue(asset.uri, minimum_bytes=1024) if _asset_payload_status(asset) == "completed" else None
+        elif asset.asset_type == "storyboard_frame":
+            issue = _uri_file_issue(asset.uri)
+        else:
+            issue = None
+        if issue:
+            media_issues.append({"asset_id": asset.id, "asset_type": asset.asset_type, "issue": issue, "uri": asset.uri})
+
+    evaluation = _latest_score(scores, "evaluation")
+    compliance = _latest_score(scores, "compliance")
+    compliance_level = (compliance.compliance_level if compliance else None) or (evaluation.compliance_level if evaluation else None)
+    score = row.current_score if row.current_score is not None else (evaluation.total_score if evaluation else None)
+    operator_tags = sorted({tag for review in reviews for tag in (review.tags or [])})
+    quality_flags: list[str] = []
+    if row.is_winner:
+        quality_flags.append("winner")
+    if row.shortlisted:
+        quality_flags.append("shortlisted")
+    if row.regenerate_requested or row.status == VariantLifecycleStatus.NEEDS_REGENERATION.value:
+        quality_flags.append("needs_regeneration")
+    if row.status == VariantLifecycleStatus.REJECTED.value or row.review_status == "rejected":
+        quality_flags.append("rejected")
+    if missing_required_assets:
+        quality_flags.append("missing_assets")
+    if media_issues:
+        quality_flags.append("media_issue")
+    if asset_status_counts.get("processing"):
+        quality_flags.append("processing_assets")
+    if asset_status_counts.get("failed"):
+        quality_flags.append("failed_assets")
+    if compliance_level and str(compliance_level).lower() not in {"pass", "passed", "ok", "low", "none", "safe"}:
+        quality_flags.append("compliance_attention")
+    if score is not None and score < 70:
+        quality_flags.append("low_score")
+    if any("error" in tag or "issue" in tag or "fail" in tag for tag in operator_tags):
+        quality_flags.append("operator_quality_issue")
+    if row.review_status in {None, "", "promote_winner", "shortlist", "needs_review"} and not row.is_winner:
+        quality_flags.append("pending_review")
+    if not any(flag in quality_flags for flag in ["missing_assets", "media_issue", "processing_assets", "failed_assets", "compliance_attention", "needs_regeneration", "rejected"]):
+        quality_flags.append("ready_to_review")
+
+    if "failed_assets" in quality_flags or "media_issue" in quality_flags or "operator_quality_issue" in quality_flags:
+        quality_status = "asset_issue"
+    elif "processing_assets" in quality_flags:
+        quality_status = "processing"
+    elif "needs_regeneration" in quality_flags:
+        quality_status = "needs_regeneration"
+    elif "compliance_attention" in quality_flags:
+        quality_status = "compliance_attention"
+    elif "missing_assets" in quality_flags:
+        quality_status = "incomplete"
+    elif row.is_winner:
+        quality_status = "winner"
+    elif row.shortlisted:
+        quality_status = "shortlisted"
+    else:
+        quality_status = "ready"
+
+    return {
+        "quality_status": quality_status,
+        "quality_flags": sorted(set(quality_flags)),
+        "asset_counts": dict(asset_counts),
+        "asset_status_counts": dict(asset_status_counts),
+        "required_asset_types": sorted(required_asset_types),
+        "missing_required_assets": missing_required_assets,
+        "media_issues": media_issues,
+        "score": score,
+        "compliance_level": compliance_level,
+        "review_status": row.review_status,
+        "operator_tags": operator_tags,
+    }
+
+
+def _variant_matches_filters(
+    item: dict,
+    *,
+    status: str | None = None,
+    review_status: str | None = None,
+    quality: str | None = None,
+    asset_type: str | None = None,
+    generation_status: str | None = None,
+    compliance: str | None = None,
+    min_score: float | None = None,
+    q: str | None = None,
+) -> bool:
+    quality_summary = item.get("quality_summary") or {}
+    if status and item.get("status") != status:
+        return False
+    if review_status and item.get("review_status") != review_status:
+        return False
+    if quality and quality not in set(quality_summary.get("quality_flags") or []) | {quality_summary.get("quality_status")}:
+        return False
+    if asset_type and not (quality_summary.get("asset_counts") or {}).get(asset_type):
+        return False
+    if generation_status and not (quality_summary.get("asset_status_counts") or {}).get(generation_status):
+        return False
+    if compliance and str(quality_summary.get("compliance_level") or "").lower() != compliance.lower():
+        return False
+    if min_score is not None:
+        score = quality_summary.get("score")
+        if score is None or float(score) < min_score:
+            return False
+    if q:
+        haystack = " ".join(
+            str(value or "")
+            for value in [
+                item.get("variant_id"),
+                item.get("angle"),
+                item.get("hook"),
+                item.get("message"),
+                (item.get("strategy_brief") or {}).get("rationale"),
+            ]
+        ).lower()
+        if q.lower() not in haystack:
+            return False
+    return True
+
+
+def _serialize_run_variant(db: Session, row: RunVariant, run: PipelineRun | None = None) -> dict:
     assets = db.scalars(select(VariantAsset).where(VariantAsset.run_variant_id == row.id).order_by(VariantAsset.created_at.asc())).all()
     reviews = db.scalars(select(VariantReview).where(VariantReview.run_variant_id == row.id).order_by(VariantReview.created_at.asc())).all()
     scores = db.scalars(select(VariantScore).where(VariantScore.run_variant_id == row.id).order_by(VariantScore.created_at.asc())).all()
+    quality_summary = _variant_quality_summary(run=run, row=row, assets=assets, reviews=reviews, scores=scores)
     return {
         "id": row.id,
         "run_id": row.run_id,
@@ -1025,6 +1204,7 @@ def _serialize_run_variant(db: Session, row: RunVariant) -> dict:
         "regenerate_requested": row.regenerate_requested,
         "metadata_json": row.metadata_json or {},
         "strategy_brief": (row.metadata_json or {}).get("strategy_brief", {}),
+        "quality_summary": quality_summary,
         "assets": [
             {
                 "id": asset.id,
@@ -1099,10 +1279,49 @@ def run_deliverables(db: Session, run_id: str) -> dict:
     }
 
 
-def run_variants(db: Session, run_id: str) -> dict:
+def run_variants(
+    db: Session,
+    run_id: str,
+    *,
+    status: str | None = None,
+    review_status: str | None = None,
+    quality: str | None = None,
+    asset_type: str | None = None,
+    generation_status: str | None = None,
+    compliance: str | None = None,
+    min_score: float | None = None,
+    q: str | None = None,
+) -> dict:
+    run = get_run(db, run_id)
     rows = db.scalars(select(RunVariant).where(RunVariant.run_id == run_id).order_by(RunVariant.variant_id.asc())).all()
     evaluation = get_stage_task(db, run_id, "evaluation_selection")
     ranked = ((evaluation.output_payload or {}).get("evaluation_result", {}) or {}).get("ranked_variants", [])
+    items = [_serialize_run_variant(db, row, run) for row in rows]
+    filtered_items = [
+        item
+        for item in items
+        if _variant_matches_filters(
+            item,
+            status=status,
+            review_status=review_status,
+            quality=quality,
+            asset_type=asset_type,
+            generation_status=generation_status,
+            compliance=compliance,
+            min_score=min_score,
+            q=q,
+        )
+    ]
+    quality_counter = Counter((item.get("quality_summary") or {}).get("quality_status", "unknown") for item in items)
+    flag_counter: Counter[str] = Counter()
+    for item in items:
+        flag_counter.update((item.get("quality_summary") or {}).get("quality_flags") or [])
+    summary = {
+        **_variant_summary(db, run_id),
+        "filtered_count": len(filtered_items),
+        "quality_status_counts": dict(quality_counter),
+        "quality_flag_counts": dict(flag_counter),
+    }
     return {
         "variants": [
             {
@@ -1115,8 +1334,8 @@ def run_variants(db: Session, run_id: str) -> dict:
             for row in rows
         ],
         "ranked": ranked,
-        "items": [_serialize_run_variant(db, row) for row in rows],
-        "summary": _variant_summary(db, run_id),
+        "items": filtered_items,
+        "summary": summary,
     }
 
 

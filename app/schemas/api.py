@@ -286,6 +286,7 @@ class RunVariantView(BaseModel):
     regenerate_requested: bool = False
     metadata_json: dict = Field(default_factory=dict)
     strategy_brief: dict = Field(default_factory=dict)
+    quality_summary: dict = Field(default_factory=dict)
     assets: list[VariantAssetView] = Field(default_factory=list)
     scores: list[VariantScoreView] = Field(default_factory=list)
     reviews: list[VariantReviewView] = Field(default_factory=list)

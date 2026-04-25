@@ -546,6 +546,37 @@ def _dashboard_html() -> str:
             padding: 6px 8px;
             font-size: 12px;
           }
+          .variant-filter-bar {
+            display:grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap:8px;
+            align-items:end;
+            margin:10px 0;
+            padding:10px;
+            border:1px solid #dce7e1;
+            border-radius:10px;
+            background:#f8fbf9;
+          }
+          .quality-row {
+            display:flex;
+            gap:6px;
+            flex-wrap:wrap;
+            margin-top:8px;
+          }
+          .quality-chip {
+            display:inline-flex;
+            align-items:center;
+            border-radius:999px;
+            padding:3px 7px;
+            border:1px solid #d5e4dc;
+            background:#f4f8f5;
+            color:#315a4b;
+            font-size:11px;
+            font-weight:600;
+          }
+          .quality-chip.good { background:#eaf7ee; border-color:#bde0c8; color:#21633d; }
+          .quality-chip.warn { background:#fff7e6; border-color:#ead19d; color:#735418; }
+          .quality-chip.bad { background:#fdeeee; border-color:#efc2c2; color:#8a2d2d; }
           pre {
             white-space: pre-wrap;
             word-break: break-word;
@@ -568,6 +599,7 @@ def _dashboard_html() -> str:
             .row { grid-template-columns: 1fr; gap: 0; }
             .deliverables { grid-template-columns: 1fr; }
             .variant-board { grid-template-columns: 1fr; }
+            .variant-filter-bar { grid-template-columns: 1fr; }
             .hero { flex-direction: column; align-items: flex-start; }
           }
         </style>
@@ -697,6 +729,7 @@ def _dashboard_html() -> str:
           let pipelineModes = [];
           let dataSources = [];
           let dataSourceSelectInFlight = false;
+          let variantBoardFilters = { quality: "", assetType: "", reviewStatus: "", minScore: "", q: "" };
 
           function esc(v){ return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
           function toList(raw){ return String(raw || "").split(",").map(s => s.trim()).filter(Boolean); }
@@ -841,6 +874,54 @@ def _dashboard_html() -> str:
             return (item?.assets || []).filter((asset) => asset.asset_type === type);
           }
 
+          function qualitySummary(item){
+            return item?.quality_summary || {};
+          }
+
+          function qualityFlags(item){
+            return qualitySummary(item).quality_flags || [];
+          }
+
+          function qualityChipClass(flag){
+            if (["ready_to_review", "winner", "shortlisted"].includes(flag)) return "good";
+            if (["processing_assets", "missing_assets", "compliance_attention", "low_score", "pending_review"].includes(flag)) return "warn";
+            if (["failed_assets", "media_issue", "operator_quality_issue", "needs_regeneration", "rejected"].includes(flag)) return "bad";
+            return "";
+          }
+
+          function variantMatchesOperationalFilters(item){
+            const quality = variantBoardFilters.quality;
+            const assetType = variantBoardFilters.assetType;
+            const reviewStatus = variantBoardFilters.reviewStatus;
+            const minScoreRaw = variantBoardFilters.minScore;
+            const q = String(variantBoardFilters.q || "").trim().toLowerCase();
+            const summary = qualitySummary(item);
+            const flags = new Set(summary.quality_flags || []);
+            if (quality && summary.quality_status !== quality && !flags.has(quality)) return false;
+            if (assetType && !(summary.asset_counts || {})[assetType]) return false;
+            if (reviewStatus && (item.review_status || "") !== reviewStatus) return false;
+            if (minScoreRaw) {
+              const minScore = Number(minScoreRaw);
+              const score = Number(summary.score ?? item.current_score);
+              if (!Number.isFinite(minScore) || !Number.isFinite(score) || score < minScore) return false;
+            }
+            if (q) {
+              const haystack = [item.variant_id, item.angle, item.hook, item.message, item.strategy_brief?.rationale].join(" ").toLowerCase();
+              if (!haystack.includes(q)) return false;
+            }
+            return true;
+          }
+
+          async function updateVariantFilter(field, value){
+            variantBoardFilters = { ...variantBoardFilters, [field]: value };
+            if (currentRunId) await selectRun(currentRunId);
+          }
+
+          function resetVariantFilters(){
+            variantBoardFilters = { quality: "", assetType: "", reviewStatus: "", minScore: "", q: "" };
+            if (currentRunId) selectRun(currentRunId);
+          }
+
           async function variantAction(runId, variantId, endpoint, body){
             await api(endpoint, {
               method: "POST",
@@ -856,11 +937,71 @@ def _dashboard_html() -> str:
           }
 
           function renderVariantBoard(runId, variants){
-            const items = variants?.items || [];
+            const allItems = variants?.items || [];
+            const items = allItems.filter(variantMatchesOperationalFilters);
             const summary = variants?.summary || {};
-            const header = `<div class="muted">variants: ${esc(summary.total || 0)} | shortlisted: ${esc(summary.shortlisted_count || 0)} | winners: ${esc(summary.winner_count || 0)} | regen requests: ${esc(summary.regeneration_requested_count || 0)}</div>`;
-            if (!items.length) {
+            const qualityCounts = summary.quality_flag_counts || {};
+            const header = `<div class="muted">showing: ${esc(items.length)} / ${esc(summary.total || allItems.length || 0)} | shortlisted: ${esc(summary.shortlisted_count || 0)} | winners: ${esc(summary.winner_count || 0)} | regen requests: ${esc(summary.regeneration_requested_count || 0)} | asset issues: ${esc((qualityCounts.failed_assets || 0) + (qualityCounts.media_issue || 0))} | processing: ${esc(qualityCounts.processing_assets || 0)}</div>`;
+            const filters = `
+              <div class="variant-filter-bar">
+                <div>
+                  <label>Quality Filter</label>
+                  <select onchange="updateVariantFilter('quality', this.value)">
+                    <option value="" ${variantBoardFilters.quality === "" ? "selected" : ""}>All variants</option>
+                    <option value="ready_to_review" ${variantBoardFilters.quality === "ready_to_review" ? "selected" : ""}>Ready to review</option>
+                    <option value="winner" ${variantBoardFilters.quality === "winner" ? "selected" : ""}>Winner</option>
+                    <option value="shortlisted" ${variantBoardFilters.quality === "shortlisted" ? "selected" : ""}>Shortlisted</option>
+                    <option value="pending_review" ${variantBoardFilters.quality === "pending_review" ? "selected" : ""}>Pending review</option>
+                    <option value="processing_assets" ${variantBoardFilters.quality === "processing_assets" ? "selected" : ""}>Processing assets</option>
+                    <option value="failed_assets" ${variantBoardFilters.quality === "failed_assets" ? "selected" : ""}>Failed assets</option>
+                    <option value="media_issue" ${variantBoardFilters.quality === "media_issue" ? "selected" : ""}>Media issue</option>
+                    <option value="operator_quality_issue" ${variantBoardFilters.quality === "operator_quality_issue" ? "selected" : ""}>Operator quality issue</option>
+                    <option value="missing_assets" ${variantBoardFilters.quality === "missing_assets" ? "selected" : ""}>Missing assets</option>
+                    <option value="compliance_attention" ${variantBoardFilters.quality === "compliance_attention" ? "selected" : ""}>Compliance attention</option>
+                    <option value="needs_regeneration" ${variantBoardFilters.quality === "needs_regeneration" ? "selected" : ""}>Needs regeneration</option>
+                    <option value="rejected" ${variantBoardFilters.quality === "rejected" ? "selected" : ""}>Rejected</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Asset Type</label>
+                  <select onchange="updateVariantFilter('assetType', this.value)">
+                    <option value="" ${variantBoardFilters.assetType === "" ? "selected" : ""}>Any asset</option>
+                    <option value="copy" ${variantBoardFilters.assetType === "copy" ? "selected" : ""}>Copy</option>
+                    <option value="image" ${variantBoardFilters.assetType === "image" ? "selected" : ""}>Image</option>
+                    <option value="video_script" ${variantBoardFilters.assetType === "video_script" ? "selected" : ""}>Script</option>
+                    <option value="storyboard_frame" ${variantBoardFilters.assetType === "storyboard_frame" ? "selected" : ""}>Storyboard</option>
+                    <option value="video" ${variantBoardFilters.assetType === "video" ? "selected" : ""}>Video</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Review Status</label>
+                  <select onchange="updateVariantFilter('reviewStatus', this.value)">
+                    <option value="" ${variantBoardFilters.reviewStatus === "" ? "selected" : ""}>Any status</option>
+                    <option value="approved" ${variantBoardFilters.reviewStatus === "approved" ? "selected" : ""}>Approved</option>
+                    <option value="shortlisted" ${variantBoardFilters.reviewStatus === "shortlisted" ? "selected" : ""}>Shortlisted</option>
+                    <option value="winner" ${variantBoardFilters.reviewStatus === "winner" ? "selected" : ""}>Winner</option>
+                    <option value="rejected" ${variantBoardFilters.reviewStatus === "rejected" ? "selected" : ""}>Rejected</option>
+                    <option value="request_regeneration" ${variantBoardFilters.reviewStatus === "request_regeneration" ? "selected" : ""}>Regen requested</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Min Score</label>
+                  <input type="number" min="0" max="100" value="${esc(variantBoardFilters.minScore)}" onchange="updateVariantFilter('minScore', this.value)" placeholder="e.g. 80" />
+                </div>
+                <div>
+                  <label>Search</label>
+                  <input value="${esc(variantBoardFilters.q)}" onchange="updateVariantFilter('q', this.value)" placeholder="angle, hook, message" />
+                </div>
+                <div>
+                  <button onclick="resetVariantFilters()">Reset filters</button>
+                </div>
+              </div>
+            `;
+            if (!allItems.length) {
               return `<h3 style="margin-top:14px;">Variant Board</h3>${header}<div class="run-detail-empty">No variants materialized yet.</div>`;
+            }
+            if (!items.length) {
+              return `<h3 style="margin-top:14px;">Variant Board</h3>${header}${filters}<div class="run-detail-empty">No variants match the active filters.</div>`;
             }
             const cards = items.map((item) => {
               const copy = assetsByType(item, "copy")[0]?.payload || null;
@@ -876,6 +1017,12 @@ def _dashboard_html() -> str:
               const videoTask = video?.external_task_id || "-";
               const videoProvider = video?.video_provider || videoAsset?.provider_name || "-";
               const videoModel = video?.video_model || videoAsset?.model_name || "-";
+              const qSummary = qualitySummary(item);
+              const flags = qualityFlags(item);
+              const missingAssets = qSummary.missing_required_assets || [];
+              const mediaIssues = qSummary.media_issues || [];
+              const operatorTags = qSummary.operator_tags || [];
+              const qualityChips = flags.map((flag) => `<span class="quality-chip ${qualityChipClass(flag)}">${esc(flag)}</span>`).join("");
               return `
                 <article class="variant-card">
                   <div class="variant-head">
@@ -889,6 +1036,17 @@ def _dashboard_html() -> str:
                       ${item.shortlisted ? '<span class="pill">shortlisted</span>' : ''}
                     </div>
                   </div>
+                  <div class="quality-row">
+                    <span class="quality-chip ${qualityChipClass(qSummary.quality_status)}">quality: ${esc(qSummary.quality_status || "-")}</span>
+                    ${qualityChips}
+                  </div>
+                  ${(missingAssets.length || mediaIssues.length || operatorTags.length) ? `
+                    <div class="muted" style="margin-top:4px;">
+                      ${missingAssets.length ? `missing: ${esc(missingAssets.join(", "))}` : ""}
+                      ${mediaIssues.length ? ` media issues: ${esc(mediaIssues.map((x) => `${x.asset_type}:${x.issue}`).join(", "))}` : ""}
+                      ${operatorTags.length ? ` operator tags: ${esc(operatorTags.join(", "))}` : ""}
+                    </div>
+                  ` : ""}
                   <div><b>Message</b>: ${esc(item.message || "-")}</div>
                   <div class="muted" style="margin-top:4px;">strategy: ${esc(item.strategy_brief?.rationale || "-")}</div>
                   <div style="margin-top:8px;"><b>Copy</b>: ${esc(copy?.headline || "-")}</div>
@@ -931,7 +1089,7 @@ def _dashboard_html() -> str:
                 </article>
               `;
             }).join("");
-            return `<h3 style="margin-top:14px;">Variant Board</h3>${header}<div class="variant-board">${cards}</div>`;
+            return `<h3 style="margin-top:14px;">Variant Board</h3>${header}${filters}<div class="variant-board">${cards}</div>`;
           }
 
           function renderTimeline(run) {
@@ -2503,10 +2661,32 @@ def get_run_deliverables(run_id: str, db: Session = Depends(get_db)) -> Delivera
 
 
 @router.get("/runs/{run_id}/variants", response_model=VariantsResponse)
-def get_run_variants(run_id: str, db: Session = Depends(get_db)) -> VariantsResponse:
+def get_run_variants(
+    run_id: str,
+    status: str | None = Query(default=None),
+    review_status: str | None = Query(default=None),
+    quality: str | None = Query(default=None),
+    asset_type: str | None = Query(default=None),
+    generation_status: str | None = Query(default=None),
+    compliance: str | None = Query(default=None),
+    min_score: float | None = Query(default=None),
+    q: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> VariantsResponse:
     try:
         get_run(db, run_id)
-        data = run_variants(db, run_id)
+        data = run_variants(
+            db,
+            run_id,
+            status=status,
+            review_status=review_status,
+            quality=quality,
+            asset_type=asset_type,
+            generation_status=generation_status,
+            compliance=compliance,
+            min_score=min_score,
+            q=q,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return VariantsResponse(

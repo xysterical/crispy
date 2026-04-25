@@ -106,8 +106,22 @@ def test_run_deliverables_and_variants_endpoints(client):
     assert len(variants_payload["ranked"]) > 0
     assert len(variants_payload["items"]) == 8
     assert variants_payload["summary"]["winner_count"] == 1
+    assert variants_payload["summary"]["filtered_count"] == 8
+    assert variants_payload["summary"]["quality_flag_counts"]["winner"] == 1
     assert variants_payload["items"][0]["assets"]
     assert variants_payload["items"][0]["scores"]
+    assert variants_payload["items"][0]["quality_summary"]["required_asset_types"]
+
+    winner_variants = client.get(f"/runs/{run_id}/variants", params={"quality": "winner"})
+    assert winner_variants.status_code == 200
+    winner_payload = winner_variants.json()
+    assert winner_payload["summary"]["filtered_count"] == 1
+    assert len(winner_payload["items"]) == 1
+    assert winner_payload["items"][0]["is_winner"] is True
+
+    high_score_variants = client.get(f"/runs/{run_id}/variants", params={"min_score": 1})
+    assert high_score_variants.status_code == 200
+    assert high_score_variants.json()["items"]
 
     deliverables = client.get(f"/runs/{run_id}/deliverables")
     assert deliverables.status_code == 200
