@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 
 from app.providers.llm import (
+    GeneratedVideo,
     ImageGenRequest,
     MultimodalChatRequest,
     ProviderRegistry,
@@ -98,6 +99,33 @@ class AgentsRuntime:
             extra=image_runtime.get("extra") or runtime.get("extra"),
         )
         return result, provider_name, model_name
+
+    def _generate_video_submit_only(
+        self,
+        *,
+        fallback_provider: str,
+        fallback_model: str,
+        prompt: str,
+        size: str,
+        resolution: str,
+        duration_seconds: int,
+        runtime_config: dict | None,
+    ):
+        runtime = runtime_config or {}
+        video_runtime = dict(runtime.get("video") or {})
+        video_extra = dict(video_runtime.get("extra") or runtime.get("extra") or {})
+        video_extra["submit_only"] = True
+        video_runtime["extra"] = video_extra
+        submit_runtime = {**runtime, "video": video_runtime}
+        return self._generate_video(
+            fallback_provider=fallback_provider,
+            fallback_model=fallback_model,
+            prompt=prompt,
+            size=size,
+            resolution=resolution,
+            duration_seconds=duration_seconds,
+            runtime_config=submit_runtime,
+        )
 
     def _generate_video(
         self,
@@ -221,6 +249,21 @@ class AgentsRuntime:
                 return content, "url"
         return b"", "placeholder"
 
+    def _artifact_has_payload(self, uri: str | None, min_bytes: int = 1024) -> bool:
+        if not uri:
+            return False
+        path = Path(uri)
+        return path.exists() and path.is_file() and path.stat().st_size > min_bytes
+
+    def _leash_physical_constraints(self) -> str:
+        return (
+            "Hard visual constraints for dog leash realism: the leash must be one continuous visible strap or rope "
+            "from the handler's hand to the dog collar or harness clip; the clip must be fully attached to a collar "
+            "or harness D-ring; do not show a floating clip, missing strap segment, disconnected leash, broken leash, "
+            "impossible attachment point, extra duplicate leash, malformed dog anatomy, or cropped detail that hides "
+            "the connection logic."
+        )
+
     def run_intake(
         self,
         run_id: str,
@@ -282,8 +325,12 @@ class AgentsRuntime:
                     media_summary = f"media_analysis_failed: {exc}"
 
         prompt = (
-            f"Normalize intake payload for creative generation. payload={payload}. "
-            f"asset_media_summary={media_summary}"
+            "Normalize this product intake for ad creative generation in concise, execution-ready bullets. "
+            f"product_name={intake.product_name}; market={intake.market}; locale={intake.locale}; "
+            f"category_tags={intake.category_tags}; business_context={intake.business_context}; "
+            f"manual_research_brief={intake.manual_research_brief}; "
+            f"uploaded_assets={{'sku_count': {len(intake.sku_summary)}, 'image_count': {len(intake.image_references)}, "
+            f"'video_count': {len(intake.video_references)}}}; asset_media_summary={media_summary[:1200]}"
         )
         summary, model_used, llm_cost = self._chat_complete(provider, model, prompt, runtime_config)
         estimated_cost += llm_cost
@@ -464,22 +511,27 @@ class AgentsRuntime:
             image_model = ""
             image_provider = ""
             error_text = None
+            existing_image_path = self.media.settings.assets_dir / run_id / f"copy_image_{idx + 1}.png"
             try:
-                image_result, image_provider, image_model = self._generate_image(
-                    fallback_provider=provider,
-                    fallback_model=model,
-                    prompt=image_prompt,
-                    size=image_size,
-                    runtime_config=runtime_config,
-                )
-                estimated_cost += image_result.estimated_cost
-                image_models_used.add(image_result.model_used or image_model)
-                selected = image_result.images[0] if image_result.images else None
-                if selected:
-                    image_bytes, image_source = self._materialize_generated_image(selected)
+                if existing_image_path.exists() and existing_image_path.stat().st_size > 1024:
+                    image_uri = str(existing_image_path)
+                    image_source = "reused_existing"
                 else:
-                    image_bytes, image_source = decode_placeholder_png(), "placeholder"
-                image_uri = self.media.write_binary_artifact(run_id, f"copy_image_{idx + 1}.png", image_bytes)
+                    image_result, image_provider, image_model = self._generate_image(
+                        fallback_provider=provider,
+                        fallback_model=model,
+                        prompt=image_prompt,
+                        size=image_size,
+                        runtime_config=runtime_config,
+                    )
+                    estimated_cost += image_result.estimated_cost
+                    image_models_used.add(image_result.model_used or image_model)
+                    selected = image_result.images[0] if image_result.images else None
+                    if selected:
+                        image_bytes, image_source = self._materialize_generated_image(selected)
+                    else:
+                        image_bytes, image_source = decode_placeholder_png(), "placeholder"
+                    image_uri = self.media.write_binary_artifact(run_id, f"copy_image_{idx + 1}.png", image_bytes)
             except Exception as exc:
                 error_text = str(exc)
                 image_uri = self.media.write_binary_artifact(run_id, f"copy_image_{idx + 1}.png", decode_placeholder_png())
@@ -527,33 +579,56 @@ class AgentsRuntime:
         variant_set: VariantSet,
         *,
         intake: ProductIntake | None,
+        business_context: dict | None = None,
         provider: str,
         model: str,
         runtime_config: dict | None = None,
     ) -> StageOutput:
+        business_context = business_context or {}
         media_summary = ""
         if intake and intake.asset_media_summary:
             media_summary = intake.asset_media_summary
+        product_name = intake.product_name if intake else str(business_context.get("product_name") or "the product")
+        value_props_raw = business_context.get("key_value_props") or business_context.get("value_props") or []
+        if isinstance(value_props_raw, str):
+            value_props = [value_props_raw]
+        else:
+            value_props = [str(item) for item in value_props_raw if str(item).strip()]
+        if not value_props:
+            value_props = ["reflective visibility", "comfortable control", "outdoor-ready durability"]
+        audience_raw = business_context.get("target_audience") or business_context.get("audience") or []
+        if isinstance(audience_raw, str):
+            audience = audience_raw
+        elif audience_raw:
+            audience = ", ".join(str(item) for item in audience_raw[:3])
+        else:
+            audience = "urban dog owners and weekend trail walkers"
+        cta = str(business_context.get("primary_cta") or "Shop Now")
         prompt = (
             "Generate video hooks and scripts with the product context. "
+            f"product={product_name}, audience={audience}, value_props={value_props}, "
             f"media_summary={media_summary}, variants={variant_set.model_dump()}"
         )
         _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         scripts = []
         for item in variant_set.variants:
+            primary_value = value_props[(len(scripts)) % len(value_props)]
+            hook_base = item.hook or item.angle or primary_value
             scripts.append(
                 VideoScriptItem(
                     variant_id=item.variant_id,
-                    hook=f"{item.variant_id}: Stop wasting 20 minutes on pet cleanup.",
+                    hook=f"{item.variant_id}: Safer-feeling walks start with {primary_value}.",
                     script=(
-                        "Hook scene -> problem scene -> solution demo -> before/after proof -> CTA. "
-                        f"Variant message: {item.message}"
+                        f"Open on a real dog walk with {product_name} clipped to a collar or harness. "
+                        f"Show the leash handle, quick clip, and reflective detail in close-up. "
+                        f"Cut to {audience} using it on a sidewalk or trail while keeping the dog close without exaggerated claims. "
+                        f"End with {cta}. Variant hook: {hook_base}. Variant message: {item.message}"
                     ),
                     shot_list=[
-                        "messy problem shot",
-                        "quick product usage shot",
-                        "clean result shot",
-                        "cta close shot",
+                        "vertical hook shot of a medium or large dog starting a walk with the leash visible",
+                        "close-up of padded handle, nylon strap, and quick clip in the owner's hand",
+                        "outdoor walking demo showing calm control and reflective detail without safety guarantees",
+                        f"product-forward CTA end frame: {cta}",
                     ],
                 )
             )
@@ -573,21 +648,72 @@ class AgentsRuntime:
         *,
         provider: str,
         model: str,
+        creative_specs: dict | None = None,
         runtime_config: dict | None = None,
     ) -> StageOutput:
+        creative_specs = creative_specs or {}
+        image_size = str(creative_specs.get("video_size") or creative_specs.get("image_size") or "9:16")
         prompt = f"Create storyboard frames from scripts: {script_pack.model_dump()}"
-        _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        estimated_cost = 0.0
+        error_text = None
+        try:
+            _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        except Exception as exc:
+            model_used = f"{provider}/{model}:storyboard_text_unavailable"
+            error_text = str(exc)
         frames: list[dict] = []
         artifacts: list[dict] = []
         for script in script_pack.scripts:
             for idx in range(3):
-                frame_uri = self.media.reserve_binary_artifact(run_id, f"{script.variant_id}_storyboard_{idx + 1}.png")
+                shot = script.shot_list[idx] if idx < len(script.shot_list) else script.hook
+                frame_prompt = (
+                    f"Create a realistic vertical storyboard frame for a TikTok dog leash ad. "
+                    f"Variant {script.variant_id}. Shot: {shot}. Hook: {script.hook}. "
+                    "Use a clean previsualization style suitable for human review before video generation. "
+                    "No text overlay. Product-forward composition. "
+                    f"{self._leash_physical_constraints()}"
+                )
+                source = "placeholder"
+                image_provider = ""
+                image_model = ""
+                frame_error = error_text
+                try:
+                    image_result, image_provider, image_model = self._generate_image(
+                        fallback_provider=provider,
+                        fallback_model=model,
+                        prompt=frame_prompt,
+                        size=image_size,
+                        runtime_config=runtime_config,
+                    )
+                    estimated_cost += image_result.estimated_cost
+                    selected = image_result.images[0] if image_result.images else None
+                    if selected:
+                        frame_bytes, source = self._materialize_generated_image(selected)
+                    else:
+                        frame_bytes, source = decode_placeholder_png(), "placeholder"
+                    frame_uri = self.media.write_binary_artifact(
+                        run_id,
+                        f"{script.variant_id}_storyboard_{idx + 1}.png",
+                        frame_bytes,
+                    )
+                    if source != "placeholder":
+                        frame_error = None
+                except Exception as exc:
+                    frame_error = str(exc)
+                    frame_uri = self.media.write_binary_artifact(
+                        run_id,
+                        f"{script.variant_id}_storyboard_{idx + 1}.png",
+                        decode_placeholder_png(),
+                    )
                 frame = {
                     "variant_id": script.variant_id,
                     "frame_id": f"{script.variant_id}_F{idx + 1}",
-                    "prompt": f"Storyboard frame {idx + 1} for {script.variant_id}",
+                    "prompt": frame_prompt,
                     "image_uri": frame_uri,
-                    "source": "placeholder",
+                    "source": source,
+                    "image_provider": image_provider,
+                    "image_model": image_model,
+                    "error": frame_error,
                 }
                 frames.append(frame)
                 artifacts.append({"type": "storyboard_frame", "uri": frame_uri, "payload": frame})
@@ -610,6 +736,7 @@ class AgentsRuntime:
         provider: str,
         model: str,
         runtime_config: dict | None = None,
+        on_video_asset=None,
     ) -> StageOutput:
         creative_specs = creative_specs or {}
         video_size = str(creative_specs.get("video_size") or "9:16")
@@ -625,30 +752,54 @@ class AgentsRuntime:
                 "Generate a short social ad video clip based on script. "
                 f"Hook: {script.hook}. Script: {script.script}. Shots: {script.shot_list}. "
                 f"Output should be brand-safe and product-forward, aspect ratio {video_size}, "
-                f"target resolution {resolution}, duration {duration_seconds} seconds."
+                f"target resolution {resolution}, duration {duration_seconds} seconds. "
+                f"{self._leash_physical_constraints()} Reject any frame where the leash is visually broken, "
+                "partially missing, or attached without a logical continuous strap."
             )
             source = "placeholder"
             error_text = None
             model_used = ""
             provider_used = ""
+            generation_status = None
+            external_task_id = None
+            result_url = None
+            raw_response: dict = {}
+            video_uri = ""
+            existing_video_path = self.media.settings.assets_dir / run_id / f"{script.variant_id}_sample.mp4"
             try:
-                video_result, provider_used, model_used = self._generate_video(
-                    fallback_provider=provider,
-                    fallback_model=model,
-                    prompt=video_prompt,
-                    size=video_size,
-                    resolution=resolution,
-                    duration_seconds=duration_seconds,
-                    runtime_config=runtime_config,
-                )
-                estimated_cost += video_result.estimated_cost
-                selected = video_result.videos[0] if video_result.videos else None
-                if selected:
-                    video_bytes, source = self._materialize_generated_video(selected)
+                if self._artifact_has_payload(str(existing_video_path)):
+                    video_uri = str(existing_video_path)
+                    source = "reused_existing"
+                    generation_status = "completed"
                 else:
-                    video_bytes, source = b"", "placeholder"
-                video_uri = self.media.write_binary_artifact(run_id, f"{script.variant_id}_sample.mp4", video_bytes)
-                video_models_used.add(video_result.model_used or model_used)
+                    video_result, provider_used, model_used = self._generate_video_submit_only(
+                        fallback_provider=provider,
+                        fallback_model=model,
+                        prompt=video_prompt,
+                        size=video_size,
+                        resolution=resolution,
+                        duration_seconds=duration_seconds,
+                        runtime_config=runtime_config,
+                    )
+                    estimated_cost += video_result.estimated_cost
+                    selected = video_result.videos[0] if video_result.videos else None
+                    external_task_id = video_result.task_id
+                    generation_status = video_result.status
+                    raw_response = video_result.raw_response or {}
+                    if selected:
+                        external_task_id = selected.task_id or external_task_id
+                        generation_status = selected.status or generation_status
+                        result_url = selected.url
+                        raw_response = selected.raw_response or raw_response
+                    if selected and (selected.url or selected.b64_data):
+                        video_bytes, source = self._materialize_generated_video(selected)
+                        video_uri = self.media.write_binary_artifact(run_id, f"{script.variant_id}_sample.mp4", video_bytes)
+                    elif external_task_id:
+                        source = "external_task_pending"
+                        video_uri = self.media.reserve_binary_artifact(run_id, f"{script.variant_id}_sample.mp4")
+                    else:
+                        video_uri = self.media.write_binary_artifact(run_id, f"{script.variant_id}_sample.mp4", b"")
+                    video_models_used.add(video_result.model_used or model_used)
             except Exception as exc:
                 error_text = str(exc)
                 video_uri = self.media.reserve_binary_artifact(run_id, f"{script.variant_id}_sample.mp4")
@@ -660,6 +811,15 @@ class AgentsRuntime:
                 "video_model": model_used,
                 "error": error_text,
                 "prompt": video_prompt,
+                "external_task_id": external_task_id,
+                "generation_status": generation_status,
+                "result_url": result_url,
+                "raw_response": raw_response,
+                "quality_constraints": {
+                    "leash_connection_required": True,
+                    "reject_missing_or_floating_clip": True,
+                    "reject_disconnected_or_cropped_leash": True,
+                },
             }
             videos.append(VideoAsset.model_validate(video_payload))
             artifacts.append(
@@ -669,6 +829,8 @@ class AgentsRuntime:
                     "payload": video_payload,
                 }
             )
+            if on_video_asset:
+                on_video_asset(video_payload)
         bundle = VideoBundle(videos=videos)
         bundle_payload = {"videos": [artifact["payload"] for artifact in artifacts if artifact["type"] == "generated_video"]}
         uri = self.media.write_text_artifact(run_id, "video_bundle.json", bundle.model_dump_json(indent=2))
@@ -697,13 +859,18 @@ class AgentsRuntime:
         _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         copy_by_variant = {item.variant_id: item for item in copy_bundle.copy_variants}
         video_by_variant = {item.variant_id: item for item in video_bundle.videos}
+        image_by_variant = {item.variant_id: item for item in copy_bundle.image_assets}
         ranked: list[RankedVariant] = []
         for item in variant_set.variants:
             copy = copy_by_variant.get(item.variant_id)
             script = next((x for x in script_pack.scripts if x.variant_id == item.variant_id), None)
+            image = image_by_variant.get(item.variant_id)
+            video = video_by_variant.get(item.variant_id)
+            has_valid_image = self._artifact_has_payload(image.uri if image else None)
+            has_valid_video = self._artifact_has_payload(video.video_uri if video else None)
             hook_strength = min(100.0, 55.0 + len(item.hook) * 0.35)
             clarity = min(100.0, 50.0 + len((copy.primary_text if copy else "")) * 0.28)
-            video_fit = 72.0 if video_by_variant.get(item.variant_id) else 40.0
+            generation_fit = 88.0 if has_valid_video else 82.0 if has_valid_image else 25.0
             compliance = 90.0
             compliance_risks: list[str] = []
             compliance_reasons: list[str] = []
@@ -713,11 +880,14 @@ class AgentsRuntime:
                 compliance_reasons.append("Detected prohibited cure-style claim in script.")
             ai_naturalness = 86.0
             total = round(
-                hook_strength * 0.28 + clarity * 0.22 + video_fit * 0.20 + compliance * 0.20 + ai_naturalness * 0.10,
+                hook_strength * 0.24 + clarity * 0.20 + generation_fit * 0.26 + compliance * 0.20 + ai_naturalness * 0.10,
                 2,
             )
             level = ComplianceLevel.LOW if compliance >= 80 else ComplianceLevel.HIGH
-            recommended_action = "approve_variant" if total >= 70 and level == ComplianceLevel.LOW else "manual_review" if level == ComplianceLevel.LOW else "request_regeneration"
+            if not (has_valid_image or has_valid_video):
+                recommended_action = "request_regeneration"
+            else:
+                recommended_action = "approve_variant" if total >= 70 and level == ComplianceLevel.LOW else "manual_review" if level == ComplianceLevel.LOW else "request_regeneration"
             ranked.append(
                 RankedVariant(
                     variant_id=item.variant_id,
@@ -725,14 +895,14 @@ class AgentsRuntime:
                     sub_scores={
                         "hook_strength": round(hook_strength, 2),
                         "clarity": round(clarity, 2),
-                        "video_fit": round(video_fit, 2),
+                        "generation_fit": round(generation_fit, 2),
                         "compliance": round(compliance, 2),
                         "ai_naturalness": round(ai_naturalness, 2),
                     },
                     compliance_level=level,
                     reasons=[
                         f"angle={item.angle}",
-                        "balanced copy/video quality" if total >= 60 else "needs stronger creative contrast",
+                        "valid generated media available" if has_valid_image or has_valid_video else "generated media missing or placeholder",
                     ],
                     compliance_risks=compliance_risks,
                     compliance_reasons=compliance_reasons or ["No major compliance issues detected."],
@@ -756,7 +926,7 @@ class AgentsRuntime:
             sub_scores=ScoreBreakdown(
                 attraction=winner.sub_scores.get("hook_strength", 50) if winner else 50,
                 clarity=winner.sub_scores.get("clarity", 50) if winner else 50,
-                brand_alignment=winner.sub_scores.get("video_fit", 50) if winner else 50,
+                brand_alignment=winner.sub_scores.get("generation_fit", 50) if winner else 50,
                 compliance=winner.sub_scores.get("compliance", 50) if winner else 50,
                 ai_naturalness=winner.sub_scores.get("ai_naturalness", 50) if winner else 50,
             ),
@@ -769,7 +939,7 @@ class AgentsRuntime:
         forecast = ConversionForecast(
             score_0_100=scorecard.total_score,
             confidence_0_1=0.7 if scorecard.compliance_level == ComplianceLevel.LOW else 0.35,
-            drivers=["hook_strength", "clarity", "video_fit", "compliance"],
+            drivers=["hook_strength", "clarity", "generation_fit", "compliance"],
             recommended_action="approve_for_launch_test" if scorecard.total_score >= 65 else "iterate_new_variants",
         )
         evaluation = EvaluationResult(

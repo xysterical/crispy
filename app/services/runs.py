@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import UTC, datetime
 import json
+from pathlib import Path
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -423,6 +424,30 @@ def _variant_idempotency_key(stage_name: str, asset_type: str, variant_id: str, 
     return base
 
 
+def _uri_has_payload(uri: str | None, min_bytes: int = 1024) -> bool:
+    if not uri:
+        return False
+    path = Path(uri)
+    return path.exists() and path.is_file() and path.stat().st_size > min_bytes
+
+
+def _generated_asset_failure(payload: dict, uri: str | None) -> tuple[str | None, str | None]:
+    error = payload.get("error")
+    if error:
+        return TaskFailureCategory.PROVIDER_ERROR.value, str(error)
+    status = str(payload.get("generation_status") or "").lower()
+    if status in {"failed", "cancelled", "canceled"}:
+        return TaskFailureCategory.PROVIDER_ERROR.value, f"provider task status={status}"
+    source = str(payload.get("source") or "").lower()
+    if source == "placeholder":
+        return TaskFailureCategory.PROVIDER_ERROR.value, "provider returned placeholder media"
+    if source == "external_task_pending":
+        return None, None
+    if uri and not _uri_has_payload(uri):
+        return TaskFailureCategory.PROVIDER_ERROR.value, "generated media file is empty or placeholder-sized"
+    return None, None
+
+
 def _upsert_run_variant(
     db: Session,
     *,
@@ -600,6 +625,7 @@ def _variant_library_sync(db: Session, run: PipelineRun, task: StageTask, output
             variant.status = VariantLifecycleStatus.GENERATED.value
         for image_payload in image_assets:
             variant = get_run_variant(db, run.id, image_payload["variant_id"])
+            failure_category, error_message = _generated_asset_failure(image_payload, image_payload.get("uri"))
             _upsert_variant_asset(
                 db,
                 variant=variant,
@@ -612,6 +638,8 @@ def _variant_library_sync(db: Session, run: PipelineRun, task: StageTask, output
                 prompt_summary=(image_payload.get("prompt") or "")[:240],
                 payload=image_payload,
                 idempotency_key=_variant_idempotency_key(stage_name, "image", image_payload["variant_id"]),
+                failure_category=failure_category,
+                error_message=error_message,
             )
         return
 
@@ -637,6 +665,7 @@ def _variant_library_sync(db: Session, run: PipelineRun, task: StageTask, output
     if stage_name == "storyboard_image_generation":
         for frame_payload in output_payload.get("frames", []):
             variant = get_run_variant(db, run.id, frame_payload.get("variant_id", ""))
+            failure_category = TaskFailureCategory.PROVIDER_ERROR.value if frame_payload.get("error") else None
             _upsert_variant_asset(
                 db,
                 variant=variant,
@@ -644,10 +673,12 @@ def _variant_library_sync(db: Session, run: PipelineRun, task: StageTask, output
                 stage_name=stage_name,
                 asset_type="storyboard_frame",
                 uri=frame_payload.get("image_uri"),
-                provider_name=task.metadata_json.get("resolved_api", {}).get("provider_name"),
-                model_name=task.metadata_json.get("resolved_api", {}).get("model_name"),
+                provider_name=frame_payload.get("image_provider") or task.metadata_json.get("resolved_api", {}).get("provider_name"),
+                model_name=frame_payload.get("image_model") or task.metadata_json.get("resolved_api", {}).get("model_name"),
                 prompt_summary=(frame_payload.get("prompt") or "")[:240],
                 payload=frame_payload,
+                failure_category=failure_category,
+                error_message=frame_payload.get("error"),
                 idempotency_key=_variant_idempotency_key(
                     stage_name,
                     "storyboard_frame",
@@ -660,6 +691,7 @@ def _variant_library_sync(db: Session, run: PipelineRun, task: StageTask, output
     if stage_name == "video_generation":
         for video_payload in output_payload.get("videos", []):
             variant = get_run_variant(db, run.id, video_payload.get("variant_id", ""))
+            failure_category, error_message = _generated_asset_failure(video_payload, video_payload.get("video_uri"))
             _upsert_variant_asset(
                 db,
                 variant=variant,
@@ -672,6 +704,8 @@ def _variant_library_sync(db: Session, run: PipelineRun, task: StageTask, output
                 prompt_summary=f"video asset for {video_payload.get('variant_id', '')}",
                 payload=video_payload,
                 idempotency_key=_variant_idempotency_key(stage_name, "video", video_payload.get("variant_id", "")),
+                failure_category=failure_category,
+                error_message=error_message,
             )
             variant.status = VariantLifecycleStatus.GENERATED.value
         return
@@ -681,6 +715,15 @@ def _variant_library_sync(db: Session, run: PipelineRun, task: StageTask, output
         forecast = evaluation.get("forecast") or {}
         ranked = evaluation.get("ranked_variants") or []
         winner = ((output_payload.get("selected_deliverables") or {}).get("winner_variant_id")) or None
+        manual_winner = db.scalar(
+            select(RunVariant).where(
+                RunVariant.run_id == run.id,
+                RunVariant.is_winner.is_(True),
+                RunVariant.review_status == "winner",
+            )
+        )
+        if manual_winner:
+            winner = manual_winner.variant_id
         for ranked_payload in ranked:
             variant = get_run_variant(db, run.id, ranked_payload.get("variant_id", ""))
             _upsert_variant_score(
@@ -816,21 +859,57 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
                 run.id,
                 variants,
                 intake=intake,
+                business_context=task.input_payload.get("business_context", {}),
                 provider=provider_name,
                 model=model_name,
                 runtime_config=runtime_config,
             )
         elif task.stage_name == "storyboard_image_generation":
             scripts = VideoScriptPack.model_validate(task.input_payload["video_scripts"])
+            storyboard_runtime_config = runtime_config
+            if not ((storyboard_runtime_config.get("image") or {}).get("api_base_url")):
+                image_resolved = resolve_agent_config(
+                    db,
+                    agent_name="copy_image_agent",
+                    run_provider=run.model_provider,
+                    run_model=run.model_name,
+                )
+                image_runtime = resolve_agent_runtime(image_resolved).get("image") or {}
+                storyboard_runtime_config = {**runtime_config, "image": image_runtime}
+                task.metadata_json = {
+                    **(task.metadata_json or {}),
+                    "storyboard_image_config_source": "copy_image_agent",
+                }
             output = runtime.run_storyboard_image_generation(
                 run.id,
                 scripts,
+                creative_specs=task.input_payload.get("creative_specs", {}),
                 provider=provider_name,
                 model=model_name,
-                runtime_config=runtime_config,
+                runtime_config=storyboard_runtime_config,
             )
         elif task.stage_name == "video_generation":
             scripts = VideoScriptPack.model_validate(task.input_payload["video_scripts"])
+            def persist_video_asset(video_payload: dict) -> None:
+                current_payload = task.output_payload or {"videos": []}
+                current_videos = [
+                    item for item in current_payload.get("videos", []) if item.get("variant_id") != video_payload.get("variant_id")
+                ]
+                current_videos.append(video_payload)
+                task.output_payload = {"videos": current_videos}
+                db.add(
+                    Artifact(
+                        run_id=run.id,
+                        stage_name=task.stage_name,
+                        artifact_type="generated_video",
+                        uri=video_payload.get("video_uri"),
+                        payload=video_payload,
+                    )
+                )
+                _variant_library_sync(db, run, task, {"videos": [video_payload]})
+                run.updated_at = utcnow()
+                db.commit()
+
             output = runtime.run_video_generation(
                 run.id,
                 scripts,
@@ -838,6 +917,7 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
                 provider=provider_name,
                 model=model_name,
                 runtime_config=runtime_config,
+                on_video_asset=persist_video_asset,
             )
         elif task.stage_name == "evaluation_selection":
             variants = VariantSet.model_validate(task.input_payload["variants"])
@@ -861,10 +941,13 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
         task.model_used = output.model_used
         task.completed_at = utcnow()
         task.failure_category = None
+        task.error_message = None
         run.budget_used = float(run.budget_used or 0.0) + output.estimated_cost
         run.updated_at = utcnow()
 
         for artifact in output.artifacts:
+            if task.stage_name == "video_generation" and artifact["type"] == "generated_video":
+                continue
             db.add(
                 Artifact(
                     run_id=run.id,
@@ -1032,6 +1115,64 @@ def run_variants(db: Session, run_id: str) -> dict:
         "items": [_serialize_run_variant(db, row) for row in rows],
         "summary": _variant_summary(db, run_id),
     }
+
+
+def refresh_video_task_assets(db: Session, run_id: str) -> dict:
+    run = get_run(db, run_id)
+    config = resolve_agent_config(
+        db,
+        agent_name="video_generation_agent",
+        run_provider=run.model_provider,
+        run_model=run.model_name,
+    )
+    runtime_config = resolve_agent_runtime(config)
+    video_runtime = runtime_config.get("video") or {}
+    provider_name = video_runtime.get("provider_name") or config.get("video_provider_name") or config.get("provider_name")
+    model_name = video_runtime.get("model_name") or config.get("video_model_name") or config.get("model_name")
+    provider = runtime.providers.get(provider_name)
+    refreshed = 0
+    completed = 0
+    assets = db.scalars(
+        select(VariantAsset).where(
+            VariantAsset.run_id == run_id,
+            VariantAsset.asset_type == "video",
+        )
+    ).all()
+    for asset in assets:
+        payload = dict(asset.payload or {})
+        task_id = payload.get("external_task_id")
+        status = str(payload.get("generation_status") or "").lower()
+        if not task_id or status in {"completed", "succeeded", "success"}:
+            continue
+        result = provider.poll_video_task(
+            task_id=task_id,
+            model=model_name,
+            api_base_url=video_runtime.get("api_base_url") or runtime_config.get("api_base_url"),
+            api_key=video_runtime.get("api_key") or runtime_config.get("api_key"),
+            extra=video_runtime.get("extra") or runtime_config.get("extra"),
+        )
+        selected = result.videos[0] if result.videos else None
+        refreshed += 1
+        payload["generation_status"] = result.status or (selected.status if selected else None) or payload.get("generation_status")
+        payload["raw_response"] = result.raw_response or (selected.raw_response if selected else {}) or payload.get("raw_response") or {}
+        if selected and selected.url:
+            payload["result_url"] = selected.url
+        if selected and (selected.url or selected.b64_data):
+            video_bytes, source = runtime._materialize_generated_video(selected)
+            if video_bytes:
+                filename = f"{payload.get('variant_id') or asset.variant.variant_id}_sample.mp4"
+                uri = runtime.media.write_binary_artifact(run_id, filename, video_bytes)
+                payload["video_uri"] = uri
+                payload["source"] = source
+                payload["generation_status"] = "completed"
+                asset.uri = uri
+                completed += 1
+        failure_category, error_message = _generated_asset_failure(payload, payload.get("video_uri"))
+        asset.payload = payload
+        asset.failure_category = failure_category
+        asset.error_message = error_message
+    db.flush()
+    return {"refreshed": refreshed, "completed": completed, "summary": _variant_summary(db, run_id)}
 
 
 def review_variant(

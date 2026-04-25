@@ -134,6 +134,9 @@ class GeneratedVideo:
     url: str | None = None
     b64_data: str | None = None
     mime_type: str = "video/mp4"
+    task_id: str | None = None
+    status: str | None = None
+    raw_response: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -151,6 +154,9 @@ class VideoGenResult:
     model_used: str
     videos: list[GeneratedVideo] = field(default_factory=list)
     estimated_cost: float = 0.0
+    task_id: str | None = None
+    status: str | None = None
+    raw_response: dict[str, Any] = field(default_factory=dict)
 
 
 class LlmProvider:
@@ -178,6 +184,17 @@ class LlmProvider:
         self,
         request: VideoGenRequest,
         *,
+        api_base_url: str | None = None,
+        api_key: str | None = None,
+        extra: dict | None = None,
+    ) -> VideoGenResult:
+        raise NotImplementedError
+
+    def poll_video_task(
+        self,
+        *,
+        task_id: str,
+        model: str,
         api_base_url: str | None = None,
         api_key: str | None = None,
         extra: dict | None = None,
@@ -246,6 +263,22 @@ class StubProvider(LlmProvider):
         extra: dict | None = None,
     ) -> VideoGenResult:
         return VideoGenResult(model_used=request.model, videos=[GeneratedVideo()], estimated_cost=0.0)
+
+    def poll_video_task(
+        self,
+        *,
+        task_id: str,
+        model: str,
+        api_base_url: str | None = None,
+        api_key: str | None = None,
+        extra: dict | None = None,
+    ) -> VideoGenResult:
+        return VideoGenResult(
+            model_used=model,
+            videos=[GeneratedVideo(task_id=task_id, status="unknown")],
+            task_id=task_id,
+            status="unknown",
+        )
 
 
 class OpenAICompatibleProvider(LlmProvider):
@@ -359,6 +392,17 @@ class OpenAICompatibleProvider(LlmProvider):
                 return task_id
         return None
 
+    def _extract_task_status(self, payload: dict[str, Any]) -> str | None:
+        data = payload.get("data")
+        if isinstance(data, dict):
+            status = data.get("status")
+            if isinstance(status, str) and status:
+                return status.lower()
+        status = payload.get("status")
+        if isinstance(status, str) and status:
+            return status.lower()
+        return None
+
     def _poll_task_result(
         self,
         *,
@@ -376,7 +420,7 @@ class OpenAICompatibleProvider(LlmProvider):
             time.sleep(first_poll_delay_seconds)
         deadline = time.time() + max_wait_seconds
         last_payload: dict[str, Any] = {}
-        while time.time() < deadline:
+        while True:
             with httpx.Client(timeout=45.0) as client:
                 for idx, url in enumerate(candidates):
                     try:
@@ -406,8 +450,9 @@ class OpenAICompatibleProvider(LlmProvider):
                         return payload
                     if status in {"pending", "processing", "running", "submitted", "queued"}:
                         break
+            if time.time() >= deadline:
+                return last_payload
             time.sleep(poll_seconds)
-        return last_payload
 
     def chat_complete(
         self,
@@ -485,6 +530,8 @@ class OpenAICompatibleProvider(LlmProvider):
                         raise RuntimeError(f"image task not completed: status={status}")
                 data = polled
         rows = data.get("data") or []
+        if not isinstance(rows, list):
+            rows = []
         images: list[GeneratedImage] = []
         for row in rows:
             if not isinstance(row, dict):
@@ -538,17 +585,26 @@ class OpenAICompatibleProvider(LlmProvider):
             headers=self._headers(api_key),
         )
         task_id = self._extract_task_id(data)
+        status = self._extract_task_status(data)
         if task_id:
-            polled = self._poll_task_result(base_url=api_base_url, task_id=task_id, headers=self._headers(api_key))
-            if isinstance(polled, dict) and polled:
-                task_data = polled.get("data")
-                if isinstance(task_data, dict):
-                    status = str(task_data.get("status") or "").lower()
-                    if status and status not in {"completed", "succeeded", "success"}:
-                        raise RuntimeError(f"video task not completed: status={status}")
-                data = polled
+            max_wait_seconds = int((extra or {}).get("poll_max_wait_seconds") or (extra or {}).get("video_poll_max_wait_seconds") or 45)
+            if not (extra or {}).get("submit_only"):
+                polled = self._poll_task_result(
+                    base_url=api_base_url,
+                    task_id=task_id,
+                    headers=self._headers(api_key),
+                    max_wait_seconds=max_wait_seconds,
+                )
+                if isinstance(polled, dict) and polled:
+                    status = self._extract_task_status(polled) or status
+                    task_data = polled.get("data")
+                    if isinstance(task_data, dict):
+                        status = str(task_data.get("status") or "").lower() or status
+                    data = polled
 
         rows = data.get("data") or []
+        if not isinstance(rows, list):
+            rows = []
         videos: list[GeneratedVideo] = []
         for row in rows:
             if not isinstance(row, dict):
@@ -558,14 +614,67 @@ class OpenAICompatibleProvider(LlmProvider):
                     url=_first_url(row.get("url")) or _first_url(row.get("video_url")) or _first_url(row.get("video_urls")),
                     b64_data=row.get("b64_data") or row.get("b64_json"),
                     mime_type=row.get("mime_type") or "video/mp4",
+                    task_id=task_id or row.get("task_id"),
+                    status=status,
+                    raw_response=row,
                 )
             )
         if not videos:
-            videos.append(GeneratedVideo())
+            videos.append(GeneratedVideo(task_id=task_id, status=status, raw_response=data))
         return VideoGenResult(
             model_used=str(data.get("model") or model_name),
             videos=videos,
             estimated_cost=0.0,
+            task_id=task_id,
+            status=status,
+            raw_response=data,
+        )
+
+    def poll_video_task(
+        self,
+        *,
+        task_id: str,
+        model: str,
+        api_base_url: str | None = None,
+        api_key: str | None = None,
+        extra: dict | None = None,
+    ) -> VideoGenResult:
+        if not api_base_url or not api_key:
+            return self._stub.poll_video_task(task_id=task_id, model=model, api_base_url=api_base_url, api_key=api_key, extra=extra)
+        model_name = "doubao-seedance-2.0" if model == "douban-seedance-2-0" else model
+        data = self._poll_task_result(
+            base_url=api_base_url,
+            task_id=task_id,
+            headers=self._headers(api_key),
+            max_wait_seconds=0,
+            first_poll_delay_seconds=0,
+        )
+        status = self._extract_task_status(data)
+        rows = data.get("data") or []
+        if not isinstance(rows, list):
+            rows = []
+        videos: list[GeneratedVideo] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            videos.append(
+                GeneratedVideo(
+                    url=_first_url(row.get("url")) or _first_url(row.get("video_url")) or _first_url(row.get("video_urls")),
+                    b64_data=row.get("b64_data") or row.get("b64_json"),
+                    mime_type=row.get("mime_type") or "video/mp4",
+                    task_id=task_id,
+                    status=status,
+                    raw_response=row,
+                )
+            )
+        if not videos:
+            videos.append(GeneratedVideo(task_id=task_id, status=status, raw_response=data))
+        return VideoGenResult(
+            model_used=str(data.get("model") or model_name),
+            videos=videos,
+            task_id=task_id,
+            status=status,
+            raw_response=data,
         )
 
 

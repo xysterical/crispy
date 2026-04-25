@@ -4,6 +4,7 @@ import json
 import mimetypes
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
@@ -70,6 +71,7 @@ from app.services.runs import (
     get_run,
     latest_scorecard,
     reject_stage,
+    refresh_video_task_assets,
     review_variant,
     run_deliverables,
     run_variants,
@@ -149,6 +151,20 @@ def _stage_task_summary(task: StageTask) -> str:
         return f"Evaluation complete: winner={winner}, ranked={len(ranked)}"
     keys = list(payload.keys())
     return f"Output keys: {', '.join(keys[:6])}"
+
+
+def _resolve_media_path(path: str) -> Path:
+    requested = Path(path).expanduser()
+    if not requested.is_absolute():
+        requested = (Path.cwd() / requested).resolve()
+    settings_path = get_settings().assets_dir.resolve()
+    try:
+        requested.relative_to(settings_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="path outside allowed assets directory") from exc
+    if not requested.exists() or not requested.is_file():
+        raise HTTPException(status_code=404, detail="asset file not found")
+    return requested
 
 
 def _serialize_data_source(database_url: str, active_url: str) -> DataSourceInfo:
@@ -381,6 +397,10 @@ def _dashboard_html() -> str:
             backdrop-filter: blur(4px);
           }
           .grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+          .top-grid { align-items: stretch; }
+          .top-grid > .card { height: 100%; }
+          .runs-panel { display: flex; flex-direction: column; min-height: 0; }
+          .runs-panel .table-wrap { flex: 1; min-height: 0; overflow: auto; }
           .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
           .table-wrap { overflow: auto; border-radius: 12px; border: 1px solid var(--line); }
           table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 620px; }
@@ -468,9 +488,26 @@ def _dashboard_html() -> str:
             width: 100%;
             border-radius: 10px;
             border: 1px solid #dce7e1;
-            object-fit: cover;
-            max-height: 220px;
+            object-fit: contain;
+            max-height: 520px;
             background:#f2f5fa;
+          }
+          .media-preview {
+            width: 100%;
+            border-radius: 10px;
+            border: 1px solid #dce7e1;
+            background:#f2f5fa;
+            display:block;
+          }
+          .media-preview.image {
+            object-fit: contain;
+            max-height: 520px;
+          }
+          .media-preview.video {
+            aspect-ratio: 9 / 16;
+            max-height: 520px;
+            object-fit: contain;
+            background:#050807;
           }
           .variant-board {
             display:grid;
@@ -549,8 +586,8 @@ def _dashboard_html() -> str:
               <div id="data-source-path" class="muted mono"></div>
             </div>
           </div>
-          <div class="grid">
-            <section class="card">
+          <div class="grid top-grid">
+            <section class="card runs-panel">
               <h2>Runs</h2>
               <div class="action-row">
                 <button onclick="refreshRuns()">Refresh</button>
@@ -688,6 +725,7 @@ def _dashboard_html() -> str:
             else hint.textContent = "Custom preset: fill image/video size, resolution, and duration manually.";
           }
           function mediaUrl(path){ return `/media?path=${encodeURIComponent(path || "")}`; }
+          function mediaViewUrl(path){ return `/media/view?path=${encodeURIComponent(path || "")}`; }
 
           async function api(path, options = {}) {
             const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
@@ -768,8 +806,8 @@ def _dashboard_html() -> str:
                 <article class="deliverable-card">
                   <div class="stage-title">Image</div>
                   ${image ? `
-                    <a href="${mediaUrl(image.uri)}" target="_blank">
-                      <img class="img-preview" src="${mediaUrl(image.uri)}" alt="generated image" />
+                    <a href="${mediaViewUrl(image.uri)}" target="_blank">
+                      <img class="media-preview image" src="${mediaUrl(image.uri)}" alt="generated image" />
                     </a>
                     <div class="muted">${esc(image.aspect_ratio || "1:1")} | ${esc(image.uri)}</div>
                   ` : '<div class="muted">No image winner yet.</div>'}
@@ -777,7 +815,8 @@ def _dashboard_html() -> str:
                 <article class="deliverable-card">
                   <div class="stage-title">Video</div>
                   ${video ? `
-                    <video controls class="img-preview" src="${mediaUrl(video.video_uri)}"></video>
+                    <a href="${mediaViewUrl(video.video_uri)}" target="_blank" class="muted">Open video</a>
+                    <video controls playsinline class="media-preview video" src="${mediaUrl(video.video_uri)}"></video>
                     <div class="muted">${esc(video.video_uri)}</div>
                   ` : '<div class="muted">No video winner yet.</div>'}
                 </article>
@@ -838,13 +877,19 @@ def _dashboard_html() -> str:
                   <div class="muted">${esc(copy?.primary_text || "-")}</div>
                   <div style="margin-top:8px;"><b>Image</b></div>
                   ${image ? `
-                    <a href="${mediaUrl(image.uri)}" target="_blank">
-                      <img class="img-preview" src="${mediaUrl(image.uri)}" alt="variant image" />
+                    <a href="${mediaViewUrl(image.uri)}" target="_blank">
+                      <img class="media-preview image" src="${mediaUrl(image.uri)}" alt="variant image" />
                     </a>
                   ` : '<div class="muted">No image asset.</div>'}
                   <div style="margin-top:8px;"><b>Script</b>: ${esc(script?.hook || "-")}</div>
                   <div class="muted">${esc(script?.script || "-")}</div>
                   <div class="muted" style="margin-top:4px;">storyboard frames: ${esc(storyboardCount)} | video: ${video ? esc(video.video_uri || "-") : "none"}</div>
+                  ${video?.video_uri ? `
+                    <div style="margin-top:8px;">
+                      <a href="${mediaViewUrl(video.video_uri)}" target="_blank" class="muted">Open video</a>
+                      <video controls playsinline class="media-preview video" src="${mediaUrl(video.video_uri)}"></video>
+                    </div>
+                  ` : ''}
                   <div style="margin-top:8px;">
                     <span class="pill">score: ${esc(evaluation?.total_score ?? "-")}</span>
                     <span class="pill">action: ${esc(evaluation?.recommended_action || "-")}</span>
@@ -1834,9 +1879,26 @@ def _assets_dashboard_html() -> str:
             width: 100%;
             border-radius: 10px;
             border: 1px solid #dce7e1;
-            object-fit: cover;
-            max-height: 220px;
+            object-fit: contain;
+            max-height: 360px;
             background:#f2f5fa;
+          }
+          .media-preview {
+            width: 100%;
+            border-radius: 10px;
+            border: 1px solid #dce7e1;
+            background:#f2f5fa;
+            display:block;
+          }
+          .media-preview.image {
+            object-fit: contain;
+            max-height: 420px;
+          }
+          .media-preview.video {
+            aspect-ratio: 9 / 16;
+            max-height: 420px;
+            object-fit: contain;
+            background:#050807;
           }
           .toolbar {
             display:flex;
@@ -1953,6 +2015,7 @@ def _assets_dashboard_html() -> str:
           let total = 0;
           function esc(v){ return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
           function mediaUrl(path){ return `/media?path=${encodeURIComponent(path || "")}`; }
+          function mediaViewUrl(path){ return `/media/view?path=${encodeURIComponent(path || "")}`; }
           function queryString(params){
             const q = new URLSearchParams();
             Object.entries(params).forEach(([k,v]) => {
@@ -1991,9 +2054,9 @@ def _assets_dashboard_html() -> str:
               const isImage = item.artifact_type.includes("image");
               const isVideo = item.artifact_type.includes("video") || item.uri.endsWith(".mp4");
               const media = isImage
-                ? `<a href="${mediaUrl(item.uri)}" target="_blank"><img class="img-preview" src="${mediaUrl(item.uri)}" alt="asset"/></a>`
+                ? `<a href="${mediaViewUrl(item.uri)}" target="_blank"><img class="media-preview image" src="${mediaUrl(item.uri)}" alt="asset"/></a>`
                 : isVideo
-                  ? `<video controls class="img-preview" src="${mediaUrl(item.uri)}"></video>`
+                  ? `<a href="${mediaViewUrl(item.uri)}" target="_blank" class="muted">Open video</a><video controls playsinline class="media-preview video" src="${mediaUrl(item.uri)}"></video>`
                   : `<div class="muted">No direct preview.</div>`;
               el.innerHTML = `
                 <div><span class="pill">${esc(item.artifact_type)}</span><span class="pill">${esc(item.pipeline_mode)}</span><span class="pill">${esc(item.product_code || "-")}</span></div>
@@ -2060,21 +2123,85 @@ def dashboard_select_data_source(payload: DataSourceSelectRequest) -> DataSource
 
 @router.get("/media")
 def media_file(path: str = Query(..., min_length=1)) -> FileResponse:
-    requested = Path(path).expanduser()
-    if not requested.is_absolute():
-        requested = (Path.cwd() / requested).resolve()
-    settings_path = get_settings().assets_dir.resolve()
-    try:
-        requested.relative_to(settings_path)
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail="path outside allowed assets directory") from exc
-    if not requested.exists() or not requested.is_file():
-        raise HTTPException(status_code=404, detail="asset file not found")
+    requested = _resolve_media_path(path)
     media_type = "application/octet-stream"
     guessed, _ = mimetypes.guess_type(str(requested))
     if guessed:
         media_type = guessed
     return FileResponse(path=str(requested), media_type=media_type)
+
+
+@router.get("/media/view", response_class=HTMLResponse)
+def media_view(path: str = Query(..., min_length=1)) -> str:
+    requested = _resolve_media_path(path)
+    media_type = mimetypes.guess_type(str(requested))[0] or "application/octet-stream"
+    media_src = f"/media?path={quote(str(requested), safe='')}"
+    title = requested.name
+    if media_type.startswith("image/"):
+        body = f'<img class="viewer-media image" src="{media_src}" alt="{title}" />'
+    elif media_type.startswith("video/"):
+        body = f'<video class="viewer-media video" src="{media_src}" controls playsinline autoplay muted></video>'
+    else:
+        body = f'<a href="{media_src}">Download {title}</a>'
+    return f"""
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>{title}</title>
+        <style>
+          html, body {{
+            margin: 0;
+            min-height: 100%;
+            background: #0b0f0d;
+            color: #eef6f1;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          }}
+          .viewer {{
+            min-height: 100vh;
+            display: grid;
+            grid-template-rows: auto 1fr;
+          }}
+          .bar {{
+            padding: 10px 14px;
+            border-bottom: 1px solid rgba(255,255,255,0.12);
+            font-size: 13px;
+            color: #b8c8c0;
+            overflow-wrap: anywhere;
+          }}
+          .stage {{
+            min-height: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 14px;
+            box-sizing: border-box;
+          }}
+          .viewer-media {{
+            max-width: calc(100vw - 28px);
+            max-height: calc(100vh - 62px);
+            object-fit: contain;
+            background: #050807;
+          }}
+          .viewer-media.image {{
+            width: auto;
+            height: auto;
+          }}
+          .viewer-media.video {{
+            width: auto;
+            height: auto;
+          }}
+        </style>
+      </head>
+      <body>
+        <main class="viewer">
+          <div class="bar">{title}</div>
+          <div class="stage">{body}</div>
+        </main>
+      </body>
+    </html>
+    """
 
 
 @router.get("/dashboard/agent-apis", response_class=HTMLResponse)
@@ -2303,6 +2430,17 @@ def get_run_variants(run_id: str, db: Session = Depends(get_db)) -> VariantsResp
         items=[RunVariantView(**item) for item in data.get("items", [])],
         summary=data.get("summary", {}),
     )
+
+
+@router.post("/runs/{run_id}/videos/refresh")
+def post_run_video_refresh(run_id: str, db: Session = Depends(get_db)) -> dict:
+    try:
+        result = refresh_video_task_assets(db, run_id)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return result
 
 
 @router.post("/runs/{run_id}/variants/{variant_id}/review", response_model=RunVariantView)
