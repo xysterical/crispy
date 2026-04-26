@@ -71,6 +71,7 @@ from app.services.runs import (
     get_run,
     latest_scorecard,
     reject_stage,
+    regenerate_variant_assets,
     refresh_async_assets,
     refresh_video_task_assets,
     review_variant,
@@ -936,6 +937,17 @@ def _dashboard_html() -> str:
             await selectRun(runId);
           }
 
+          async function requestVariantRegeneration(runId, variantId){
+            const targetStage = window.prompt("Target stage: copy_image_generation, video_scripting, storyboard_image_generation, or video_generation. Leave blank for default.", "");
+            if (targetStage === null) return;
+            const reason = window.prompt("Regeneration reason", "dashboard regeneration request");
+            if (reason === null) return;
+            await variantAction(runId, variantId, `/runs/${runId}/variants/${variantId}/regenerate`, {
+              reason: reason || "dashboard regeneration request",
+              target_stage: targetStage.trim() || null
+            });
+          }
+
           function renderVariantBoard(runId, variants){
             const allItems = variants?.items || [];
             const items = allItems.filter(variantMatchesOperationalFilters);
@@ -1084,7 +1096,7 @@ def _dashboard_html() -> str:
                     <button onclick="variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/review', {action:'reject_variant', comment:'rejected from dashboard'})">Reject</button>
                     <button onclick="variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/select', {shortlist:true, comment:'shortlisted from dashboard'})">Shortlist</button>
                     <button class="primary" onclick="variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/select', {winner:true, comment:'winner chosen from dashboard'})">Set Winner</button>
-                    <button onclick="variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/regenerate', {reason:'dashboard regeneration request'})">Regenerate</button>
+                    <button onclick="requestVariantRegeneration('${runId}', '${item.variant_id}')">Regenerate</button>
                   </div>
                 </article>
               `;
@@ -2786,13 +2798,12 @@ def post_variant_regenerate(
     db: Session = Depends(get_db),
 ) -> RunVariantView:
     try:
-        review_variant(
+        variant = regenerate_variant_assets(
             db,
             run_id=run_id,
             variant_id=variant_id,
-            action="request_regeneration",
-            comment=payload.reason,
-            metadata={"target_stage": payload.target_stage},
+            reason=payload.reason,
+            target_stage=payload.target_stage,
         )
         db.commit()
         data = next(item for item in run_variants(db, run_id)["items"] if item["variant_id"] == variant_id)

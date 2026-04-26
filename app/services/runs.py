@@ -47,6 +47,13 @@ from app.services.personas import get_persona
 
 runtime = AgentsRuntime()
 
+REGENERATABLE_STAGES = {
+    "copy_image_generation",
+    "video_scripting",
+    "storyboard_image_generation",
+    "video_generation",
+}
+
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
@@ -392,6 +399,39 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
     return base
 
 
+def _single_variant_set(db: Session, run_id: str, variant_id: str) -> VariantSet:
+    variants = VariantSet.model_validate(_stage_output_optional(db, run_id, "divergence"))
+    selected = [item for item in variants.variants if item.variant_id == variant_id]
+    if not selected:
+        raise ValueError(f"variant {variant_id} not found in divergence output")
+    return VariantSet(variants=selected)
+
+
+def _single_script_pack(db: Session, run_id: str, variant_id: str) -> VideoScriptPack:
+    scripts = VideoScriptPack.model_validate(_stage_output_optional(db, run_id, "video_scripting"))
+    selected = [item for item in scripts.scripts if item.variant_id == variant_id]
+    if not selected:
+        raise ValueError(f"video script for {variant_id} is required before regeneration")
+    return VideoScriptPack(scripts=selected)
+
+
+def _merge_stage_payload(stage_name: str, existing: dict, new_payload: dict) -> dict:
+    existing = dict(existing or {})
+    if stage_name == "copy_image_generation":
+        return {
+            **existing,
+            "copy_variants": [*(existing.get("copy_variants") or []), *(new_payload.get("copy_variants") or [])],
+            "image_assets": [*(existing.get("image_assets") or []), *(new_payload.get("image_assets") or [])],
+        }
+    if stage_name == "video_scripting":
+        return {**existing, "scripts": [*(existing.get("scripts") or []), *(new_payload.get("scripts") or [])]}
+    if stage_name == "storyboard_image_generation":
+        return {**existing, "frames": [*(existing.get("frames") or []), *(new_payload.get("frames") or [])]}
+    if stage_name == "video_generation":
+        return {**existing, "videos": [*(existing.get("videos") or []), *(new_payload.get("videos") or [])]}
+    return {**existing, **new_payload}
+
+
 def _persona_snapshots(db: Session, agent_names: list[str]) -> dict:
     snapshots: dict = {}
     for agent_name in agent_names:
@@ -588,7 +628,25 @@ def _upsert_variant_score(
     return row
 
 
-def _variant_library_sync(db: Session, run: PipelineRun, task: StageTask, output_payload: dict) -> None:
+def _scoped_idempotency_key(
+    stage_name: str,
+    asset_type: str,
+    variant_id: str,
+    discriminator: str = "",
+    scope: str | None = None,
+) -> str:
+    scoped_discriminator = ":".join(part for part in [scope, discriminator] if part)
+    return _variant_idempotency_key(stage_name, asset_type, variant_id, scoped_discriminator)
+
+
+def _variant_library_sync(
+    db: Session,
+    run: PipelineRun,
+    task: StageTask,
+    output_payload: dict,
+    *,
+    idempotency_scope: str | None = None,
+) -> None:
     stage_name = task.stage_name
     if stage_name == "divergence":
         for item in output_payload.get("variants", []):
@@ -620,7 +678,7 @@ def _variant_library_sync(db: Session, run: PipelineRun, task: StageTask, output
                 model_name=task.metadata_json.get("resolved_api", {}).get("model_name"),
                 prompt_summary=(copy_payload.get("headline") or copy_payload.get("primary_text") or "")[:240],
                 payload=copy_payload,
-                idempotency_key=_variant_idempotency_key(stage_name, "copy", variant_id),
+                idempotency_key=_scoped_idempotency_key(stage_name, "copy", variant_id, scope=idempotency_scope),
             )
             variant.status = VariantLifecycleStatus.GENERATED.value
         for image_payload in image_assets:
@@ -637,7 +695,7 @@ def _variant_library_sync(db: Session, run: PipelineRun, task: StageTask, output
                 model_name=task.metadata_json.get("resolved_api", {}).get("image_model_name"),
                 prompt_summary=(image_payload.get("prompt") or "")[:240],
                 payload=image_payload,
-                idempotency_key=_variant_idempotency_key(stage_name, "image", image_payload["variant_id"]),
+                idempotency_key=_scoped_idempotency_key(stage_name, "image", image_payload["variant_id"], scope=idempotency_scope),
                 failure_category=failure_category,
                 error_message=error_message,
             )
@@ -657,7 +715,7 @@ def _variant_library_sync(db: Session, run: PipelineRun, task: StageTask, output
                 model_name=task.metadata_json.get("resolved_api", {}).get("model_name"),
                 prompt_summary=(script_payload.get("hook") or "")[:240],
                 payload=script_payload,
-                idempotency_key=_variant_idempotency_key(stage_name, "video_script", script_payload.get("variant_id", "")),
+                idempotency_key=_scoped_idempotency_key(stage_name, "video_script", script_payload.get("variant_id", ""), scope=idempotency_scope),
             )
             variant.status = VariantLifecycleStatus.GENERATED.value
         return
@@ -679,11 +737,12 @@ def _variant_library_sync(db: Session, run: PipelineRun, task: StageTask, output
                 payload=frame_payload,
                 failure_category=failure_category,
                 error_message=frame_payload.get("error"),
-                idempotency_key=_variant_idempotency_key(
+                idempotency_key=_scoped_idempotency_key(
                     stage_name,
                     "storyboard_frame",
                     frame_payload.get("variant_id", ""),
                     frame_payload.get("frame_id", ""),
+                    idempotency_scope,
                 ),
             )
         return
@@ -703,7 +762,7 @@ def _variant_library_sync(db: Session, run: PipelineRun, task: StageTask, output
                 model_name=task.metadata_json.get("resolved_api", {}).get("video_model_name"),
                 prompt_summary=f"video asset for {video_payload.get('variant_id', '')}",
                 payload=video_payload,
-                idempotency_key=_variant_idempotency_key(stage_name, "video", video_payload.get("variant_id", "")),
+                idempotency_key=_scoped_idempotency_key(stage_name, "video", video_payload.get("variant_id", ""), scope=idempotency_scope),
                 failure_category=failure_category,
                 error_message=error_message,
             )
@@ -1399,6 +1458,167 @@ def refresh_video_task_assets(db: Session, run_id: str) -> dict:
 
 def refresh_async_assets(db: Session, run_id: str) -> dict:
     return refresh_video_task_assets(db, run_id)
+
+
+def _default_regeneration_stage(run: PipelineRun) -> str:
+    plan = stage_plan_for(run.pipeline_mode)
+    for stage_name in ["video_generation", "copy_image_generation", "storyboard_image_generation", "video_scripting"]:
+        if stage_name in plan:
+            return stage_name
+    raise ValueError(f"pipeline mode {run.pipeline_mode} has no regeneratable stage")
+
+
+def regenerate_variant_assets(
+    db: Session,
+    *,
+    run_id: str,
+    variant_id: str,
+    reason: str,
+    target_stage: str | None = None,
+) -> RunVariant:
+    run = get_run(db, run_id)
+    variant = review_variant(
+        db,
+        run_id=run_id,
+        variant_id=variant_id,
+        action=VariantReviewAction.REQUEST_REGENERATION.value,
+        comment=reason,
+        metadata={"target_stage": target_stage},
+    )
+    stage_name = target_stage or _default_regeneration_stage(run)
+    if stage_name not in REGENERATABLE_STAGES:
+        raise ValueError(f"stage {stage_name} does not support variant regeneration")
+    if stage_name not in stage_plan_for(run.pipeline_mode):
+        raise ValueError(f"stage {stage_name} is not part of pipeline mode {run.pipeline_mode}")
+    task = get_stage_task(db, run_id, stage_name)
+    lead_agent = stage_agent(stage_name)
+    collaborators = list(stage_collaborators(stage_name))
+    resolved = resolve_agent_config(
+        db,
+        agent_name=lead_agent,
+        run_provider=run.model_provider,
+        run_model=run.model_name,
+    )
+    runtime_config = resolve_agent_runtime(resolved)
+    provider_name = resolved["provider_name"]
+    model_name = resolved["model_name"]
+    scope = f"regen-{utcnow().strftime('%Y%m%d%H%M%S%f')}"
+    asset_suffix = f"_{scope}"
+    runtime_config = {
+        **runtime_config,
+        "force_regenerate": True,
+        "asset_name_suffix": asset_suffix,
+        "regeneration_reason": reason,
+        "regeneration_variant_id": variant_id,
+    }
+    if stage_name == "storyboard_image_generation" and not ((runtime_config.get("image") or {}).get("api_base_url")):
+        image_resolved = resolve_agent_config(
+            db,
+            agent_name="copy_image_agent",
+            run_provider=run.model_provider,
+            run_model=run.model_name,
+        )
+        runtime_config = {**runtime_config, "image": resolve_agent_runtime(image_resolved).get("image") or {}}
+
+    task.input_payload = _build_task_input(db, run, task)
+    task.metadata_json = {
+        **(task.metadata_json or {}),
+        "agent_name": lead_agent,
+        "collaborators": collaborators,
+        "stage_contract_version": STAGE_CONTRACT_VERSION,
+        "resolved_api": resolved,
+        "persona_snapshots": _persona_snapshots(db, [lead_agent, *collaborators]),
+        "regeneration_requests": [
+            *((task.metadata_json or {}).get("regeneration_requests") or []),
+            {
+                "variant_id": variant_id,
+                "target_stage": stage_name,
+                "reason": reason,
+                "scope": scope,
+                "created_at": utcnow().isoformat(),
+            },
+        ],
+    }
+
+    if stage_name == "copy_image_generation":
+        intake_payload = task.input_payload.get("intake") or {}
+        intake = ProductIntake.model_validate(intake_payload) if intake_payload else None
+        output = runtime.run_copy_image_generation(
+            run.id,
+            _single_variant_set(db, run_id, variant_id),
+            intake=intake,
+            business_context=task.input_payload.get("business_context", {}),
+            creative_specs=task.input_payload.get("creative_specs", {}),
+            market=run.market,
+            locale=run.locale,
+            provider=provider_name,
+            model=model_name,
+            runtime_config=runtime_config,
+        )
+    elif stage_name == "video_scripting":
+        intake_payload = task.input_payload.get("intake") or {}
+        intake = ProductIntake.model_validate(intake_payload) if intake_payload else None
+        output = runtime.run_video_scripting(
+            run.id,
+            _single_variant_set(db, run_id, variant_id),
+            intake=intake,
+            business_context=task.input_payload.get("business_context", {}),
+            provider=provider_name,
+            model=model_name,
+            runtime_config=runtime_config,
+        )
+    elif stage_name == "storyboard_image_generation":
+        output = runtime.run_storyboard_image_generation(
+            run.id,
+            _single_script_pack(db, run_id, variant_id),
+            creative_specs=task.input_payload.get("creative_specs", {}),
+            provider=provider_name,
+            model=model_name,
+            runtime_config=runtime_config,
+        )
+    elif stage_name == "video_generation":
+        output = runtime.run_video_generation(
+            run.id,
+            _single_script_pack(db, run_id, variant_id),
+            creative_specs=task.input_payload.get("creative_specs", {}),
+            provider=provider_name,
+            model=model_name,
+            runtime_config=runtime_config,
+        )
+    else:
+        raise ValueError(f"stage {stage_name} does not support variant regeneration")
+
+    task.output_payload = _merge_stage_payload(stage_name, task.output_payload or {}, output.payload)
+    task.model_used = output.model_used
+    task.failure_category = None
+    task.error_message = None
+    for artifact in output.artifacts:
+        db.add(
+            Artifact(
+                run_id=run.id,
+                stage_name=stage_name,
+                artifact_type=artifact["type"],
+                uri=artifact["uri"],
+                payload={**(artifact["payload"] or {}), "regeneration_scope": scope, "regeneration_reason": reason},
+            )
+        )
+    _variant_library_sync(db, run, task, output.payload, idempotency_scope=scope)
+    variant.regenerate_requested = False
+    variant.review_status = "regenerated"
+    variant.status = VariantLifecycleStatus.GENERATED.value
+    variant.metadata_json = {
+        **(variant.metadata_json or {}),
+        "latest_regeneration": {
+            "target_stage": stage_name,
+            "reason": reason,
+            "scope": scope,
+            "completed_at": utcnow().isoformat(),
+        },
+    }
+    run.budget_used = float(run.budget_used or 0.0) + output.estimated_cost
+    run.updated_at = utcnow()
+    db.flush()
+    return variant
 
 
 def review_variant(

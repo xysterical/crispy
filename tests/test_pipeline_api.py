@@ -151,6 +151,8 @@ def test_variant_review_endpoints_update_variant_library(client):
 
     variants_payload = client.get(f"/runs/{run_id}/variants").json()
     target = variants_payload["items"][1]["variant_id"]
+    before_target = next(item for item in variants_payload["items"] if item["variant_id"] == target)
+    before_asset_count = len(before_target["assets"])
 
     shortlist = client.post(
         f"/runs/{run_id}/variants/{target}/select",
@@ -161,10 +163,13 @@ def test_variant_review_endpoints_update_variant_library(client):
 
     regen = client.post(
         f"/runs/{run_id}/variants/{target}/regenerate",
-        json={"reason": "need a different hook"},
+        json={"reason": "need a different hook", "target_stage": "copy_image_generation"},
     )
     assert regen.status_code == 200
-    assert regen.json()["regenerate_requested"] is True
+    assert regen.json()["regenerate_requested"] is False
+    assert regen.json()["review_status"] == "regenerated"
+    assert len(regen.json()["assets"]) > before_asset_count
+    assert regen.json()["metadata_json"]["latest_regeneration"]["target_stage"] == "copy_image_generation"
 
     winner = client.post(
         f"/runs/{run_id}/variants/{target}/select",

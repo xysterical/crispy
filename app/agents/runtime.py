@@ -516,9 +516,12 @@ class AgentsRuntime:
             image_provider = ""
             error_text = None
             provider_errors: list[dict] = []
-            existing_image_path = self.media.settings.assets_dir / run_id / f"copy_image_{idx + 1}.png"
+            asset_suffix = str((runtime_config or {}).get("asset_name_suffix") or "")
+            force_regenerate = bool((runtime_config or {}).get("force_regenerate"))
+            image_filename = f"copy_image_{idx + 1}{asset_suffix}.png"
+            existing_image_path = self.media.settings.assets_dir / run_id / image_filename
             try:
-                if existing_image_path.exists() and existing_image_path.stat().st_size > 1024:
+                if not force_regenerate and existing_image_path.exists() and existing_image_path.stat().st_size > 1024:
                     image_uri = str(existing_image_path)
                     image_source = "reused_existing"
                 else:
@@ -536,11 +539,11 @@ class AgentsRuntime:
                         image_bytes, image_source = self._materialize_generated_image(selected)
                     else:
                         image_bytes, image_source = decode_placeholder_png(), "placeholder"
-                    image_uri = self.media.write_binary_artifact(run_id, f"copy_image_{idx + 1}.png", image_bytes)
+                    image_uri = self.media.write_binary_artifact(run_id, image_filename, image_bytes)
             except Exception as exc:
                 error_text = str(exc)
                 provider_errors = getattr(exc, "errors", []) or []
-                image_uri = self.media.write_binary_artifact(run_id, f"copy_image_{idx + 1}.png", decode_placeholder_png())
+                image_uri = self.media.write_binary_artifact(run_id, image_filename, decode_placeholder_png())
 
             image_ref = ImageAssetRef(
                 variant_id=item.variant_id,
@@ -699,9 +702,10 @@ class AgentsRuntime:
                         frame_bytes, source = self._materialize_generated_image(selected)
                     else:
                         frame_bytes, source = decode_placeholder_png(), "placeholder"
+                    asset_suffix = str((runtime_config or {}).get("asset_name_suffix") or "")
                     frame_uri = self.media.write_binary_artifact(
                         run_id,
-                        f"{script.variant_id}_storyboard_{idx + 1}.png",
+                        f"{script.variant_id}_storyboard_{idx + 1}{asset_suffix}.png",
                         frame_bytes,
                     )
                     if source != "placeholder":
@@ -711,7 +715,7 @@ class AgentsRuntime:
                     provider_errors = getattr(exc, "errors", []) or []
                     frame_uri = self.media.write_binary_artifact(
                         run_id,
-                        f"{script.variant_id}_storyboard_{idx + 1}.png",
+                        f"{script.variant_id}_storyboard_{idx + 1}{str((runtime_config or {}).get('asset_name_suffix') or '')}.png",
                         decode_placeholder_png(),
                     )
                 frame = {
@@ -776,9 +780,12 @@ class AgentsRuntime:
             raw_response: dict = {}
             provider_errors: list[dict] = []
             video_uri = ""
-            existing_video_path = self.media.settings.assets_dir / run_id / f"{script.variant_id}_sample.mp4"
+            asset_suffix = str((runtime_config or {}).get("asset_name_suffix") or "")
+            force_regenerate = bool((runtime_config or {}).get("force_regenerate"))
+            video_filename = f"{script.variant_id}_sample{asset_suffix}.mp4"
+            existing_video_path = self.media.settings.assets_dir / run_id / video_filename
             try:
-                if self._artifact_has_payload(str(existing_video_path)):
+                if not force_regenerate and self._artifact_has_payload(str(existing_video_path)):
                     video_uri = str(existing_video_path)
                     source = "reused_existing"
                     generation_status = "completed"
@@ -804,17 +811,17 @@ class AgentsRuntime:
                         raw_response = selected.raw_response or raw_response
                     if selected and (selected.url or selected.b64_data):
                         video_bytes, source = self._materialize_generated_video(selected)
-                        video_uri = self.media.write_binary_artifact(run_id, f"{script.variant_id}_sample.mp4", video_bytes)
+                        video_uri = self.media.write_binary_artifact(run_id, video_filename, video_bytes)
                     elif external_task_id:
                         source = "external_task_pending"
-                        video_uri = self.media.reserve_binary_artifact(run_id, f"{script.variant_id}_sample.mp4")
+                        video_uri = self.media.reserve_binary_artifact(run_id, video_filename)
                     else:
-                        video_uri = self.media.write_binary_artifact(run_id, f"{script.variant_id}_sample.mp4", b"")
+                        video_uri = self.media.write_binary_artifact(run_id, video_filename, b"")
                     video_models_used.add(video_result.model_used or model_used)
             except Exception as exc:
                 error_text = str(exc)
                 provider_errors = getattr(exc, "errors", []) or []
-                video_uri = self.media.reserve_binary_artifact(run_id, f"{script.variant_id}_sample.mp4")
+                video_uri = self.media.reserve_binary_artifact(run_id, video_filename)
             asset = VideoAsset(variant_id=script.variant_id, video_uri=video_uri, duration_seconds=float(duration_seconds))
             video_payload = {
                 **asset.model_dump(),
