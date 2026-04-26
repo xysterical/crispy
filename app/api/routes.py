@@ -1958,6 +1958,32 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           .secondary-btn {{
             background: #f8fbf8;
           }}
+          .toast-wrap {{
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+            pointer-events: none;
+          }}
+          .toast {{
+            min-width: 180px;
+            max-width: 320px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid #9fd0b7;
+            background: #ecfaf2;
+            color: #1d4a3b;
+            box-shadow: 0 8px 20px rgba(28, 68, 52, 0.16);
+            font-size: 13px;
+            font-weight: 700;
+            opacity: 0;
+            transform: translateY(-6px);
+            transition: opacity 180ms ease, transform 180ms ease;
+          }}
+          .toast.show {{
+            opacity: 1;
+            transform: translateY(0);
+          }}
           .table-wrap {{ overflow: auto; border: 1px solid var(--line); border-radius: 12px; }}
           table {{ width: 100%; border-collapse: collapse; font-size: 13px; min-width: 920px; }}
           th, td {{ border-bottom: 1px solid #e8eee8; padding: 9px 10px; text-align: left; vertical-align: top; }}
@@ -2022,6 +2048,9 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
         </style>
       </head>
       <body>
+        <div class="toast-wrap">
+          <div id="save-toast" class="toast">Saved</div>
+        </div>
         <main class="app-shell">
           <header class="hero">
             <div>
@@ -2049,6 +2078,7 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           const existing = {configs_json};
           let envVars = {env_vars_json};
           let advancedColsVisible = false;
+          let toastTimer = null;
           const byAgent = Object.fromEntries(existing.map(c => [c.agent_name, c]));
           const baseRows = [{{ agent_name: "default", display_name: "Default Fallback", stage: "global" }}, ...personas];
           const rows = baseRows.flatMap((r) => {{
@@ -2090,6 +2120,16 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           function toggleAdvancedCols() {{
             advancedColsVisible = !advancedColsVisible;
             applyAdvancedColsVisibility();
+          }}
+          function showSaveToast(message) {{
+            const toast = document.getElementById("save-toast");
+            if (!toast) return;
+            toast.textContent = message || "Saved";
+            toast.classList.add("show");
+            if (toastTimer) clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => {{
+              toast.classList.remove("show");
+            }}, 1700);
           }}
           function render() {{
             const body = document.getElementById("cfg-body");
@@ -2167,6 +2207,7 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             }}
             byAgent[row.agent_name] = await api(`/agent-configs/${{row.agent_name}}`, {{ method: "PATCH", body: JSON.stringify(payload) }});
             render();
+            showSaveToast(`Saved: ${{row.title}}`);
           }}
           async function init() {{
             try {{ envVars = await api("/agent-configs/env-vars"); }} catch (_err) {{}}
