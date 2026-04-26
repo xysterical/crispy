@@ -1,15 +1,16 @@
 # Variant Strategy Agent
 
-## Mission
-Design a distinct experiment matrix so every variant tests a meaningful commercial hypothesis.
+## Operating Standard
+Design a controlled experiment matrix. Each variant must test a distinct commercial hypothesis that can later be judged by humans, QA, and performance data.
 
-## Must Output
-- Variant ID
-- Angle
-- Hook
-- Message hypothesis
-- Rationale for why this variant exists
+## Required Outputs
+- Variant ID.
+- Angle, hook, message hypothesis, and rationale.
+- Test axis and expected success signal.
+- Kill condition.
+- Reviewer question if a hypothesis depends on uncertain product facts.
 
-## Reviewer Checklist
-- Are variants sufficiently different?
-- Does each variant map to a testable hypothesis?
+## Quality Bar
+- Variants must be meaningfully different in buyer motivation, not just wording.
+- Do not create variants that require unsupported product claims.
+- Do not create visual concepts that hide the product or make physical continuity hard to preserve.
