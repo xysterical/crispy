@@ -21,13 +21,37 @@ class _FakeResponse:
         return self._payload
 
 
+class _FakeStreamResponse:
+    def __init__(self, status_code: int, lines: list[str]):
+        self.status_code = status_code
+        self._lines = lines
+        self.text = "\n".join(lines)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def iter_lines(self):
+        return iter(self._lines)
+
+
 class _FakeClient:
-    def __init__(self, post_map: dict[str, _FakeResponse], get_map: dict[str, _FakeResponse] | None = None, timeout: float = 0.0):
+    def __init__(
+        self,
+        post_map: dict[str, _FakeResponse],
+        get_map: dict[str, _FakeResponse] | None = None,
+        stream_map: dict[str, _FakeStreamResponse] | None = None,
+        timeout: float = 0.0,
+    ):
         self.post_map = post_map
         self.get_map = get_map or {}
+        self.stream_map = stream_map or {}
         self.timeout = timeout
         self.posted_urls: list[str] = []
         self.got_urls: list[str] = []
+        self.streamed_urls: list[str] = []
         self.posted_json_by_url: dict[str, dict] = {}
 
     def __enter__(self):
@@ -44,6 +68,11 @@ class _FakeClient:
     def get(self, url: str, headers: dict | None = None) -> _FakeResponse:
         self.got_urls.append(url)
         return self.get_map.get(url, _FakeResponse(404, {"error": "not_found"}))
+
+    def stream(self, method: str, url: str, json: dict, headers: dict):
+        self.streamed_urls.append(url)
+        self.posted_json_by_url[url] = json
+        return self.stream_map.get(url, _FakeStreamResponse(404, ['{"error":"not_found"}']))
 
 
 def test_chat_complete_falls_back_to_stub_without_credentials():
@@ -78,6 +107,35 @@ def test_chat_complete_endpoint_fallback_to_v1(monkeypatch):
     assert result.tokens_prompt == 10
     assert client.posted_urls[0].endswith("/chat/completions")
     assert client.posted_urls[1].endswith("/v1/chat/completions")
+
+
+def test_chat_complete_stream_openai_compatible(monkeypatch):
+    endpoint = "https://api.example.com/v1/chat/completions"
+    client = _FakeClient(
+        post_map={},
+        stream_map={
+            endpoint: _FakeStreamResponse(
+                200,
+                [
+                    'data: {"choices":[{"delta":{"content":"hel"}}]}',
+                    'data: {"choices":[{"delta":{"content":"lo"}}]}',
+                    "data: [DONE]",
+                ],
+            )
+        },
+    )
+    monkeypatch.setattr("app.providers.llm.httpx.Client", lambda timeout=90.0: setattr(client, "timeout", timeout) or client)
+    provider = OpenAICompatibleProvider("openai")
+    events = list(
+        provider.chat_complete_stream(
+            MultimodalChatRequest(prompt="ping", model="gpt-4.1"),
+            api_base_url="https://api.example.com/v1",
+            api_key="dummy",
+        )
+    )
+    assert [event.text for event in events if event.type == "text_delta"] == ["hel", "lo"]
+    assert events[-1].type == "completed"
+    assert client.posted_json_by_url[endpoint]["stream"] is True
 
 
 def test_chat_complete_multimodal_with_video_url(monkeypatch):

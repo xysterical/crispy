@@ -27,6 +27,7 @@ def test_agent_api_default_and_override(client):
             "thinking_budget_tokens": 800,
             "max_output_tokens": 1200,
             "request_timeout_seconds": 30,
+            "streaming_enabled": True,
         },
     )
     assert patch_resp.status_code == 200
@@ -35,6 +36,7 @@ def test_agent_api_default_and_override(client):
     assert patch_resp.json()["thinking_budget_tokens"] == 800
     assert patch_resp.json()["max_output_tokens"] == 1200
     assert patch_resp.json()["request_timeout_seconds"] == 30
+    assert patch_resp.json()["streaming_enabled"] is True
 
     create_resp = client.post(
         "/runs",
@@ -60,6 +62,7 @@ def test_agent_api_default_and_override(client):
     assert intake_task["metadata_json"]["resolved_api"]["model_name"] == "kimi-k2.6"
     assert intake_task["metadata_json"]["resolved_api"]["thinking_mode"] == "disabled"
     assert intake_task["metadata_json"]["resolved_api"]["thinking_applied"] is False
+    assert intake_task["metadata_json"]["resolved_api"]["streaming_enabled"] is True
 
 
 def test_agent_api_generation_image_config(client):

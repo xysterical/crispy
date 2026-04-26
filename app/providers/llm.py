@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import json
 import time
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 import httpx
@@ -98,6 +100,21 @@ class LlmResponse:
     estimated_cost: float = 0.0
 
 
+class ProviderStreamEventType(StrEnum):
+    TEXT_DELTA = "text_delta"
+    REASONING_SUMMARY = "reasoning_summary"
+    STATUS = "status"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+@dataclass(slots=True)
+class ProviderStreamEvent:
+    type: str
+    text: str | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
 @dataclass(slots=True)
 class MultimodalChatRequest:
     prompt: str
@@ -169,6 +186,28 @@ class LlmProvider:
         extra: dict | None = None,
     ) -> LlmResponse:
         raise NotImplementedError
+
+    def chat_complete_stream(
+        self,
+        request: MultimodalChatRequest,
+        *,
+        api_base_url: str | None = None,
+        api_key: str | None = None,
+        extra: dict | None = None,
+    ):
+        response = self.chat_complete(request, api_base_url=api_base_url, api_key=api_key, extra=extra)
+        if response.text:
+            yield ProviderStreamEvent(ProviderStreamEventType.TEXT_DELTA.value, response.text, {"model": response.model_used})
+        yield ProviderStreamEvent(
+            ProviderStreamEventType.COMPLETED.value,
+            None,
+            {
+                "model": response.model_used,
+                "tokens_prompt": response.tokens_prompt,
+                "tokens_completion": response.tokens_completion,
+                "estimated_cost": response.estimated_cost,
+            },
+        )
 
     def generate_image(
         self,
@@ -244,6 +283,25 @@ class StubProvider(LlmProvider):
             tokens_prompt=max(1, len(request.prompt) // 4),
             tokens_completion=max(1, len(text) // 4),
             estimated_cost=0.0,
+        )
+
+    def chat_complete_stream(
+        self,
+        request: MultimodalChatRequest,
+        *,
+        api_base_url: str | None = None,
+        api_key: str | None = None,
+        extra: dict | None = None,
+    ):
+        response = self.chat_complete(request, api_base_url=api_base_url, api_key=api_key, extra=extra)
+        midpoint = max(1, len(response.text) // 2)
+        for chunk in [response.text[:midpoint], response.text[midpoint:]]:
+            if chunk:
+                yield ProviderStreamEvent(ProviderStreamEventType.TEXT_DELTA.value, chunk, {"model": response.model_used})
+        yield ProviderStreamEvent(
+            ProviderStreamEventType.COMPLETED.value,
+            None,
+            {"model": response.model_used, "estimated_cost": response.estimated_cost},
         )
 
     def generate_image(
@@ -397,6 +455,57 @@ class OpenAICompatibleProvider(LlmProvider):
             return "\n".join(chunks).strip()
         return str(content)
 
+    def _chat_messages(self, request: MultimodalChatRequest) -> list[dict[str, Any]]:
+        if request.image_urls or request.video_urls:
+            content: list[dict[str, Any]] = [{"type": "text", "text": request.prompt}]
+            for image_url in request.image_urls:
+                content.append({"type": "image_url", "image_url": {"url": image_url}})
+            for video_url in request.video_urls:
+                content.append({"type": "video_url", "video_url": {"url": video_url}})
+            return [{"role": "user", "content": content}]
+        return [{"role": "user", "content": request.prompt}]
+
+    def _chat_payload(self, request: MultimodalChatRequest, extra: dict | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {"model": request.model, "messages": self._chat_messages(request)}
+        if isinstance(extra, dict) and isinstance(extra.get("chat_payload"), dict):
+            payload = {**payload, **extra["chat_payload"]}
+        if isinstance(extra, dict):
+            max_tokens = extra.get("max_output_tokens")
+            if max_tokens and "max_tokens" not in payload:
+                payload["max_tokens"] = int(max_tokens)
+            thinking_mode = extra.get("thinking_mode") or "auto"
+            thinking_budget = extra.get("thinking_budget_tokens")
+            supports_kimi_thinking = self.provider_name == "kimi" and request.model.startswith("kimi-k")
+            if supports_kimi_thinking and "thinking" not in payload:
+                if thinking_mode == "disabled":
+                    payload["thinking"] = {"type": "disabled"}
+                elif thinking_mode == "enabled" and thinking_budget:
+                    payload["thinking"] = {"type": "enabled", "budget_tokens": int(thinking_budget)}
+            payload.pop("temperature", None) if self.provider_name == "kimi" and request.model.startswith("kimi-k2.6") else None
+        return payload
+
+    def _extract_stream_delta(self, payload: dict[str, Any]) -> ProviderStreamEvent | None:
+        choices = payload.get("choices") or []
+        if not choices:
+            return None
+        delta = (choices[0] or {}).get("delta") or {}
+        if not isinstance(delta, dict):
+            return None
+        reasoning = delta.get("reasoning_content") or delta.get("reasoning") or delta.get("reasoning_summary")
+        if isinstance(reasoning, str) and reasoning:
+            return ProviderStreamEvent(ProviderStreamEventType.REASONING_SUMMARY.value, reasoning, payload)
+        content = delta.get("content")
+        if isinstance(content, str) and content:
+            return ProviderStreamEvent(ProviderStreamEventType.TEXT_DELTA.value, content, payload)
+        if isinstance(content, list):
+            text_parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict) and isinstance(item.get("text"), str):
+                    text_parts.append(item["text"])
+            if text_parts:
+                return ProviderStreamEvent(ProviderStreamEventType.TEXT_DELTA.value, "".join(text_parts), payload)
+        return None
+
     def _extract_task_id(self, payload: dict[str, Any]) -> str | None:
         data = payload.get("data")
         if isinstance(data, list) and data:
@@ -490,33 +599,7 @@ class OpenAICompatibleProvider(LlmProvider):
         if not api_base_url or not api_key:
             return self._stub.chat_complete(request, api_base_url=api_base_url, api_key=api_key, extra=extra)
 
-        messages: list[dict[str, Any]]
-        if request.image_urls or request.video_urls:
-            content: list[dict[str, Any]] = [{"type": "text", "text": request.prompt}]
-            for image_url in request.image_urls:
-                content.append({"type": "image_url", "image_url": {"url": image_url}})
-            for video_url in request.video_urls:
-                content.append({"type": "video_url", "video_url": {"url": video_url}})
-            messages = [{"role": "user", "content": content}]
-        else:
-            messages = [{"role": "user", "content": request.prompt}]
-
-        payload = {"model": request.model, "messages": messages}
-        if isinstance(extra, dict) and isinstance(extra.get("chat_payload"), dict):
-            payload = {**payload, **extra["chat_payload"]}
-        if isinstance(extra, dict):
-            max_tokens = extra.get("max_output_tokens")
-            if max_tokens and "max_tokens" not in payload:
-                payload["max_tokens"] = int(max_tokens)
-            thinking_mode = extra.get("thinking_mode") or "auto"
-            thinking_budget = extra.get("thinking_budget_tokens")
-            supports_kimi_thinking = self.provider_name == "kimi" and request.model.startswith("kimi-k")
-            if supports_kimi_thinking and "thinking" not in payload:
-                if thinking_mode == "disabled":
-                    payload["thinking"] = {"type": "disabled"}
-                elif thinking_mode == "enabled" and thinking_budget:
-                    payload["thinking"] = {"type": "enabled", "budget_tokens": int(thinking_budget)}
-            payload.pop("temperature", None) if self.provider_name == "kimi" and request.model.startswith("kimi-k2.6") else None
+        payload = self._chat_payload(request, extra)
         timeout_seconds = float((extra or {}).get("request_timeout_seconds") or 90)
 
         data = self._post_json(
@@ -533,6 +616,70 @@ class OpenAICompatibleProvider(LlmProvider):
             tokens_completion=int(usage.get("completion_tokens") or 0),
             estimated_cost=0.0,
         )
+
+    def chat_complete_stream(
+        self,
+        request: MultimodalChatRequest,
+        *,
+        api_base_url: str | None = None,
+        api_key: str | None = None,
+        extra: dict | None = None,
+    ):
+        if not api_base_url or not api_key:
+            yield from self._stub.chat_complete_stream(request, api_base_url=api_base_url, api_key=api_key, extra=extra)
+            return
+        payload = {**self._chat_payload(request, extra), "stream": True}
+        timeout_seconds = float((extra or {}).get("request_timeout_seconds") or 90)
+        errors: list[dict[str, Any]] = []
+        headers = self._headers(api_key)
+        with httpx.Client(timeout=timeout_seconds) as client:
+            for idx, url in enumerate(self._endpoint_candidates(api_base_url, "/chat/completions")):
+                try:
+                    with client.stream("POST", url, json=payload, headers=headers) as response:
+                        if response.status_code in {404, 405} and idx < len(self._endpoint_candidates(api_base_url, "/chat/completions")) - 1:
+                            try:
+                                body = response.read().decode("utf-8", errors="replace")
+                            except Exception:
+                                body = ""
+                            errors.append({"url": url, "status_code": response.status_code, "body": body[:1000]})
+                            continue
+                        if response.status_code >= 400:
+                            try:
+                                body = response.read().decode("utf-8", errors="replace")
+                            except Exception:
+                                body = ""
+                            errors.append({"url": url, "status_code": response.status_code, "body": body[:1000]})
+                            continue
+                        text_parts: list[str] = []
+                        for line in response.iter_lines():
+                            if not line:
+                                continue
+                            raw = line.decode("utf-8") if isinstance(line, bytes) else str(line)
+                            if raw.startswith("data:"):
+                                raw = raw.removeprefix("data:").strip()
+                            if raw == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(raw)
+                            except json.JSONDecodeError:
+                                continue
+                            event = self._extract_stream_delta(data)
+                            if not event:
+                                continue
+                            if event.type == ProviderStreamEventType.TEXT_DELTA.value and event.text:
+                                text_parts.append(event.text)
+                            yield event
+                        yield ProviderStreamEvent(
+                            ProviderStreamEventType.COMPLETED.value,
+                            None,
+                            {"model": request.model, "text": "".join(text_parts)},
+                        )
+                        return
+                except httpx.HTTPError as exc:
+                    errors.append({"url": url, "error_type": type(exc).__name__, "message": str(exc)[:1000]})
+                    continue
+        yield ProviderStreamEvent(ProviderStreamEventType.FAILED.value, None, {"errors": errors})
+        raise ProviderRequestError("stream request failed for all endpoint candidates", errors)
 
     def generate_image(
         self,

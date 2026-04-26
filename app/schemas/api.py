@@ -51,6 +51,21 @@ class StageTaskView(BaseModel):
     completed_at: datetime | None = None
 
 
+class AgentTraceEventView(BaseModel):
+    id: str
+    run_id: str
+    stage_task_id: str | None = None
+    stage_name: str
+    agent_name: str
+    event_type: str
+    visibility: str = "user"
+    message: str = ""
+    provider_name: str | None = None
+    model_name: str | None = None
+    payload: dict = Field(default_factory=dict)
+    created_at: datetime
+
+
 class RunView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -79,6 +94,7 @@ class RunView(BaseModel):
     created_at: datetime
     updated_at: datetime
     stage_tasks: list[StageTaskView] = Field(default_factory=list)
+    trace_events: list[AgentTraceEventView] = Field(default_factory=list)
     variant_summary: dict = Field(default_factory=dict)
     latest_scorecard: ScoreCard | None = None
     latest_forecast: ConversionForecast | None = None
@@ -202,6 +218,7 @@ class AgentApiConfigView(BaseModel):
     max_output_tokens: int | None = None
     request_timeout_seconds: int | None = None
     thinking_applied: bool = False
+    streaming_enabled: bool = False
     extra: dict = Field(default_factory=dict)
     is_default: bool = False
     updated_at: datetime
@@ -224,6 +241,7 @@ class AgentApiConfigPatchRequest(BaseModel):
     thinking_budget_tokens: int | None = None
     max_output_tokens: int | None = None
     request_timeout_seconds: int | None = None
+    streaming_enabled: bool | None = None
     extra: dict | None = None
 
 

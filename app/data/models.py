@@ -173,6 +173,7 @@ class PipelineRun(Base):
     artifacts: Mapped[list["Artifact"]] = relationship(back_populates="run", cascade="all, delete-orphan")
     scorecards: Mapped[list["ScoreCard"]] = relationship(back_populates="run", cascade="all, delete-orphan")
     variants: Mapped[list["RunVariant"]] = relationship(cascade="all, delete-orphan")
+    trace_events: Mapped[list["AgentTraceEvent"]] = relationship(back_populates="run", cascade="all, delete-orphan")
 
 
 class StageTask(Base):
@@ -199,6 +200,27 @@ class StageTask(Base):
 
     run: Mapped[PipelineRun] = relationship(back_populates="stage_tasks")
     scorecards: Mapped[list["ScoreCard"]] = relationship(back_populates="stage_task")
+    trace_events: Mapped[list["AgentTraceEvent"]] = relationship(back_populates="stage_task")
+
+
+class AgentTraceEvent(Base):
+    __tablename__ = "agent_trace_event"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(ForeignKey("pipeline_run.id"), nullable=False)
+    stage_task_id: Mapped[str | None] = mapped_column(ForeignKey("stage_task.id"), nullable=True)
+    stage_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    visibility: Mapped[str] = mapped_column(String(16), default="user")
+    message: Mapped[str] = mapped_column(Text, default="")
+    provider_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    payload: Mapped[dict] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    run: Mapped[PipelineRun] = relationship(back_populates="trace_events")
+    stage_task: Mapped[StageTask | None] = relationship(back_populates="trace_events")
 
 
 class RunVariant(Base):
@@ -398,6 +420,7 @@ class AgentApiConfig(Base):
     thinking_budget_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     request_timeout_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    streaming_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     extra: Mapped[dict] = mapped_column(json_type(), default=dict)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

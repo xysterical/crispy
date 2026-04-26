@@ -53,6 +53,11 @@ def test_pipeline_run_can_progress_with_human_gates(client):
         current_task = [t for t in run["stage_tasks"] if t["stage_name"] == stage][0]
         assert current_task["metadata_json"]["stage_contract_version"] == "commercial-pilot-v1"
         assert current_task["metadata_json"]["persona_snapshots"]
+        stage_events = [event for event in run["trace_events"] if event["stage_name"] == stage]
+        assert any(event["event_type"] == "started" for event in stage_events)
+        assert any(event["event_type"] == "input_summary" for event in stage_events)
+        assert any(event["event_type"] == "handoff" for event in stage_events)
+        assert any(event["event_type"] == "completed" for event in stage_events)
 
         if stage == "divergence":
             assert run["variant_summary"]["total"] == run["variant_count"]
@@ -63,6 +68,7 @@ def test_pipeline_run_can_progress_with_human_gates(client):
             divergence_task = [t for t in run["stage_tasks"] if t["stage_name"] == "divergence"][0]
             assert divergence_task["attempt"] >= 2
             assert run["status"] == "waiting_review"
+            assert any(event["event_type"] == "human_rejected" for event in run["trace_events"])
 
         if stage != STAGE_ORDER[-1]:
             adv = client.post(f"/runs/{run_id}/advance", json={"notes": "approved"})
@@ -77,6 +83,11 @@ def test_pipeline_run_can_progress_with_human_gates(client):
     run = done.json()
     assert run["status"] == "completed"
     assert run["current_stage"] is None
+    assert any(event["event_type"] == "human_approved" for event in run["trace_events"])
+    events_resp = client.get(f"/runs/{run_id}/events", params={"once": True})
+    assert events_resp.status_code == 200
+    assert "event: agent_trace" in events_resp.text
+    assert "data:" in events_resp.text
 
 
 def test_run_deliverables_and_variants_endpoints(client):
@@ -170,6 +181,9 @@ def test_variant_review_endpoints_update_variant_library(client):
     assert regen.json()["review_status"] == "regenerated"
     assert len(regen.json()["assets"]) > before_asset_count
     assert regen.json()["metadata_json"]["latest_regeneration"]["target_stage"] == "copy_image_generation"
+    run_after_regen = client.get(f"/runs/{run_id}").json()
+    assert any(event["event_type"] == "regeneration_started" for event in run_after_regen["trace_events"])
+    assert any(event["event_type"] == "regeneration_completed" for event in run_after_regen["trace_events"])
 
     winner = client.post(
         f"/runs/{run_id}/variants/{target}/select",

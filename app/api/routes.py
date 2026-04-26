@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from sqlalchemy import String, cast, desc, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -15,6 +16,7 @@ from app.agents.registry import stage_agent
 from app.core.config import get_settings
 from app.data.models import Artifact, GmMemory, PipelineRun, ScoreCard as ScoreCardModel, StageTask
 from app.data.session import (
+    SessionLocal,
     get_active_database_url,
     get_db,
     list_local_sqlite_database_urls,
@@ -24,6 +26,7 @@ from app.orchestrator.state_machine import PIPELINE_STAGE_PLANS, PipelineMode
 from app.schemas.api import (
     AgentApiConfigPatchRequest,
     AgentApiConfigView,
+    AgentTraceEventView,
     ArtifactListItem,
     ArtifactListResponse,
     DataSourceInfo,
@@ -76,6 +79,7 @@ from app.services.runs import (
     refresh_video_task_assets,
     review_variant,
     run_deliverables,
+    run_trace_events,
     run_variants,
 )
 
@@ -245,6 +249,23 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
             ai_artifact_score=scorecard_model.ai_artifact_score,
         )
         forecast = ConversionForecast.model_validate(scorecard_model.forecast)
+    trace_views = [
+        AgentTraceEventView(
+            id=event.id,
+            run_id=event.run_id,
+            stage_task_id=event.stage_task_id,
+            stage_name=event.stage_name,
+            agent_name=event.agent_name,
+            event_type=event.event_type,
+            visibility=event.visibility,
+            message=event.message,
+            provider_name=event.provider_name,
+            model_name=event.model_name,
+            payload=event.payload or {},
+            created_at=event.created_at,
+        )
+        for event in run_trace_events(db, run.id, limit=200)
+    ]
 
     return RunView(
         id=run.id,
@@ -272,10 +293,37 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
         created_at=run.created_at,
         updated_at=run.updated_at,
         stage_tasks=task_views,
+        trace_events=trace_views,
         variant_summary=run_variants(db, run.id).get("summary", {}),
         latest_scorecard=scorecard,
         latest_forecast=forecast,
     )
+
+
+def _serialize_trace_event(event) -> dict:
+    return {
+        "id": event.id,
+        "run_id": event.run_id,
+        "stage_task_id": event.stage_task_id,
+        "stage_name": event.stage_name,
+        "agent_name": event.agent_name,
+        "event_type": event.event_type,
+        "visibility": event.visibility,
+        "message": event.message,
+        "provider_name": event.provider_name,
+        "model_name": event.model_name,
+        "payload": event.payload or {},
+        "created_at": event.created_at.isoformat() if event.created_at else None,
+    }
+
+
+def _sse_event(event_name: str, payload: dict, event_id: str | None = None) -> str:
+    lines = []
+    if event_id:
+        lines.append(f"id: {event_id}")
+    lines.append(f"event: {event_name}")
+    lines.append(f"data: {json.dumps(payload, default=str)}")
+    return "\n".join(lines) + "\n\n"
 
 
 def _pipeline_mode_views() -> list[PipelineModeView]:
@@ -331,6 +379,7 @@ def _serialize_agent_config(row) -> AgentApiConfigView:
         thinking_budget_tokens=row.thinking_budget_tokens,
         max_output_tokens=row.max_output_tokens,
         request_timeout_seconds=row.request_timeout_seconds,
+        streaming_enabled=bool(row.streaming_enabled),
         thinking_applied=thinking_applied,
         extra=row.extra or {},
         is_default=row.agent_name == "default",
@@ -578,6 +627,28 @@ def _dashboard_html() -> str:
           .quality-chip.good { background:#eaf7ee; border-color:#bde0c8; color:#21633d; }
           .quality-chip.warn { background:#fff7e6; border-color:#ead19d; color:#735418; }
           .quality-chip.bad { background:#fdeeee; border-color:#efc2c2; color:#8a2d2d; }
+          .agent-trace {
+            display:grid;
+            grid-template-columns: 1fr;
+            gap:8px;
+          }
+          .trace-event {
+            border:1px solid #dce7e1;
+            border-radius:10px;
+            padding:9px;
+            background:#fbfdfb;
+          }
+          .trace-head {
+            display:flex;
+            justify-content:space-between;
+            gap:8px;
+            flex-wrap:wrap;
+            margin-bottom:4px;
+          }
+          .trace-message {
+            font-size:13px;
+            color:#2a3f36;
+          }
           pre {
             white-space: pre-wrap;
             word-break: break-word;
@@ -731,6 +802,8 @@ def _dashboard_html() -> str:
           let dataSources = [];
           let dataSourceSelectInFlight = false;
           let variantBoardFilters = { quality: "", assetType: "", reviewStatus: "", minScore: "", q: "" };
+          let runEventSource = null;
+          let currentTraceEvents = [];
 
           function esc(v){ return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
           function toList(raw){ return String(raw || "").split(",").map(s => s.trim()).filter(Boolean); }
@@ -1127,6 +1200,53 @@ def _dashboard_html() -> str:
             return stageHtml || '<span class="muted">No stage logs.</span>';
           }
 
+          function renderAgentTrace(run) {
+            const events = run.trace_events || currentTraceEvents || [];
+            if (!events.length) return '<div class="run-detail-empty">No agent trace events yet.</div>';
+            return `
+              <div class="agent-trace">
+                ${events.map((event) => `
+                  <article class="trace-event">
+                    <div class="trace-head">
+                      <div>
+                        <span class="pill">${esc(event.stage_name)}</span>
+                        <span class="pill">${esc(event.agent_name)}</span>
+                        <span class="pill">${esc(event.event_type)}</span>
+                      </div>
+                      <div class="muted">${esc(event.created_at)}</div>
+                    </div>
+                    <div class="trace-message">${esc(event.message || "-")}</div>
+                    <div class="muted" style="margin-top:4px;">provider/model: ${esc(event.provider_name || "-")} / ${esc(event.model_name || "-")}</div>
+                    <details>
+                      <summary>Trace payload</summary>
+                      <pre>${esc(JSON.stringify(event.payload || {}, null, 2))}</pre>
+                    </details>
+                  </article>
+                `).join("")}
+              </div>
+            `;
+          }
+
+          function connectRunEvents(runId){
+            if (runEventSource) {
+              runEventSource.close();
+              runEventSource = null;
+            }
+            if (!window.EventSource) return;
+            runEventSource = new EventSource(`/runs/${runId}/events`);
+            runEventSource.addEventListener("agent_trace", (event) => {
+              try {
+                const item = JSON.parse(event.data);
+                if (currentRunId !== runId) return;
+                if (!currentTraceEvents.some((existing) => existing.id === item.id)) {
+                  currentTraceEvents.push(item);
+                  const container = document.getElementById("agent-trace-container");
+                  if (container) container.innerHTML = renderAgentTrace({ trace_events: currentTraceEvents });
+                }
+              } catch (_err) {}
+            });
+          }
+
           function renderRunDetail(run, deliverables, variants){
             const score = run.latest_scorecard ? `<pre>${esc(JSON.stringify(run.latest_scorecard, null, 2))}</pre>` : `<span class="muted">No score yet.</span>`;
             return `
@@ -1141,6 +1261,8 @@ def _dashboard_html() -> str:
               </div>
               ${renderDeliverables(deliverables)}
               ${renderVariantBoard(run.id, variants)}
+              <h3 style="margin-top:14px;">Agent Trace</h3>
+              <div id="agent-trace-container">${renderAgentTrace(run)}</div>
               <h3 style="margin-top:14px;">Stage Timeline</h3>
               <div class="timeline">${renderTimeline(run)}</div>
               <h3 style="margin-top:14px;">Latest Scorecard</h3>
@@ -1155,7 +1277,9 @@ def _dashboard_html() -> str:
               api(`/runs/${runId}/deliverables`).catch(() => ({ run_id: runId, deliverables: {}, score: {} })),
               api(`/runs/${runId}/variants`).catch(() => ({ run_id: runId, items: [], summary: {}, variants: [], ranked: [] }))
             ]);
+            currentTraceEvents = run.trace_events || [];
             document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables, variants);
+            connectRunEvents(runId);
           }
 
           async function loadPipelineModes(){
@@ -1911,7 +2035,7 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           <section class="card">
             <div class="table-wrap">
               <table id="cfg-table" class="advanced-collapsed">
-                <thead><tr><th>Agent</th><th>Provider</th><th>Model</th><th>Base URL</th><th>API Key Env</th><th>Thinking</th><th class="advanced-col">Budget</th><th class="advanced-col">Max Tokens</th><th class="advanced-col">Timeout</th><th>Env Status</th><th>Action</th></tr></thead>
+                <thead><tr><th>Agent</th><th>Provider</th><th>Model</th><th>Base URL</th><th>API Key Env</th><th>Thinking</th><th class="advanced-col">Stream</th><th class="advanced-col">Budget</th><th class="advanced-col">Max Tokens</th><th class="advanced-col">Timeout</th><th>Env Status</th><th>Action</th></tr></thead>
                 <tbody id="cfg-body"></tbody>
               </table>
             </div>
@@ -1978,6 +2102,7 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
               const thinkingBudget = r.mode === "text" ? (cfg.thinking_budget_tokens || "") : "";
               const maxTokens = r.mode === "text" ? (cfg.max_output_tokens || "") : "";
               const requestTimeout = r.mode === "text" ? (cfg.request_timeout_seconds || "") : "";
+              const streamingEnabled = r.mode === "text" ? Boolean(cfg.streaming_enabled) : false;
               const tr = document.createElement("tr");
               const envStatus = keyEnv
                 ? (keyFound ? '<span class="badge">found</span>' : '<span class="badge badge-missing">missing</span>')
@@ -1989,6 +2114,7 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
                 <td><input id="b-${{r.row_key}}" value="${{baseUrl}}" /></td>
                 <td><select id="k-${{r.row_key}}">${{envOptions(keyEnv)}}</select></td>
                 <td>${{r.mode === "text" ? `<select id="t-${{r.row_key}}"><option value="auto"${{thinkingMode==="auto"?" selected":""}}>auto</option><option value="enabled"${{thinkingMode==="enabled"?" selected":""}}>enabled</option><option value="disabled"${{thinkingMode==="disabled"?" selected":""}}>disabled</option></select>` : '<span class="muted">-</span>'}}</td>
+                <td class="advanced-col">${{r.mode === "text" ? `<input id="s-${{r.row_key}}" type="checkbox"${{streamingEnabled ? " checked" : ""}} />` : '<span class="muted">-</span>'}}</td>
                 <td class="advanced-col">${{r.mode === "text" ? `<input id="g-${{r.row_key}}" value="${{thinkingBudget}}" placeholder="optional" />` : '<span class="muted">-</span>'}}</td>
                 <td class="advanced-col">${{r.mode === "text" ? `<input id="o-${{r.row_key}}" value="${{maxTokens}}" placeholder="1200" />` : '<span class="muted">-</span>'}}</td>
                 <td class="advanced-col">${{r.mode === "text" ? `<input id="x-${{r.row_key}}" value="${{requestTimeout}}" placeholder="90" />` : '<span class="muted">-</span>'}}</td>
@@ -2018,7 +2144,8 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
                 thinking_mode: document.getElementById(`t-${{rowKey}}`).value,
                 thinking_budget_tokens: thinking_budget_tokens ? Number(thinking_budget_tokens) : null,
                 max_output_tokens: max_output_tokens ? Number(max_output_tokens) : null,
-                request_timeout_seconds: request_timeout_seconds ? Number(request_timeout_seconds) : null
+                request_timeout_seconds: request_timeout_seconds ? Number(request_timeout_seconds) : null,
+                streaming_enabled: document.getElementById(`s-${{rowKey}}`).checked
               }};
             }} else if (row.mode === "image") {{
               payload = {{
@@ -2655,6 +2782,48 @@ def get_pipeline_run(run_id: str, db: Session = Depends(get_db)) -> RunView:
     return _serialize_run(db, run)
 
 
+@router.get("/runs/{run_id}/events")
+async def stream_run_events(
+    run_id: str,
+    request: Request,
+    since_id: str | None = Query(default=None),
+    once: bool = Query(default=False),
+    poll_seconds: float = Query(default=1.0, ge=0.2, le=10.0),
+) -> StreamingResponse:
+    async def event_generator():
+        seen: set[str] = set()
+        if since_id:
+            seen.add(since_id)
+        with SessionLocal() as db:
+            try:
+                get_run(db, run_id)
+            except ValueError:
+                yield _sse_event("error", {"detail": f"run not found: {run_id}"})
+                return
+        while True:
+            if await request.is_disconnected():
+                break
+            emitted = False
+            with SessionLocal() as db:
+                for event in run_trace_events(db, run_id, limit=200):
+                    if event.id in seen:
+                        continue
+                    seen.add(event.id)
+                    emitted = True
+                    yield _sse_event("agent_trace", _serialize_trace_event(event), event.id)
+            if once:
+                break
+            if not emitted:
+                yield _sse_event("heartbeat", {"run_id": run_id})
+            await asyncio.sleep(poll_seconds)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.get("/runs/{run_id}/deliverables", response_model=DeliverablesResponse)
 def get_run_deliverables(run_id: str, db: Session = Depends(get_db)) -> DeliverablesResponse:
     try:
@@ -3042,6 +3211,7 @@ def patch_agent_config(agent_name: str, payload: AgentApiConfigPatchRequest, db:
             thinking_budget_tokens=payload.thinking_budget_tokens,
             max_output_tokens=payload.max_output_tokens,
             request_timeout_seconds=payload.request_timeout_seconds,
+            streaming_enabled=payload.streaming_enabled,
             extra=payload.extra,
         )
     except ValueError as exc:

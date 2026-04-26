@@ -23,6 +23,7 @@ def _default_values() -> dict:
         "thinking_budget_tokens": None,
         "max_output_tokens": None,
         "request_timeout_seconds": None,
+        "streaming_enabled": False,
         "extra": {},
     }
 
@@ -113,6 +114,7 @@ def upsert_agent_config(
     thinking_budget_tokens: int | None = None,
     max_output_tokens: int | None = None,
     request_timeout_seconds: int | None = None,
+    streaming_enabled: bool | None = None,
     extra: dict | None,
 ) -> AgentApiConfig:
     _validate_env_name(api_key_env)
@@ -169,6 +171,7 @@ def upsert_agent_config(
             thinking_budget_tokens=thinking_budget_tokens,
             max_output_tokens=max_output_tokens,
             request_timeout_seconds=request_timeout_seconds,
+            streaming_enabled=bool(streaming_enabled) if streaming_enabled is not None else bool(defaults["streaming_enabled"]),
             extra=extra_payload,
         )
         db.add(row)
@@ -191,6 +194,8 @@ def upsert_agent_config(
         row.max_output_tokens = max_output_tokens
     if request_timeout_seconds is not None:
         row.request_timeout_seconds = request_timeout_seconds
+    if streaming_enabled is not None:
+        row.streaming_enabled = bool(streaming_enabled)
 
     base_extra = dict(extra) if isinstance(extra, dict) else dict(row.extra or {})
     if has_image_patch:
@@ -319,6 +324,11 @@ def resolve_agent_config(
     image = _resolved_image_config(default_cfg, agent_cfg, text_fallback)
     video = _resolved_video_config(default_cfg, agent_cfg, text_fallback)
     thinking_mode = (agent_cfg.thinking_mode if agent_cfg and agent_cfg.thinking_mode else default_cfg.thinking_mode) or "auto"
+    streaming_enabled = (
+        agent_cfg.streaming_enabled
+        if agent_cfg and agent_cfg.streaming_enabled is not None
+        else default_cfg.streaming_enabled
+    )
     supports_thinking = provider_name == "kimi" and model_name.startswith("kimi-k")
     return {
         "agent_name": agent_name,
@@ -344,6 +354,7 @@ def resolve_agent_config(
             if agent_cfg and agent_cfg.request_timeout_seconds is not None
             else default_cfg.request_timeout_seconds
         ),
+        "streaming_enabled": bool(streaming_enabled),
         "extra": (agent_cfg.extra if agent_cfg and agent_cfg.extra else default_cfg.extra),
         "image_provider_name": image["provider_name"],
         "image_model_name": image["model_name"],
@@ -376,6 +387,7 @@ def resolve_agent_runtime(config: dict) -> dict:
         "thinking_budget_tokens": config.get("thinking_budget_tokens"),
         "max_output_tokens": config.get("max_output_tokens"),
         "request_timeout_seconds": config.get("request_timeout_seconds"),
+        "streaming_enabled": bool(config.get("streaming_enabled")),
         "image": {
             "provider_name": config.get("image_provider_name"),
             "model_name": config.get("image_model_name"),

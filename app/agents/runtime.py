@@ -69,6 +69,41 @@ class AgentsRuntime:
         for key in ("thinking_mode", "thinking_budget_tokens", "max_output_tokens", "request_timeout_seconds"):
             if runtime.get(key) is not None:
                 extra[key] = runtime.get(key)
+        streaming_enabled = bool(runtime.get("streaming_enabled") or extra.get("streaming_enabled"))
+        trace_callback = runtime.get("trace_callback")
+        if streaming_enabled:
+            text_chunks: list[str] = []
+            model_used = model
+            estimated_cost = 0.0
+            try:
+                for event in llm.chat_complete_stream(
+                    MultimodalChatRequest(
+                        prompt=prompt,
+                        model=model,
+                        image_urls=image_urls or [],
+                        video_urls=video_urls or [],
+                    ),
+                    api_base_url=runtime.get("api_base_url"),
+                    api_key=runtime.get("api_key"),
+                    extra=extra,
+                ):
+                    if event.type == "text_delta" and event.text:
+                        text_chunks.append(event.text)
+                        if trace_callback:
+                            trace_callback("model_delta", event.text, {"event_type": event.type})
+                    elif event.type == "reasoning_summary" and event.text and trace_callback:
+                        trace_callback("reasoning_summary", event.text, {"event_type": event.type})
+                    elif event.type == "completed":
+                        model_used = str(event.payload.get("model") or model_used)
+                        estimated_cost = float(event.payload.get("estimated_cost") or 0.0)
+                        if event.payload.get("text") and not text_chunks:
+                            text_chunks.append(str(event.payload["text"]))
+                        if trace_callback:
+                            trace_callback("model_stream_completed", "Model stream completed.", event.payload)
+                return "".join(text_chunks), model_used, estimated_cost
+            except Exception:
+                if trace_callback:
+                    trace_callback("model_stream_fallback", "Streaming failed; falling back to non-streaming call.", {})
         response = llm.chat_complete(
             MultimodalChatRequest(
                 prompt=prompt,

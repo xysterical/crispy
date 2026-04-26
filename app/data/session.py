@@ -145,8 +145,27 @@ def apply_runtime_migrations(target_engine) -> None:
     _add_column_if_missing(target_engine, "agent_api_config", "thinking_budget_tokens", "ALTER TABLE agent_api_config ADD COLUMN thinking_budget_tokens INTEGER")
     _add_column_if_missing(target_engine, "agent_api_config", "max_output_tokens", "ALTER TABLE agent_api_config ADD COLUMN max_output_tokens INTEGER")
     _add_column_if_missing(target_engine, "agent_api_config", "request_timeout_seconds", "ALTER TABLE agent_api_config ADD COLUMN request_timeout_seconds INTEGER")
+    _add_column_if_missing(target_engine, "agent_api_config", "streaming_enabled", "ALTER TABLE agent_api_config ADD COLUMN streaming_enabled BOOLEAN")
 
     with target_engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS agent_trace_event ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "run_id VARCHAR(36) NOT NULL, "
+                "stage_task_id VARCHAR(36), "
+                "stage_name VARCHAR(64) NOT NULL, "
+                "agent_name VARCHAR(64) NOT NULL, "
+                "event_type VARCHAR(64) NOT NULL, "
+                "visibility VARCHAR(16), "
+                "message TEXT, "
+                "provider_name VARCHAR(64), "
+                "model_name VARCHAR(128), "
+                "payload JSON, "
+                "created_at DATETIME"
+                ")"
+            )
+        )
         conn.execute(text("UPDATE product SET product_code = 'legacy_' || id WHERE product_code IS NULL OR product_code = ''"))
         conn.execute(
             text(
@@ -166,6 +185,7 @@ def apply_runtime_migrations(target_engine) -> None:
         conn.execute(text("UPDATE gm_memory SET memory_scope = 'industry' WHERE memory_scope IS NULL OR memory_scope = ''"))
         conn.execute(text("UPDATE gm_memory SET source_type = 'feedback_import' WHERE source_type IS NULL OR source_type = ''"))
         conn.execute(text("UPDATE agent_api_config SET thinking_mode = 'auto' WHERE thinking_mode IS NULL OR thinking_mode = ''"))
+        conn.execute(text("UPDATE agent_api_config SET streaming_enabled = 0 WHERE streaming_enabled IS NULL"))
         conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_product_product_code ON product(product_code)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pipeline_run_product_code ON pipeline_run(product_code)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pipeline_run_industry_code ON pipeline_run(industry_code)"))
@@ -178,6 +198,9 @@ def apply_runtime_migrations(target_engine) -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_variant_asset_run_id ON variant_asset(run_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_variant_review_run_variant ON variant_review(run_variant_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_variant_score_run_variant ON variant_score(run_variant_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_trace_run_id ON agent_trace_event(run_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_trace_stage_task ON agent_trace_event(stage_task_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_trace_created_at ON agent_trace_event(created_at)"))
 
 
 def get_db() -> Generator[Session, None, None]:

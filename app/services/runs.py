@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.agents.registry import STAGE_CONTRACT_VERSION, stage_agent, stage_collaborators
 from app.agents.runtime import AgentsRuntime
 from app.data.models import (
+    AgentTraceEvent,
     Artifact,
     Campaign,
     GmMemory,
@@ -57,6 +58,64 @@ REGENERATABLE_STAGES = {
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _truncate_text(value: str, limit: int = 800) -> str:
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit]}..."
+
+
+def _payload_shape(payload: dict | None) -> dict:
+    payload = payload or {}
+    shape: dict = {}
+    for key, value in payload.items():
+        if isinstance(value, list):
+            shape[key] = {"type": "list", "count": len(value)}
+        elif isinstance(value, dict):
+            shape[key] = {"type": "dict", "keys": list(value.keys())[:12]}
+        else:
+            shape[key] = _truncate_text(str(value), 160)
+    return shape
+
+
+def add_agent_trace_event(
+    db: Session,
+    *,
+    run_id: str,
+    stage_task_id: str | None,
+    stage_name: str,
+    agent_name: str,
+    event_type: str,
+    message: str,
+    visibility: str = "user",
+    provider_name: str | None = None,
+    model_name: str | None = None,
+    payload: dict | None = None,
+) -> AgentTraceEvent:
+    event = AgentTraceEvent(
+        run_id=run_id,
+        stage_task_id=stage_task_id,
+        stage_name=stage_name,
+        agent_name=agent_name,
+        event_type=event_type,
+        visibility=visibility,
+        message=message,
+        provider_name=provider_name,
+        model_name=model_name,
+        payload=payload or {},
+    )
+    db.add(event)
+    db.flush()
+    return event
+
+
+def run_trace_events(db: Session, run_id: str, *, limit: int = 200, visibility: str | None = None) -> list[AgentTraceEvent]:
+    stmt = select(AgentTraceEvent).where(AgentTraceEvent.run_id == run_id)
+    if visibility:
+        stmt = stmt.where(AgentTraceEvent.visibility == visibility)
+    rows = list(db.scalars(stmt.order_by(desc(AgentTraceEvent.created_at)).limit(limit)).all())
+    return list(reversed(rows))
 
 
 def _get_or_create_workspace(db: Session, name: str) -> Workspace:
@@ -265,6 +324,16 @@ def approve_stage(db: Session, run_id: str, notes: str = "") -> PipelineRun:
     task.approved_at = utcnow()
     task.review_notes = notes
     task.failure_category = None
+    add_agent_trace_event(
+        db,
+        run_id=run.id,
+        stage_task_id=task.id,
+        stage_name=task.stage_name,
+        agent_name=(task.metadata_json or {}).get("agent_name") or "human_reviewer",
+        event_type="human_approved",
+        message=f"Human approved stage {run.current_stage}.",
+        payload={"notes": notes},
+    )
 
     nxt = next_stage(run.current_stage, run.pipeline_mode)
     if nxt is None:
@@ -291,6 +360,16 @@ def reject_stage(db: Session, run_id: str, notes: str = "") -> PipelineRun:
     task.review_notes = notes
     task.failure_category = TaskFailureCategory.HUMAN_REJECT.value
     task.metadata_json = {**(task.metadata_json or {}), "human_feedback": notes}
+    add_agent_trace_event(
+        db,
+        run_id=run.id,
+        stage_task_id=task.id,
+        stage_name=task.stage_name,
+        agent_name=(task.metadata_json or {}).get("agent_name") or "human_reviewer",
+        event_type="human_rejected",
+        message=f"Human rejected stage {run.current_stage}; it was queued for rerun.",
+        payload={"notes": notes},
+    )
     run.status = RunStatus.RUNNING.value
     run.updated_at = utcnow()
     db.flush()
@@ -869,6 +948,51 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
             "resolved_api": resolved,
             "persona_snapshots": _persona_snapshots(db, [lead_agent, *collaborators]),
         }
+        add_agent_trace_event(
+            db,
+            run_id=run.id,
+            stage_task_id=task.id,
+            stage_name=task.stage_name,
+            agent_name=lead_agent,
+            event_type="started",
+            message=f"{lead_agent} started {task.stage_name}.",
+            provider_name=provider_name,
+            model_name=model_name,
+            payload={
+                "attempt": task.attempt,
+                "collaborators": collaborators,
+                "stage_contract_version": STAGE_CONTRACT_VERSION,
+            },
+        )
+        add_agent_trace_event(
+            db,
+            run_id=run.id,
+            stage_task_id=task.id,
+            stage_name=task.stage_name,
+            agent_name=lead_agent,
+            event_type="input_summary",
+            message=f"{lead_agent} received stage inputs.",
+            provider_name=provider_name,
+            model_name=model_name,
+            payload={"input_shape": _payload_shape(task.input_payload)},
+        )
+
+        def trace_model_event(event_type: str, message: str, payload: dict | None = None) -> None:
+            add_agent_trace_event(
+                db,
+                run_id=run.id,
+                stage_task_id=task.id,
+                stage_name=task.stage_name,
+                agent_name=lead_agent,
+                event_type=event_type,
+                message=_truncate_text(message, 500),
+                provider_name=provider_name,
+                model_name=model_name,
+                payload=payload or {},
+            )
+            db.flush()
+
+        runtime_config = {**runtime_config, "trace_callback": trace_model_event}
 
         output = None
         if task.stage_name == "intake":
@@ -966,6 +1090,24 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
                     )
                 )
                 _variant_library_sync(db, run, task, {"videos": [video_payload]})
+                add_agent_trace_event(
+                    db,
+                    run_id=run.id,
+                    stage_task_id=task.id,
+                    stage_name=task.stage_name,
+                    agent_name=lead_agent,
+                    event_type="artifact_created",
+                    message=f"Video asset submitted for variant {video_payload.get('variant_id')}.",
+                    provider_name=provider_name,
+                    model_name=model_name,
+                    payload={
+                        "variant_id": video_payload.get("variant_id"),
+                        "asset_type": "video",
+                        "uri": video_payload.get("video_uri"),
+                        "external_task_id": video_payload.get("external_task_id"),
+                        "generation_status": video_payload.get("generation_status"),
+                    },
+                )
                 run.updated_at = utcnow()
                 db.commit()
 
@@ -1018,6 +1160,18 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
             )
 
         _variant_library_sync(db, run, task, output.payload)
+        add_agent_trace_event(
+            db,
+            run_id=run.id,
+            stage_task_id=task.id,
+            stage_name=task.stage_name,
+            agent_name=lead_agent,
+            event_type="handoff",
+            message=f"{lead_agent} produced a handoff payload for downstream review.",
+            provider_name=provider_name,
+            model_name=model_name,
+            payload={"output_shape": _payload_shape(output.payload), "artifact_count": len(output.artifacts)},
+        )
 
         if task.stage_name == "evaluation_selection" and output.scorecard and output.forecast:
             scorecard = output.scorecard
@@ -1034,9 +1188,41 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
                     forecast=output.forecast.model_dump(),
                 )
             )
+            ranked = ((output.payload or {}).get("evaluation_result") or {}).get("ranked_variants") or []
+            winner = ((output.payload or {}).get("selected_deliverables") or {}).get("winner_variant_id")
+            add_agent_trace_event(
+                db,
+                run_id=run.id,
+                stage_task_id=task.id,
+                stage_name=task.stage_name,
+                agent_name=lead_agent,
+                event_type="decision",
+                message=f"{lead_agent} ranked variants and recommended winner {winner or '-'}.",
+                provider_name=provider_name,
+                model_name=model_name,
+                payload={
+                    "winner_variant_id": winner,
+                    "ranked_count": len(ranked),
+                    "top_variants": ranked[:3],
+                    "score": output.scorecard.total_score,
+                    "recommended_action": output.forecast.recommended_action,
+                },
+            )
 
         task.status = TaskStatus.WAITING_REVIEW.value
         run.status = RunStatus.WAITING_REVIEW.value
+        add_agent_trace_event(
+            db,
+            run_id=run.id,
+            stage_task_id=task.id,
+            stage_name=task.stage_name,
+            agent_name=lead_agent,
+            event_type="completed",
+            message=f"{lead_agent} completed {task.stage_name}; waiting for human review.",
+            provider_name=provider_name,
+            model_name=model_name,
+            payload={"model_used": output.model_used, "estimated_cost": output.estimated_cost},
+        )
         db.flush()
         return task
     except Exception as exc:  # pragma: no cover
@@ -1049,6 +1235,18 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
         task.completed_at = utcnow()
         run.status = RunStatus.FAILED.value
         run.updated_at = utcnow()
+        add_agent_trace_event(
+            db,
+            run_id=run.id,
+            stage_task_id=task.id,
+            stage_name=task.stage_name,
+            agent_name=(task.metadata_json or {}).get("agent_name") or stage_agent(task.stage_name),
+            event_type="failed",
+            message=f"{task.stage_name} failed: {_truncate_text(str(exc), 240)}",
+            provider_name=((task.metadata_json or {}).get("resolved_api") or {}).get("provider_name"),
+            model_name=((task.metadata_json or {}).get("resolved_api") or {}).get("model_name"),
+            payload={"failure_category": task.failure_category, "provider_errors": provider_errors or []},
+        )
         db.flush()
         return task
 
@@ -1539,6 +1737,35 @@ def regenerate_variant_assets(
             },
         ],
     }
+    add_agent_trace_event(
+        db,
+        run_id=run.id,
+        stage_task_id=task.id,
+        stage_name=stage_name,
+        agent_name=lead_agent,
+        event_type="regeneration_started",
+        message=f"{lead_agent} started regeneration for variant {variant_id}.",
+        provider_name=provider_name,
+        model_name=model_name,
+        payload={"variant_id": variant_id, "target_stage": stage_name, "reason": reason, "scope": scope},
+    )
+
+    def trace_regeneration_model_event(event_type: str, message: str, payload: dict | None = None) -> None:
+        add_agent_trace_event(
+            db,
+            run_id=run.id,
+            stage_task_id=task.id,
+            stage_name=stage_name,
+            agent_name=lead_agent,
+            event_type=event_type,
+            message=_truncate_text(message, 500),
+            provider_name=provider_name,
+            model_name=model_name,
+            payload=payload or {},
+        )
+        db.flush()
+
+    runtime_config = {**runtime_config, "trace_callback": trace_regeneration_model_event}
 
     if stage_name == "copy_image_generation":
         intake_payload = task.input_payload.get("intake") or {}
@@ -1603,6 +1830,24 @@ def regenerate_variant_assets(
             )
         )
     _variant_library_sync(db, run, task, output.payload, idempotency_scope=scope)
+    add_agent_trace_event(
+        db,
+        run_id=run.id,
+        stage_task_id=task.id,
+        stage_name=stage_name,
+        agent_name=lead_agent,
+        event_type="regeneration_completed",
+        message=f"{lead_agent} completed regeneration for variant {variant_id}.",
+        provider_name=provider_name,
+        model_name=model_name,
+        payload={
+            "variant_id": variant_id,
+            "target_stage": stage_name,
+            "scope": scope,
+            "output_shape": _payload_shape(output.payload),
+            "artifact_count": len(output.artifacts),
+        },
+    )
     variant.regenerate_requested = False
     variant.review_status = "regenerated"
     variant.status = VariantLifecycleStatus.GENERATED.value
@@ -1672,6 +1917,16 @@ def review_variant(
             tags=tags,
             metadata_json=metadata,
         )
+    )
+    add_agent_trace_event(
+        db,
+        run_id=run_id,
+        stage_task_id=None,
+        stage_name=metadata.get("target_stage") or "variant_review",
+        agent_name="human_reviewer",
+        event_type=action,
+        message=f"Human review action {action} applied to variant {variant_id}.",
+        payload={"variant_id": variant_id, "comment": comment, "tags": tags, "metadata": metadata},
     )
     db.flush()
     return variant
