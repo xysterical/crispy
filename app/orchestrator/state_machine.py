@@ -17,6 +17,7 @@ PIPELINE_STAGE_PLANS: dict[str, list[str]] = {
         StageName.PLANNING.value,
         StageName.DIVERGENCE.value,
         StageName.COPY_IMAGE_GENERATION.value,
+        StageName.VISUAL_QUALITY_ASSESSMENT.value,
         StageName.EVALUATION_SELECTION.value,
     ],
     PipelineMode.VIDEO_ONLY.value: [
@@ -26,6 +27,7 @@ PIPELINE_STAGE_PLANS: dict[str, list[str]] = {
         StageName.VIDEO_SCRIPTING.value,
         StageName.STORYBOARD_IMAGE_GENERATION.value,
         StageName.VIDEO_GENERATION.value,
+        StageName.VISUAL_QUALITY_ASSESSMENT.value,
         StageName.EVALUATION_SELECTION.value,
     ],
     PipelineMode.FULL_MULTIMODAL.value: [
@@ -36,6 +38,7 @@ PIPELINE_STAGE_PLANS: dict[str, list[str]] = {
         StageName.VIDEO_SCRIPTING.value,
         StageName.STORYBOARD_IMAGE_GENERATION.value,
         StageName.VIDEO_GENERATION.value,
+        StageName.VISUAL_QUALITY_ASSESSMENT.value,
         StageName.EVALUATION_SELECTION.value,
     ],
 }

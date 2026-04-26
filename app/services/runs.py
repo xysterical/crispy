@@ -44,6 +44,7 @@ from app.schemas.contracts import (
 from app.services.agent_api_configs import resolve_agent_config, resolve_agent_runtime
 from app.services.creative_specs import resolve_creative_specs
 from app.services.personas import get_persona
+from app.services.visual_qa import inspect_visual_asset
 
 
 runtime = AgentsRuntime()
@@ -467,6 +468,16 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
         return {**base, "video_scripts": _stage_output_optional(db, run.id, "video_scripting")}
     if task.stage_name == "video_generation":
         return {**base, "video_scripts": _stage_output_optional(db, run.id, "video_scripting")}
+    if task.stage_name == "visual_quality_assessment":
+        return {
+            **base,
+            "variants": _stage_output_optional(db, run.id, "divergence"),
+            "intake": _stage_output_optional(db, run.id, "intake"),
+            "copy_images": _stage_output_optional(db, run.id, "copy_image_generation"),
+            "video_scripts": _stage_output_optional(db, run.id, "video_scripting"),
+            "storyboards": _stage_output_optional(db, run.id, "storyboard_image_generation"),
+            "videos": _stage_output_optional(db, run.id, "video_generation"),
+        }
     if task.stage_name == "evaluation_selection":
         return {
             **base,
@@ -474,6 +485,7 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
             "copy_images": _stage_output_optional(db, run.id, "copy_image_generation"),
             "video_scripts": _stage_output_optional(db, run.id, "video_scripting"),
             "videos": _stage_output_optional(db, run.id, "video_generation"),
+            "visual_quality": _stage_output_optional(db, run.id, "visual_quality_assessment"),
         }
     return base
 
@@ -624,6 +636,19 @@ def _upsert_variant_asset(
     failure_category: str | None = None,
     error_message: str | None = None,
 ) -> VariantAsset:
+    payload = dict(payload or {})
+    if asset_type in {"image", "storyboard_frame", "video"}:
+        expected_ratio = None
+        if asset_type == "video":
+            expected_ratio = payload.get("output_ratio") or payload.get("aspect_ratio")
+        else:
+            expected_ratio = payload.get("aspect_ratio")
+        payload["visual_qa"] = inspect_visual_asset(
+            asset_type=asset_type,
+            uri=uri,
+            payload=payload,
+            expected_ratio=expected_ratio,
+        )
     row = db.scalar(
         select(VariantAsset).where(
             VariantAsset.run_variant_id == variant.id,
@@ -846,6 +871,43 @@ def _variant_library_sync(
                 error_message=error_message,
             )
             variant.status = VariantLifecycleStatus.GENERATED.value
+        return
+
+    if stage_name == "visual_quality_assessment":
+        reports = {
+            item.get("variant_id"): item
+            for item in output_payload.get("reports", [])
+            if isinstance(item, dict) and item.get("variant_id")
+        }
+        for summary in output_payload.get("variant_summaries", []):
+            variant = get_run_variant(db, run.id, summary.get("variant_id", ""))
+            report = reports.get(summary.get("variant_id")) or {}
+            _upsert_variant_score(
+                db,
+                variant=variant,
+                run_id=run.id,
+                stage_name=stage_name,
+                score_type="visual_quality",
+                total_score=summary.get("visual_score"),
+                compliance_level=summary.get("qa_status"),
+                recommended_action=summary.get("recommended_action"),
+                sub_scores={
+                    "visual_score": summary.get("visual_score"),
+                    "blocking_issue_count": summary.get("blocking_issue_count", 0),
+                },
+                reasons=summary.get("issues") or report.get("blocking_issues") or [],
+                forecast={},
+                payload=report or summary,
+            )
+            variant.metadata_json = {
+                **(variant.metadata_json or {}),
+                "visual_quality": report or summary,
+            }
+            if summary.get("recommended_action") == "request_regeneration":
+                variant.regenerate_requested = True
+                variant.status = VariantLifecycleStatus.NEEDS_REGENERATION.value
+            if summary.get("recommended_action") in {"manual_review", "wait_for_asset", "request_regeneration"}:
+                variant.review_status = summary.get("recommended_action")
         return
 
     if stage_name == "evaluation_selection":
@@ -1120,6 +1182,22 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
                 runtime_config=runtime_config,
                 on_video_asset=persist_video_asset,
             )
+        elif task.stage_name == "visual_quality_assessment":
+            variants = VariantSet.model_validate(task.input_payload["variants"])
+            output = runtime.run_visual_quality_assessment(
+                run.id,
+                variants,
+                copy_images=task.input_payload.get("copy_images", {}),
+                video_scripts=task.input_payload.get("video_scripts", {}),
+                storyboards=task.input_payload.get("storyboards", {}),
+                videos=task.input_payload.get("videos", {}),
+                intake=task.input_payload.get("intake", {}),
+                business_context=task.input_payload.get("business_context", {}),
+                creative_specs=task.input_payload.get("creative_specs", {}),
+                provider=provider_name,
+                model=model_name,
+                runtime_config=runtime_config,
+            )
         elif task.stage_name == "evaluation_selection":
             variants = VariantSet.model_validate(task.input_payload["variants"])
             copy_bundle = CopyImageBundle.model_validate(task.input_payload.get("copy_images", {}))
@@ -1131,6 +1209,7 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
                 copy_bundle,
                 script_pack,
                 video_bundle,
+                task.input_payload.get("visual_quality", {}),
                 provider=provider_name,
                 model=model_name,
                 runtime_config=runtime_config,
@@ -1319,6 +1398,8 @@ def _variant_quality_summary(
     required_asset_types = _required_asset_types_for_run(run)
     missing_required_assets = sorted(asset_type for asset_type in required_asset_types if not asset_counts.get(asset_type))
     media_issues: list[dict] = []
+    visual_qa_flags: list[str] = []
+    visual_qa_scores: list[float] = []
     for asset in assets:
         if asset.asset_type == "image":
             issue = _uri_file_issue(asset.uri)
@@ -1330,9 +1411,17 @@ def _variant_quality_summary(
             issue = None
         if issue:
             media_issues.append({"asset_id": asset.id, "asset_type": asset.asset_type, "issue": issue, "uri": asset.uri})
+        visual_qa = (asset.payload or {}).get("visual_qa") or {}
+        for flag in visual_qa.get("flags") or []:
+            visual_qa_flags.append(str(flag))
+        if isinstance(visual_qa.get("score"), (int, float)):
+            visual_qa_scores.append(float(visual_qa["score"]))
+        if visual_qa.get("status") == "fail":
+            media_issues.append({"asset_id": asset.id, "asset_type": asset.asset_type, "issue": "visual_qa_failed", "uri": asset.uri})
 
     evaluation = _latest_score(scores, "evaluation")
     compliance = _latest_score(scores, "compliance")
+    visual_quality = _latest_score(scores, "visual_quality")
     compliance_level = (compliance.compliance_level if compliance else None) or (evaluation.compliance_level if evaluation else None)
     score = row.current_score if row.current_score is not None else (evaluation.total_score if evaluation else None)
     operator_tags = sorted({tag for review in reviews for tag in (review.tags or [])})
@@ -1349,6 +1438,18 @@ def _variant_quality_summary(
         quality_flags.append("missing_assets")
     if media_issues:
         quality_flags.append("media_issue")
+    if visual_quality and visual_quality.recommended_action in {"manual_review", "wait_for_asset"}:
+        quality_flags.append("visual_qa_attention")
+    if visual_quality and visual_quality.recommended_action == "request_regeneration":
+        quality_flags.append("visual_qa_failed")
+    if visual_quality and visual_quality.compliance_level in {"fail", "pending", "warn"}:
+        quality_flags.append(f"visual_qa_{visual_quality.compliance_level}")
+    if visual_qa_flags:
+        quality_flags.extend(visual_qa_flags)
+    if any(flag in visual_qa_flags for flag in {"visual_qa_needs_frame_review", "visual_qa_remote_unchecked"}):
+        quality_flags.append("visual_qa_attention")
+    if any(flag in visual_qa_flags for flag in {"visual_qa_placeholder", "visual_qa_empty_video", "visual_qa_decode_error"}):
+        quality_flags.append("visual_qa_failed")
     if asset_status_counts.get("processing"):
         quality_flags.append("processing_assets")
     if asset_status_counts.get("failed"):
@@ -1364,7 +1465,7 @@ def _variant_quality_summary(
     if not any(flag in quality_flags for flag in ["missing_assets", "media_issue", "processing_assets", "failed_assets", "compliance_attention", "needs_regeneration", "rejected"]):
         quality_flags.append("ready_to_review")
 
-    if "failed_assets" in quality_flags or "media_issue" in quality_flags or "operator_quality_issue" in quality_flags:
+    if "failed_assets" in quality_flags or "media_issue" in quality_flags or "operator_quality_issue" in quality_flags or "visual_qa_failed" in quality_flags:
         quality_status = "asset_issue"
     elif "processing_assets" in quality_flags:
         quality_status = "processing"
@@ -1389,6 +1490,11 @@ def _variant_quality_summary(
         "required_asset_types": sorted(required_asset_types),
         "missing_required_assets": missing_required_assets,
         "media_issues": media_issues,
+        "visual_qa_flags": sorted(set(visual_qa_flags)),
+        "visual_qa_min_score": min(visual_qa_scores) if visual_qa_scores else None,
+        "visual_quality_score": visual_quality.total_score if visual_quality else None,
+        "visual_quality_status": visual_quality.compliance_level if visual_quality else None,
+        "visual_quality_recommended_action": visual_quality.recommended_action if visual_quality else None,
         "score": score,
         "compliance_level": compliance_level,
         "review_status": row.review_status,

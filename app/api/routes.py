@@ -93,6 +93,7 @@ DEFAULT_GENERATED_ARTIFACT_TYPES = {
     "storyboard_frame",
     "generated_video",
     "video_bundle",
+    "visual_quality_report",
     "evaluation_selection",
 }
 
@@ -958,8 +959,8 @@ def _dashboard_html() -> str:
 
           function qualityChipClass(flag){
             if (["ready_to_review", "winner", "shortlisted"].includes(flag)) return "good";
-            if (["processing_assets", "missing_assets", "compliance_attention", "low_score", "pending_review"].includes(flag)) return "warn";
-            if (["failed_assets", "media_issue", "operator_quality_issue", "needs_regeneration", "rejected"].includes(flag)) return "bad";
+            if (["processing_assets", "missing_assets", "compliance_attention", "low_score", "pending_review", "visual_qa_attention", "visual_qa_needs_frame_review", "visual_qa_remote_unchecked", "visual_qa_aspect_mismatch", "visual_qa_low_information", "visual_qa_video_header_unverified"].includes(flag)) return "warn";
+            if (["failed_assets", "media_issue", "operator_quality_issue", "needs_regeneration", "rejected", "visual_qa_failed", "visual_qa_placeholder", "visual_qa_empty_video", "visual_qa_decode_error", "visual_qa_empty_file", "visual_qa_missing_file"].includes(flag)) return "bad";
             return "";
           }
 
@@ -1040,6 +1041,8 @@ def _dashboard_html() -> str:
                     <option value="processing_assets" ${variantBoardFilters.quality === "processing_assets" ? "selected" : ""}>Processing assets</option>
                     <option value="failed_assets" ${variantBoardFilters.quality === "failed_assets" ? "selected" : ""}>Failed assets</option>
                     <option value="media_issue" ${variantBoardFilters.quality === "media_issue" ? "selected" : ""}>Media issue</option>
+                    <option value="visual_qa_attention" ${variantBoardFilters.quality === "visual_qa_attention" ? "selected" : ""}>Visual QA attention</option>
+                    <option value="visual_qa_failed" ${variantBoardFilters.quality === "visual_qa_failed" ? "selected" : ""}>Visual QA failed</option>
                     <option value="operator_quality_issue" ${variantBoardFilters.quality === "operator_quality_issue" ? "selected" : ""}>Operator quality issue</option>
                     <option value="missing_assets" ${variantBoardFilters.quality === "missing_assets" ? "selected" : ""}>Missing assets</option>
                     <option value="compliance_attention" ${variantBoardFilters.quality === "compliance_attention" ? "selected" : ""}>Compliance attention</option>
@@ -2352,6 +2355,7 @@ def _assets_dashboard_html() -> str:
                   <option value="storyboard_pack">storyboard_pack</option>
                   <option value="generated_video">generated_video</option>
                   <option value="video_bundle">video_bundle</option>
+                  <option value="visual_quality_report">visual_quality_report</option>
                   <option value="evaluation_selection">evaluation_selection</option>
                 </select>
               </div>

@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.registry import get_agent_spec
 from app.data.models import AgentApiConfig
 
 
@@ -26,6 +27,35 @@ def _default_values() -> dict:
         "streaming_enabled": False,
         "extra": {},
     }
+
+
+def _agent_default_values(agent_name: str) -> dict:
+    defaults = _default_values()
+    if agent_name == "visual_qa_agent":
+        return {
+            **defaults,
+            "provider_name": "deepseek",
+            "model_name": "deepseek-v3.2",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "api_key_env": "CRISPY_API_KEY_DEEPSEEK",
+            "max_output_tokens": 1800,
+            "request_timeout_seconds": 90,
+        }
+    return defaults
+
+
+def ensure_builtin_agent_config(db: Session, agent_name: str) -> AgentApiConfig | None:
+    if agent_name != "visual_qa_agent":
+        return None
+    row = db.scalar(select(AgentApiConfig).where(AgentApiConfig.agent_name == agent_name))
+    if row:
+        return row
+    # Ensure the agent exists in the persona/registry catalog before creating a built-in row.
+    get_agent_spec(agent_name)
+    row = AgentApiConfig(agent_name=agent_name, **_agent_default_values(agent_name))
+    db.add(row)
+    db.flush()
+    return row
 
 
 def _validate_env_name(env_name: str | None) -> None:
@@ -90,6 +120,7 @@ def ensure_default_agent_config(db: Session) -> AgentApiConfig:
 
 def list_agent_configs(db: Session) -> list[AgentApiConfig]:
     ensure_default_agent_config(db)
+    ensure_builtin_agent_config(db, "visual_qa_agent")
     rows = db.scalars(select(AgentApiConfig).order_by(AgentApiConfig.agent_name.asc())).all()
     return rows
 
@@ -141,7 +172,7 @@ def upsert_agent_config(
     )
 
     if not row:
-        defaults = _default_values()
+        defaults = _agent_default_values(agent_name)
         extra_payload = dict(extra) if isinstance(extra, dict) else dict(defaults["extra"])
         merged_image = _merge_modality_config(
             _modality_config_from_extra(extra_payload, "image_config"),
@@ -302,6 +333,8 @@ def resolve_agent_config(
 ) -> dict:
     default_cfg = ensure_default_agent_config(db)
     agent_cfg = db.scalar(select(AgentApiConfig).where(AgentApiConfig.agent_name == agent_name))
+    if not agent_cfg:
+        agent_cfg = ensure_builtin_agent_config(db, agent_name)
     provider_name = (
         (agent_cfg.provider_name if agent_cfg and agent_cfg.provider_name else None)
         or default_cfg.provider_name

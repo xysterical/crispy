@@ -51,7 +51,7 @@ def test_pipeline_run_can_progress_with_human_gates(client):
         assert run["current_stage"] == stage
         assert run["status"] == "waiting_review"
         current_task = [t for t in run["stage_tasks"] if t["stage_name"] == stage][0]
-        assert current_task["metadata_json"]["stage_contract_version"] == "commercial-pilot-v1"
+        assert current_task["metadata_json"]["stage_contract_version"] == "commercial-pilot-v2"
         assert current_task["metadata_json"]["persona_snapshots"]
         stage_events = [event for event in run["trace_events"] if event["stage_name"] == stage]
         assert any(event["event_type"] == "started" for event in stage_events)
@@ -122,6 +122,9 @@ def test_run_deliverables_and_variants_endpoints(client):
     assert variants_payload["items"][0]["assets"]
     assert variants_payload["items"][0]["scores"]
     assert variants_payload["items"][0]["quality_summary"]["required_asset_types"]
+    image_asset = next(asset for item in variants_payload["items"] for asset in item["assets"] if asset["asset_type"] == "image")
+    assert "visual_qa" in image_asset["payload"]
+    assert image_asset["payload"]["visual_qa"]["status"] in {"pass", "warn", "fail"}
 
     winner_variants = client.get(f"/runs/{run_id}/variants", params={"quality": "winner"})
     assert winner_variants.status_code == 200
@@ -139,6 +142,21 @@ def test_run_deliverables_and_variants_endpoints(client):
     deliverables_payload = deliverables.json()
     assert deliverables_payload["winner_variant_id"] is not None
     assert "copy_variant" in deliverables_payload["deliverables"]
+    run_payload = client.get(f"/runs/{run_id}").json()
+    planning_task = next(task for task in run_payload["stage_tasks"] if task["stage_name"] == "planning")
+    divergence_task = next(task for task in run_payload["stage_tasks"] if task["stage_name"] == "divergence")
+    visual_qa_task = next(task for task in run_payload["stage_tasks"] if task["stage_name"] == "visual_quality_assessment")
+    evaluation_task = next(task for task in run_payload["stage_tasks"] if task["stage_name"] == "evaluation_selection")
+    assert planning_task["output_payload"]["strategy_handoff"]["handoff_standard"] == "commercial-pilot-v2"
+    assert divergence_task["output_payload"]["experiment_matrix"]
+    assert visual_qa_task["metadata_json"]["agent_name"] == "visual_qa_agent"
+    assert visual_qa_task["metadata_json"]["resolved_api"]["provider_name"] == "deepseek"
+    assert visual_qa_task["output_payload"]["variant_summaries"]
+    assert visual_qa_task["output_payload"]["model_media_inputs"]["image_count"] > 0
+    assert any(score["score_type"] == "visual_quality" for score in variants_payload["items"][0]["scores"])
+    ranked_first = evaluation_task["output_payload"]["evaluation_result"]["ranked_variants"][0]
+    assert "visual_qa" in ranked_first["sub_scores"]
+    assert any(reason.startswith("visual_qa_agent_status=") for reason in ranked_first["reasons"])
 
 
 def test_variant_review_endpoints_update_variant_library(client):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import mimetypes
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +17,7 @@ from app.providers.llm import (
     decode_placeholder_png,
 )
 from app.providers.media import LocalMediaProvider
+from app.services.visual_qa import inspect_visual_asset
 from app.schemas.contracts import (
     ComplianceLevel,
     ConversionForecast,
@@ -303,6 +305,26 @@ class AgentsRuntime:
             "the connection logic."
         )
 
+    def _business_strategy_system_prompt(self, agent_role: str) -> str:
+        return (
+            f"You are acting as {agent_role} in a commercial advertising creative pipeline. "
+            "Operate like a senior growth strategist, not a generic copywriter. Preserve product truths, "
+            "state assumptions, separate commercial hypothesis from compliance-sensitive claims, and produce "
+            "handoff-ready decisions that another agent can audit. Never hide uncertainty."
+        )
+
+    def _business_strategy_handoff(self, *, stage: str, decisions: list[str], risks: list[str], review_questions: list[str]) -> dict:
+        return {
+            "stage": stage,
+            "decisions": decisions,
+            "risks": risks,
+            "review_questions": review_questions,
+            "handoff_standard": "commercial-pilot-v2",
+        }
+
+    def _local_media_qa(self, *, asset_type: str, uri: str | None, payload: dict | None = None, expected_ratio: str | None = None) -> dict:
+        return inspect_visual_asset(asset_type=asset_type, uri=uri, payload=payload or {}, expected_ratio=expected_ratio)
+
     def run_intake(
         self,
         run_id: str,
@@ -396,8 +418,10 @@ class AgentsRuntime:
     ) -> StageOutput:
         mode = "online_research_enabled" if enable_research else "manual_research_only"
         prompt = (
+            f"{self._business_strategy_system_prompt('Planning Agent')} "
             f"Build planning brief in {mode}. intake={intake.model_dump()} "
-            f"gm_lessons={gm_lessons[:3]}"
+            f"gm_lessons={gm_lessons[:3]}. Return concise strategy, constraints, hypotheses, risk boundaries, "
+            "and reviewer decision questions."
         )
         summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         value_props = intake.business_context.get("key_value_props", [])
@@ -414,7 +438,33 @@ class AgentsRuntime:
             constraints=constraints,
             gm_lessons=gm_lessons[:5],
         )
-        output = {**planning.model_dump(), "planning_mode": mode, "llm_summary": summary}
+        strategy_handoff = self._business_strategy_handoff(
+            stage="planning",
+            decisions=[
+                f"positioning={planning.positioning}",
+                f"primary_audience={planning.audience_priorities[0] if planning.audience_priorities else 'general'}",
+                f"angle_count={len(planning.strategic_angles)}",
+            ],
+            risks=[str(item) for item in constraints] or ["No explicit prohibited claims supplied."],
+            review_questions=[
+                "Are the listed product truths sufficient for generation?",
+                "Should any claim boundary be tightened before variants are generated?",
+                "Which angle should be deprioritized for this market or channel?",
+            ],
+        )
+        output = {
+            **planning.model_dump(),
+            "planning_mode": mode,
+            "llm_summary": summary,
+            "strategy_handoff": strategy_handoff,
+            "commercial_strategy": {
+                "audience": planning.audience_priorities,
+                "positioning": planning.positioning,
+                "angle_portfolio": planning.strategic_angles,
+                "claim_boundaries": planning.constraints,
+                "memory_applied_count": len(gm_lessons[:5]),
+            },
+        }
         uri = self.media.write_text_artifact(run_id, "planning_brief.json", planning.model_dump_json(indent=2))
         return StageOutput(
             payload=output,
@@ -433,7 +483,11 @@ class AgentsRuntime:
         model: str,
         runtime_config: dict | None = None,
     ) -> StageOutput:
-        prompt = f"Generate diverse variants from planning: {planning.model_dump()}"
+        prompt = (
+            f"{self._business_strategy_system_prompt('Variant Strategy Agent')} "
+            f"Generate diverse variants from planning: {planning.model_dump()}. "
+            "Each variant must test a distinct commercial hypothesis with non-overlapping hook logic."
+        )
         summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         variants = []
         for i in range(variant_count):
@@ -449,7 +503,27 @@ class AgentsRuntime:
                 )
             )
         variant_set = VariantSet(variants=variants)
-        output = {**variant_set.model_dump(), "llm_summary": summary}
+        experiment_matrix = [
+            {
+                "variant_id": item.variant_id,
+                "test_axis": item.angle,
+                "hypothesis": item.message,
+                "success_signal": "Higher qualified click-through or stronger reviewer preference than adjacent variants.",
+                "kill_condition": "Weak product relevance, unsupported claim, or visual concept cannot show the product truthfully.",
+            }
+            for item in variants
+        ]
+        output = {
+            **variant_set.model_dump(),
+            "llm_summary": summary,
+            "experiment_matrix": experiment_matrix,
+            "strategy_handoff": self._business_strategy_handoff(
+                stage="divergence",
+                decisions=[f"created {len(variants)} variant hypotheses", "kept variants bound to distinct test axes"],
+                risks=["Variants are heuristic until reviewed against generated media."],
+                review_questions=["Are the variants commercially distinct?", "Should any variant be killed before paid generation?"],
+            ),
+        }
         uri = self.media.write_text_artifact(run_id, "variant_set.json", variant_set.model_dump_json(indent=2))
         return StageOutput(
             payload=output,
@@ -504,8 +578,10 @@ class AgentsRuntime:
                 visual_summary = f"reference_analysis_failed: {exc}"
 
         copy_prompt = (
+            f"{self._business_strategy_system_prompt('Copy Image Agent')} "
             f"Generate concise Meta ad copy variants for US {locale}. "
-            f"business_context={business_context}, product_visual_summary={visual_summary}, variants={variant_set.model_dump()}"
+            f"business_context={business_context}, product_visual_summary={visual_summary}, variants={variant_set.model_dump()}. "
+            "Keep copy specific, conversion-oriented, and claim-safe. Do not invent certifications or guarantees."
         )
         try:
             copy_hint, text_model_used, copy_cost = self._chat_complete(provider, model, copy_prompt, runtime_config)
@@ -543,7 +619,8 @@ class AgentsRuntime:
                 "Keep product details aligned with this summary: "
                 f"{visual_summary}. "
                 f"Style: realistic, brand-safe, no text overlay, sharp product visibility, conversion-oriented. "
-                f"Use aspect ratio {image_size}, target resolution {resolution}."
+                f"Use aspect ratio {image_size}, target resolution {resolution}. "
+                "Visual QA gate: product must be clearly inspectable, physically plausible, not malformed, and not a generic pet stock image."
             )
             image_uri = ""
             image_source = "placeholder"
@@ -594,6 +671,12 @@ class AgentsRuntime:
                 "error": error_text,
                 "provider_errors": provider_errors,
             }
+            image_payload["visual_qa"] = self._local_media_qa(
+                asset_type="image",
+                uri=image_uri,
+                payload=image_payload,
+                expected_ratio=image_size,
+            )
             images.append(image_ref)
             artifacts.append(
                 {
@@ -607,6 +690,12 @@ class AgentsRuntime:
         bundle_payload = {
             "copy_variants": [item.model_dump() for item in copies],
             "image_assets": [artifact["payload"] for artifact in artifacts if artifact["type"] == "generated_image"],
+            "strategy_handoff": self._business_strategy_handoff(
+                stage="copy_image_generation",
+                decisions=[f"generated copy/image candidates for {len(copies)} variants", "kept no-text-overlay image prompts"],
+                risks=["Image provider may still introduce malformed product details; visual QA and human review required."],
+                review_questions=["Is the product visibly correct?", "Does copy avoid unsupported claims?", "Which image has strongest product-forward composition?"],
+            ),
         }
         bundle_uri = self.media.write_text_artifact(run_id, "copy_image_bundle.json", bundle.model_dump_json(indent=2))
         artifacts.insert(0, {"type": "copy_image_bundle", "uri": bundle_uri, "payload": bundle_payload})
@@ -650,9 +739,11 @@ class AgentsRuntime:
             audience = "urban dog owners and weekend trail walkers"
         cta = str(business_context.get("primary_cta") or "Shop Now")
         prompt = (
+            f"{self._business_strategy_system_prompt('Video Script Agent')} "
             "Generate video hooks and scripts with the product context. "
             f"product={product_name}, audience={audience}, value_props={value_props}, "
-            f"media_summary={media_summary}, variants={variant_set.model_dump()}"
+            f"media_summary={media_summary}, variants={variant_set.model_dump()}. "
+            "Make every shot filmable, product-specific, and constrained by physical continuity."
         )
         _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         scripts = []
@@ -678,12 +769,21 @@ class AgentsRuntime:
                 )
             )
         pack = VideoScriptPack(scripts=scripts)
+        payload = {
+            **pack.model_dump(),
+            "strategy_handoff": self._business_strategy_handoff(
+                stage="video_scripting",
+                decisions=[f"generated scripts for {len(scripts)} variants", "required close-up product handling and physical continuity"],
+                risks=["Script quality still depends on storyboard and video provider following continuity constraints."],
+                review_questions=["Does each hook feel native to TikTok?", "Can every shot be generated without breaking product logic?"],
+            ),
+        }
         uri = self.media.write_text_artifact(run_id, "video_scripts.json", pack.model_dump_json(indent=2))
         return StageOutput(
-            payload=pack.model_dump(),
+            payload=payload,
             model_used=model_used,
             estimated_cost=estimated_cost,
-            artifacts=[{"type": "video_script_pack", "uri": uri, "payload": pack.model_dump()}],
+            artifacts=[{"type": "video_script_pack", "uri": uri, "payload": payload}],
         )
 
     def run_storyboard_image_generation(
@@ -698,7 +798,11 @@ class AgentsRuntime:
     ) -> StageOutput:
         creative_specs = creative_specs or {}
         image_size = str(creative_specs.get("video_size") or creative_specs.get("image_size") or "9:16")
-        prompt = f"Create storyboard frames from scripts: {script_pack.model_dump()}"
+        prompt = (
+            f"{self._business_strategy_system_prompt('Storyboard Agent')} "
+            f"Create storyboard frames from scripts: {script_pack.model_dump()}. "
+            "Treat storyboard as the visual QA plan before video generation: continuity, object logic, product visibility."
+        )
         estimated_cost = 0.0
         error_text = None
         try:
@@ -764,9 +868,23 @@ class AgentsRuntime:
                     "error": frame_error,
                     "provider_errors": provider_errors,
                 }
+                frame["visual_qa"] = self._local_media_qa(
+                    asset_type="storyboard_frame",
+                    uri=frame_uri,
+                    payload=frame,
+                    expected_ratio=image_size,
+                )
                 frames.append(frame)
                 artifacts.append({"type": "storyboard_frame", "uri": frame_uri, "payload": frame})
-        output = {"frames": frames}
+        output = {
+            "frames": frames,
+            "strategy_handoff": self._business_strategy_handoff(
+                stage="storyboard_image_generation",
+                decisions=[f"created {len(frames)} storyboard frames", "each frame prompt repeats product continuity constraints"],
+                risks=["Storyboard image QA is basic; complex physics still requires reviewer/model inspection."],
+                review_questions=["Do storyboard frames preserve product continuity?", "Should any variant be regenerated before video generation?"],
+            ),
+        }
         uri = self.media.write_text_artifact(run_id, "storyboard_pack.json", str(output))
         artifacts.append({"type": "storyboard_pack", "uri": uri, "payload": output})
         return StageOutput(
@@ -876,6 +994,12 @@ class AgentsRuntime:
                     "reject_disconnected_or_cropped_leash": True,
                 },
             }
+            video_payload["visual_qa"] = self._local_media_qa(
+                asset_type="video",
+                uri=video_uri,
+                payload=video_payload,
+                expected_ratio=video_size,
+            )
             videos.append(VideoAsset.model_validate(video_payload))
             artifacts.append(
                 {
@@ -887,7 +1011,15 @@ class AgentsRuntime:
             if on_video_asset:
                 on_video_asset(video_payload)
         bundle = VideoBundle(videos=videos)
-        bundle_payload = {"videos": [artifact["payload"] for artifact in artifacts if artifact["type"] == "generated_video"]}
+        bundle_payload = {
+            "videos": [artifact["payload"] for artifact in artifacts if artifact["type"] == "generated_video"],
+            "strategy_handoff": self._business_strategy_handoff(
+                stage="video_generation",
+                decisions=[f"submitted/generated video assets for {len(videos)} variants", "stored provider task metadata for recovery"],
+                risks=["Pending async videos require refresh before final visual QA can pass."],
+                review_questions=["Did the completed video preserve product logic?", "Should broken continuity variants be regenerated?"],
+            ),
+        }
         uri = self.media.write_text_artifact(run_id, "video_bundle.json", bundle.model_dump_json(indent=2))
         artifacts.append({"type": "video_bundle", "uri": uri, "payload": bundle_payload})
         final_model_used = f"text={text_model_used};video={','.join(sorted(m for m in video_models_used if m)) or 'placeholder'}"
@@ -898,6 +1030,227 @@ class AgentsRuntime:
             artifacts=artifacts,
         )
 
+    def run_visual_quality_assessment(
+        self,
+        run_id: str,
+        variant_set: VariantSet,
+        *,
+        copy_images: dict | None = None,
+        video_scripts: dict | None = None,
+        storyboards: dict | None = None,
+        videos: dict | None = None,
+        intake: dict | None = None,
+        business_context: dict | None = None,
+        creative_specs: dict | None = None,
+        provider: str,
+        model: str,
+        runtime_config: dict | None = None,
+    ) -> StageOutput:
+        copy_images = copy_images or {}
+        video_scripts = video_scripts or {}
+        storyboards = storyboards or {}
+        videos = videos or {}
+        intake = intake or {}
+        business_context = business_context or {}
+        creative_specs = creative_specs or {}
+
+        def _asset_items(payload: dict, key: str) -> list[dict]:
+            rows = payload.get(key) or []
+            return [dict(item) for item in rows if isinstance(item, dict)]
+
+        asset_rows: list[dict] = []
+        for image in _asset_items(copy_images, "image_assets"):
+            asset_rows.append({"asset_type": "image", **image})
+        for frame in _asset_items(storyboards, "frames"):
+            asset_rows.append({"asset_type": "storyboard_frame", **frame, "uri": frame.get("image_uri")})
+        for video in _asset_items(videos, "videos"):
+            asset_rows.append({"asset_type": "video", **video, "uri": video.get("video_uri")})
+
+        scripts_by_variant = {item.get("variant_id"): item for item in _asset_items(video_scripts, "scripts")}
+        reports: list[dict] = []
+        summaries: list[dict] = []
+        model_image_inputs: list[str] = []
+        model_video_inputs: list[str] = []
+        model_media_manifest: list[dict] = []
+
+        def _media_url_for_model(asset: dict, *, media_type: str) -> str | None:
+            uri = asset.get("uri")
+            if not isinstance(uri, str) or not uri:
+                return None
+            if uri.startswith(("http://", "https://", "data:")):
+                return uri
+            if media_type == "video":
+                return self._local_video_to_data_url(uri)
+            return self._local_image_to_data_url(uri)
+
+        max_model_images = int(((runtime_config or {}).get("extra") or {}).get("visual_qa_max_model_images") or 12)
+        max_model_videos = int(((runtime_config or {}).get("extra") or {}).get("visual_qa_max_model_videos") or 4)
+
+        for variant in variant_set.variants:
+            variant_assets = [item for item in asset_rows if item.get("variant_id") == variant.variant_id]
+            asset_reports: list[dict] = []
+            blocking_issues: list[str] = []
+            score_values: list[float] = []
+            pending = False
+            warn = False
+            for asset in variant_assets:
+                asset_type = str(asset.get("asset_type") or "")
+                expected_ratio = None
+                if asset_type in {"image", "storyboard_frame"}:
+                    expected_ratio = asset.get("aspect_ratio") or (creative_specs.get("image_size") if isinstance(creative_specs, dict) else None)
+                qa = asset.get("visual_qa")
+                if not isinstance(qa, dict):
+                    qa = self._local_media_qa(
+                        asset_type=asset_type,
+                        uri=asset.get("uri"),
+                        payload=asset,
+                        expected_ratio=expected_ratio,
+                    )
+                flags = qa.get("flags") or []
+                status = str(qa.get("status") or "warn")
+                if isinstance(qa.get("score"), (int, float)):
+                    score_values.append(float(qa["score"]))
+                if status == "fail":
+                    blocking_issues.extend(str(flag) for flag in flags)
+                if "visual_qa_video_processing" in flags or str(asset.get("generation_status") or "").lower() in {"submitted", "queued", "pending", "processing", "running"}:
+                    pending = True
+                if status == "warn":
+                    warn = True
+                if "visual_qa_needs_frame_review" in flags:
+                    warn = True
+                if asset_type in {"image", "storyboard_frame"} and len(model_image_inputs) < max_model_images:
+                    media_url = _media_url_for_model(asset, media_type="image")
+                    if media_url:
+                        model_image_inputs.append(media_url)
+                        model_media_manifest.append(
+                            {
+                                "input_index": len(model_media_manifest) + 1,
+                                "modality": "image",
+                                "variant_id": variant.variant_id,
+                                "asset_type": asset_type,
+                                "uri": asset.get("uri"),
+                            }
+                        )
+                if asset_type == "video" and len(model_video_inputs) < max_model_videos:
+                    media_url = _media_url_for_model(asset, media_type="video")
+                    if media_url:
+                        model_video_inputs.append(media_url)
+                        model_media_manifest.append(
+                            {
+                                "input_index": len(model_media_manifest) + 1,
+                                "modality": "video",
+                                "variant_id": variant.variant_id,
+                                "asset_type": asset_type,
+                                "uri": asset.get("uri"),
+                                "generation_status": asset.get("generation_status"),
+                            }
+                        )
+                asset_reports.append(
+                    {
+                        "asset_type": asset_type,
+                        "uri": asset.get("uri"),
+                        "generation_status": asset.get("generation_status"),
+                        "external_task_id": asset.get("external_task_id"),
+                        "qa_status": status,
+                        "visual_score": qa.get("score"),
+                        "flags": flags,
+                        "checks": qa.get("checks") or [],
+                    }
+                )
+
+            if not variant_assets:
+                blocking_issues.append("visual_qa_no_generated_assets")
+            visual_score = min(score_values) if score_values else 0.0
+            if pending:
+                qa_status = "pending"
+                recommended_action = "wait_for_asset"
+            elif blocking_issues:
+                qa_status = "fail"
+                recommended_action = "request_regeneration"
+            elif warn or visual_score < 80:
+                qa_status = "warn"
+                recommended_action = "manual_review"
+            else:
+                qa_status = "pass"
+                recommended_action = "pass_to_evaluation"
+
+            script = scripts_by_variant.get(variant.variant_id) or {}
+            report = {
+                "variant_id": variant.variant_id,
+                "angle": variant.angle,
+                "hook": variant.hook,
+                "qa_status": qa_status,
+                "visual_score": round(visual_score, 2),
+                "asset_reports": asset_reports,
+                "blocking_issues": sorted(set(blocking_issues)),
+                "review_notes": (
+                    f"{variant.variant_id} visual QA {qa_status}; "
+                    f"{len(asset_reports)} assets checked; action={recommended_action}."
+                ),
+                "recommended_action": recommended_action,
+                "script_hook": script.get("hook"),
+            }
+            reports.append(report)
+            summaries.append(
+                {
+                    "variant_id": variant.variant_id,
+                    "qa_status": qa_status,
+                    "visual_score": report["visual_score"],
+                    "blocking_issue_count": len(report["blocking_issues"]),
+                    "recommended_action": recommended_action,
+                    "issues": report["blocking_issues"],
+                }
+            )
+
+        prompt = (
+            f"{self._business_strategy_system_prompt('Visual QA Agent')} "
+            "Review these structured visual QA records for ad-candidate risk. "
+            "Focus on product fidelity, physical plausibility, leash continuity if relevant, channel fit, and whether any candidate should be blocked before evaluation. "
+            "Return concise operator notes; do not choose the final winner.\n"
+            f"intake_facts={json.dumps(intake, ensure_ascii=False)[:3000]}\n"
+            f"business_context={json.dumps(business_context, ensure_ascii=False)[:1800]}\n"
+            f"qa_records={json.dumps(summaries, ensure_ascii=False)[:5000]}\n"
+            f"attached_media_manifest={json.dumps(model_media_manifest, ensure_ascii=False)[:3000]}"
+        )
+        model_summary = ""
+        model_used = model
+        estimated_cost = 0.0
+        try:
+            model_summary, model_used, estimated_cost = self._chat_complete(
+                provider,
+                model,
+                prompt,
+                runtime_config,
+                image_urls=model_image_inputs,
+                video_urls=model_video_inputs,
+            )
+        except Exception as exc:
+            model_summary = f"model_review_unavailable: {str(exc)[:240]}"
+
+        payload = {
+            "reports": reports,
+            "variant_summaries": summaries,
+            "model_summary": model_summary,
+            "model_media_inputs": {
+                "image_count": len(model_image_inputs),
+                "video_count": len(model_video_inputs),
+                "manifest": model_media_manifest,
+            },
+            "strategy_handoff": self._business_strategy_handoff(
+                stage="visual_quality_assessment",
+                decisions=[f"checked visual quality for {len(summaries)} variants", "blocked or downgraded incomplete and visually risky assets before evaluation"],
+                risks=["Large videos may be skipped from model media input and require async refresh or frame sampling."],
+                review_questions=["Which variants need human frame review?", "Should failed assets be regenerated before ranking?"],
+            ),
+        }
+        uri = self.media.write_text_artifact(run_id, "visual_quality_assessment.json", json.dumps(payload, ensure_ascii=False, indent=2))
+        return StageOutput(
+            payload=payload,
+            model_used=model_used,
+            estimated_cost=estimated_cost,
+            artifacts=[{"type": "visual_quality_report", "uri": uri, "payload": payload}],
+        )
+
     def run_evaluation_selection(
         self,
         run_id: str,
@@ -905,6 +1258,7 @@ class AgentsRuntime:
         copy_bundle: CopyImageBundle,
         script_pack: VideoScriptPack,
         video_bundle: VideoBundle,
+        visual_quality: dict | None = None,
         *,
         provider: str,
         model: str,
@@ -915,6 +1269,12 @@ class AgentsRuntime:
         copy_by_variant = {item.variant_id: item for item in copy_bundle.copy_variants}
         video_by_variant = {item.variant_id: item for item in video_bundle.videos}
         image_by_variant = {item.variant_id: item for item in copy_bundle.image_assets}
+        visual_quality = visual_quality or {}
+        visual_summary_by_variant = {
+            item.get("variant_id"): item
+            for item in (visual_quality.get("variant_summaries") or [])
+            if isinstance(item, dict) and item.get("variant_id")
+        }
         ranked: list[RankedVariant] = []
         for item in variant_set.variants:
             copy = copy_by_variant.get(item.variant_id)
@@ -923,9 +1283,37 @@ class AgentsRuntime:
             video = video_by_variant.get(item.variant_id)
             has_valid_image = self._artifact_has_payload(image.uri if image else None)
             has_valid_video = self._artifact_has_payload(video.video_uri if video else None)
+            visual_qas: list[dict] = []
+            if image:
+                visual_qas.append(
+                    self._local_media_qa(
+                        asset_type="image",
+                        uri=image.uri,
+                        payload=image.model_dump(),
+                        expected_ratio=image.aspect_ratio,
+                    )
+                )
+            if video:
+                visual_qas.append(
+                    self._local_media_qa(
+                        asset_type="video",
+                        uri=video.video_uri,
+                        payload=video.model_dump(),
+                    )
+                )
+            visual_qa_score = max([qa.get("score", 0.0) for qa in visual_qas] or [0.0])
+            visual_qa_flags = sorted({flag for qa in visual_qas for flag in (qa.get("flags") or [])})
+            qa_summary = visual_summary_by_variant.get(item.variant_id) or {}
+            if isinstance(qa_summary.get("visual_score"), (int, float)):
+                visual_qa_score = min(visual_qa_score if visual_qas else 100.0, float(qa_summary["visual_score"]))
+            qa_status = str(qa_summary.get("qa_status") or "")
+            qa_recommended_action = str(qa_summary.get("recommended_action") or "")
+            qa_issues = [str(issue) for issue in (qa_summary.get("issues") or [])]
+            visual_qa_flags = sorted(set([*visual_qa_flags, *qa_issues]))
             hook_strength = min(100.0, 55.0 + len(item.hook) * 0.35)
             clarity = min(100.0, 50.0 + len((copy.primary_text if copy else "")) * 0.28)
             generation_fit = 88.0 if has_valid_video else 82.0 if has_valid_image else 25.0
+            generation_fit = min(generation_fit, visual_qa_score)
             compliance = 90.0
             compliance_risks: list[str] = []
             compliance_reasons: list[str] = []
@@ -939,10 +1327,25 @@ class AgentsRuntime:
                 2,
             )
             level = ComplianceLevel.LOW if compliance >= 80 else ComplianceLevel.HIGH
-            if not (has_valid_image or has_valid_video):
+            if qa_status == "pending" or qa_recommended_action == "wait_for_asset":
+                recommended_action = "manual_review"
+                generation_fit = min(generation_fit, 35.0)
+            elif qa_status == "fail" or qa_recommended_action == "request_regeneration":
+                recommended_action = "request_regeneration"
+                generation_fit = min(generation_fit, 25.0)
+                total = min(total, 49.0)
+            elif not (has_valid_image or has_valid_video):
+                recommended_action = "request_regeneration"
+            elif any(flag in visual_qa_flags for flag in {"visual_qa_placeholder", "visual_qa_empty_video", "visual_qa_decode_error"}):
                 recommended_action = "request_regeneration"
             else:
                 recommended_action = "approve_variant" if total >= 70 and level == ComplianceLevel.LOW else "manual_review" if level == ComplianceLevel.LOW else "request_regeneration"
+            total = round(
+                hook_strength * 0.24 + clarity * 0.20 + generation_fit * 0.26 + compliance * 0.20 + ai_naturalness * 0.10,
+                2,
+            )
+            if recommended_action == "request_regeneration":
+                total = min(total, 49.0)
             ranked.append(
                 RankedVariant(
                     variant_id=item.variant_id,
@@ -951,6 +1354,7 @@ class AgentsRuntime:
                         "hook_strength": round(hook_strength, 2),
                         "clarity": round(clarity, 2),
                         "generation_fit": round(generation_fit, 2),
+                        "visual_qa": round(visual_qa_score, 2),
                         "compliance": round(compliance, 2),
                         "ai_naturalness": round(ai_naturalness, 2),
                     },
@@ -958,8 +1362,10 @@ class AgentsRuntime:
                     reasons=[
                         f"angle={item.angle}",
                         "valid generated media available" if has_valid_image or has_valid_video else "generated media missing or placeholder",
+                        f"visual_qa_flags={','.join(visual_qa_flags) if visual_qa_flags else 'none'}",
+                        f"visual_qa_agent_status={qa_status or 'not_run'}",
                     ],
-                    compliance_risks=compliance_risks,
+                    compliance_risks=[*compliance_risks, *visual_qa_flags],
                     compliance_reasons=compliance_reasons or ["No major compliance issues detected."],
                     recommended_action=recommended_action,
                 )

@@ -15,6 +15,10 @@ def test_agent_api_default_and_override(client):
     assert cfg_resp.status_code == 200
     configs = cfg_resp.json()
     assert any(row["agent_name"] == "default" for row in configs)
+    visual_qa = next(row for row in configs if row["agent_name"] == "visual_qa_agent")
+    assert visual_qa["provider_name"] == "deepseek"
+    assert visual_qa["model_name"] == "deepseek-v3.2"
+    assert visual_qa["api_key_env"] == "CRISPY_API_KEY_DEEPSEEK"
 
     patch_resp = client.patch(
         "/agent-configs/gm_orchestrator",
@@ -112,6 +116,7 @@ def test_agent_api_page_loads(client, monkeypatch):
     assert "Copy Image Agent - Text" in resp.text
     assert "Copy Image Agent - Image" in resp.text
     assert "Video Generation Agent - Video" in resp.text
+    assert "Visual QA Agent" in resp.text
 
 
 def test_agent_api_env_vars_endpoint(client, monkeypatch):

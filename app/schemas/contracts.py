@@ -14,6 +14,7 @@ class StageName(StrEnum):
     VIDEO_SCRIPTING = "video_scripting"
     STORYBOARD_IMAGE_GENERATION = "storyboard_image_generation"
     VIDEO_GENERATION = "video_generation"
+    VISUAL_QUALITY_ASSESSMENT = "visual_quality_assessment"
     EVALUATION_SELECTION = "evaluation_selection"
 
 
