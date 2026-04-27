@@ -499,6 +499,19 @@ def _dashboard_html() -> str:
           }
           button.primary:hover { filter: brightness(0.96); }
           .action-row { margin-bottom: 10px; display:flex; gap:8px; flex-wrap: wrap; }
+          .runs-actions {
+            margin-top: 10px;
+            display:flex;
+            justify-content:center;
+            gap:8px;
+            flex-wrap: wrap;
+          }
+          .runs-actions button {
+            min-width: 148px;
+            padding: 10px 16px;
+            font-size: 14px;
+            font-weight: 700;
+          }
           .hint {
             padding: 8px 10px;
             border: 1px solid #d8e8df;
@@ -574,6 +587,32 @@ def _dashboard_html() -> str:
             gap:10px;
             margin-top:10px;
           }
+          .variant-board-header {
+            margin-top:14px;
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:10px;
+            flex-wrap:wrap;
+          }
+          .variant-board-header h3 { margin: 0; }
+          .variant-toggle-btn {
+            padding: 7px 10px;
+            font-size: 12px;
+            border-radius: 999px;
+          }
+          .variant-board-body {
+            overflow: hidden;
+            max-height: 8000px;
+            opacity: 1;
+            transform: translateY(0);
+            transition: max-height 220ms ease, opacity 180ms ease, transform 180ms ease;
+          }
+          .variant-board-body.is-collapsed {
+            max-height: 0;
+            opacity: 0;
+            transform: translateY(-4px);
+          }
           .variant-card {
             border:1px solid #deebe2;
             border-radius:12px;
@@ -629,15 +668,30 @@ def _dashboard_html() -> str:
           .quality-chip.warn { background:#fff7e6; border-color:#ead19d; color:#735418; }
           .quality-chip.bad { background:#fdeeee; border-color:#efc2c2; color:#8a2d2d; }
           .agent-trace {
-            display:grid;
-            grid-template-columns: 1fr;
-            gap:8px;
+            display:flex;
+            gap:10px;
+            overflow-x:auto;
+            overflow-y:hidden;
+            padding: 4px 0 6px 0;
+            scroll-behavior: smooth;
+            scroll-snap-type: x proximity;
           }
           .trace-event {
             border:1px solid #dce7e1;
             border-radius:10px;
             padding:9px;
             background:#fbfdfb;
+            min-width: 220px;
+            max-width: 280px;
+            flex: 0 0 clamp(220px, 22vw, 280px);
+            scroll-snap-align: end;
+            transition: min-width 200ms ease, max-width 200ms ease, flex-basis 200ms ease, box-shadow 180ms ease;
+          }
+          .trace-event.trace-event-expanded {
+            min-width: 420px;
+            max-width: 560px;
+            flex-basis: clamp(420px, 48vw, 560px);
+            box-shadow: 0 8px 18px rgba(28, 68, 52, 0.12);
           }
           .trace-head {
             display:flex;
@@ -649,6 +703,21 @@ def _dashboard_html() -> str:
           .trace-message {
             font-size:13px;
             color:#2a3f36;
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 4;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+          }
+          .trace-payload {
+            margin-top: 6px;
+          }
+          .trace-payload[open] {
+            animation: tracePayloadOpen 180ms ease;
+          }
+          @keyframes tracePayloadOpen {
+            from { opacity: 0; transform: translateY(-2px); }
+            to { opacity: 1; transform: translateY(0); }
           }
           pre {
             white-space: pre-wrap;
@@ -674,6 +743,21 @@ def _dashboard_html() -> str:
             .variant-board { grid-template-columns: 1fr; }
             .variant-filter-bar { grid-template-columns: 1fr; }
             .hero { flex-direction: column; align-items: flex-start; }
+            .trace-event {
+              min-width: min(86vw, 320px);
+              flex-basis: min(86vw, 320px);
+            }
+            .trace-event.trace-event-expanded {
+              min-width: min(94vw, 640px);
+              flex-basis: min(94vw, 640px);
+            }
+            .runs-actions { justify-content: stretch; }
+            .runs-actions button {
+              flex: 1 1 48%;
+              min-width: 136px;
+              padding: 11px 16px;
+              font-size: 14px;
+            }
           }
         </style>
       </head>
@@ -704,14 +788,16 @@ def _dashboard_html() -> str:
               <h2>Runs</h2>
               <div class="action-row">
                 <button onclick="refreshRuns()">Refresh</button>
-                <button onclick="advanceRun()">Advance</button>
-                <button onclick="rejectRun()">Reject</button>
               </div>
               <div class="table-wrap">
                 <table>
                   <thead><tr><th>Run ID</th><th>Status</th><th>Stage</th><th>Mode</th><th>Updated</th></tr></thead>
                   <tbody id="runs-body"></tbody>
                 </table>
+              </div>
+              <div class="runs-actions">
+                <button onclick="advanceRun()">Advance</button>
+                <button onclick="rejectRun()">Reject</button>
               </div>
             </section>
             <section class="card">
@@ -805,6 +891,8 @@ def _dashboard_html() -> str:
           let variantBoardFilters = { quality: "", assetType: "", reviewStatus: "", minScore: "", q: "" };
           let runEventSource = null;
           let currentTraceEvents = [];
+          const variantBoardCollapsedStorageKey = "variant_board_collapsed";
+          let variantBoardCollapsed = false;
 
           function esc(v){ return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
           function toList(raw){ return String(raw || "").split(",").map(s => s.trim()).filter(Boolean); }
@@ -842,6 +930,18 @@ def _dashboard_html() -> str:
           }
           function mediaUrl(path){ return `/media?path=${encodeURIComponent(path || "")}`; }
           function mediaViewUrl(path){ return `/media/view?path=${encodeURIComponent(path || "")}`; }
+          function loadVariantBoardCollapsedState() {
+            try {
+              variantBoardCollapsed = localStorage.getItem(variantBoardCollapsedStorageKey) === "true";
+            } catch (_err) {
+              variantBoardCollapsed = false;
+            }
+          }
+          function persistVariantBoardCollapsedState() {
+            try {
+              localStorage.setItem(variantBoardCollapsedStorageKey, variantBoardCollapsed ? "true" : "false");
+            } catch (_err) {}
+          }
 
           async function api(path, options = {}) {
             const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
@@ -996,6 +1096,17 @@ def _dashboard_html() -> str:
             variantBoardFilters = { quality: "", assetType: "", reviewStatus: "", minScore: "", q: "" };
             if (currentRunId) selectRun(currentRunId);
           }
+          function variantBoardToggleLabel() {
+            return variantBoardCollapsed ? "Expand Variant Board" : "Collapse Variant Board";
+          }
+          function toggleVariantBoard(){
+            variantBoardCollapsed = !variantBoardCollapsed;
+            persistVariantBoardCollapsedState();
+            const body = document.getElementById("variant-board-body");
+            if (body) body.classList.toggle("is-collapsed", variantBoardCollapsed);
+            const btn = document.getElementById("variant-board-toggle");
+            if (btn) btn.textContent = variantBoardToggleLabel();
+          }
 
           async function variantAction(runId, variantId, endpoint, body){
             await api(endpoint, {
@@ -1086,10 +1197,29 @@ def _dashboard_html() -> str:
               </div>
             `;
             if (!allItems.length) {
-              return `<h3 style="margin-top:14px;">Variant Board</h3>${header}<div class="run-detail-empty">No variants materialized yet.</div>`;
+              return `
+                <div class="variant-board-header">
+                  <h3>Variant Board</h3>
+                  <button id="variant-board-toggle" class="variant-toggle-btn" onclick="toggleVariantBoard()">${variantBoardToggleLabel()}</button>
+                </div>
+                <div id="variant-board-body" class="variant-board-body ${variantBoardCollapsed ? "is-collapsed" : ""}">
+                  ${header}
+                  <div class="run-detail-empty">No variants materialized yet.</div>
+                </div>
+              `;
             }
             if (!items.length) {
-              return `<h3 style="margin-top:14px;">Variant Board</h3>${header}${filters}<div class="run-detail-empty">No variants match the active filters.</div>`;
+              return `
+                <div class="variant-board-header">
+                  <h3>Variant Board</h3>
+                  <button id="variant-board-toggle" class="variant-toggle-btn" onclick="toggleVariantBoard()">${variantBoardToggleLabel()}</button>
+                </div>
+                <div id="variant-board-body" class="variant-board-body ${variantBoardCollapsed ? "is-collapsed" : ""}">
+                  ${header}
+                  ${filters}
+                  <div class="run-detail-empty">No variants match the active filters.</div>
+                </div>
+              `;
             }
             const cards = items.map((item) => {
               const copy = assetsByType(item, "copy")[0]?.payload || null;
@@ -1177,7 +1307,17 @@ def _dashboard_html() -> str:
                 </article>
               `;
             }).join("");
-            return `<h3 style="margin-top:14px;">Variant Board</h3>${header}${filters}<div class="variant-board">${cards}</div>`;
+            return `
+              <div class="variant-board-header">
+                <h3>Variant Board</h3>
+                <button id="variant-board-toggle" class="variant-toggle-btn" onclick="toggleVariantBoard()">${variantBoardToggleLabel()}</button>
+              </div>
+              <div id="variant-board-body" class="variant-board-body ${variantBoardCollapsed ? "is-collapsed" : ""}">
+                ${header}
+                ${filters}
+                <div class="variant-board">${cards}</div>
+              </div>
+            `;
           }
 
           function renderTimeline(run) {
@@ -1204,10 +1344,15 @@ def _dashboard_html() -> str:
           }
 
           function renderAgentTrace(run) {
-            const events = run.trace_events || currentTraceEvents || [];
+            const events = [...(run.trace_events || currentTraceEvents || [])].sort((a, b) => {
+              const ta = Date.parse(a.created_at || "") || 0;
+              const tb = Date.parse(b.created_at || "") || 0;
+              if (ta !== tb) return ta - tb;
+              return String(a.id || "").localeCompare(String(b.id || ""));
+            });
             if (!events.length) return '<div class="run-detail-empty">No agent trace events yet.</div>';
             return `
-              <div class="agent-trace">
+              <div id="agent-trace-board" class="agent-trace">
                 ${events.map((event) => `
                   <article class="trace-event">
                     <div class="trace-head">
@@ -1220,7 +1365,7 @@ def _dashboard_html() -> str:
                     </div>
                     <div class="trace-message">${esc(event.message || "-")}</div>
                     <div class="muted" style="margin-top:4px;">provider/model: ${esc(event.provider_name || "-")} / ${esc(event.model_name || "-")}</div>
-                    <details>
+                    <details class="trace-payload">
                       <summary>Trace payload</summary>
                       <pre>${esc(JSON.stringify(event.payload || {}, null, 2))}</pre>
                     </details>
@@ -1228,6 +1373,34 @@ def _dashboard_html() -> str:
                 `).join("")}
               </div>
             `;
+          }
+          function isNearTraceRightEdge(container){
+            if (!container) return true;
+            const remaining = container.scrollWidth - container.clientWidth - container.scrollLeft;
+            return remaining <= 48;
+          }
+          function scrollTraceToRight(behavior = "smooth"){
+            const container = document.getElementById("agent-trace-board");
+            if (!container) return;
+            container.scrollTo({ left: container.scrollWidth, behavior });
+          }
+          function bindTracePayloadToggles(){
+            const container = document.getElementById("agent-trace-board");
+            if (!container) return;
+            container.querySelectorAll(".trace-payload").forEach((details) => {
+              if (details.dataset.bound === "1") return;
+              details.dataset.bound = "1";
+              details.addEventListener("toggle", () => {
+                const card = details.closest(".trace-event");
+                if (!card) return;
+                card.classList.toggle("trace-event-expanded", details.open);
+                if (details.open) {
+                  requestAnimationFrame(() => {
+                    card.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+                  });
+                }
+              });
+            });
           }
 
           function connectRunEvents(runId){
@@ -1242,9 +1415,17 @@ def _dashboard_html() -> str:
                 const item = JSON.parse(event.data);
                 if (currentRunId !== runId) return;
                 if (!currentTraceEvents.some((existing) => existing.id === item.id)) {
+                  const containerBefore = document.getElementById("agent-trace-board");
+                  const shouldStickToRight = isNearTraceRightEdge(containerBefore);
                   currentTraceEvents.push(item);
                   const container = document.getElementById("agent-trace-container");
-                  if (container) container.innerHTML = renderAgentTrace({ trace_events: currentTraceEvents });
+                  if (container) {
+                    container.innerHTML = renderAgentTrace({ trace_events: currentTraceEvents });
+                    bindTracePayloadToggles();
+                    if (shouldStickToRight) {
+                      requestAnimationFrame(() => scrollTraceToRight("smooth"));
+                    }
+                  }
                 }
               } catch (_err) {}
             });
@@ -1282,6 +1463,8 @@ def _dashboard_html() -> str:
             ]);
             currentTraceEvents = run.trace_events || [];
             document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables, variants);
+            bindTracePayloadToggles();
+            requestAnimationFrame(() => scrollTraceToRight("auto"));
             connectRunEvents(runId);
           }
 
@@ -1424,6 +1607,7 @@ def _dashboard_html() -> str:
 
           refreshResearchHint();
           refreshPresetHint();
+          loadVariantBoardCollapsedState();
           loadPipelineModes();
           loadDataSources().then(async () => {
             await refreshRuns();

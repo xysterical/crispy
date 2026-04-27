@@ -105,3 +105,14 @@ def test_artifacts_endpoint_filters_generated_outputs(client):
     by_code_items = by_code_resp.json()["items"]
     assert len(by_code_items) > 0
     assert all(item["product_code"] == "DL-TEST-001" for item in by_code_items)
+
+
+def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "id=\"agent-trace-board\"" in html
+    assert "trace-event-expanded" in html
+    assert "bindTracePayloadToggles" in html
+    assert "variant-board-toggle" in html
+    assert "variant_board_collapsed" in html
