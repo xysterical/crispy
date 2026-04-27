@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import json
+import logging
 from pathlib import Path
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.agents.registry import STAGE_CONTRACT_VERSION, stage_agent, stage_collaborators
@@ -49,6 +50,13 @@ from app.services.visual_qa import inspect_visual_asset
 
 runtime = AgentsRuntime()
 
+logger = logging.getLogger(__name__)
+
+RETRYABLE_FAILURES = {
+    TaskFailureCategory.PROVIDER_ERROR.value,
+    TaskFailureCategory.TIMEOUT.value,
+}
+
 REGENERATABLE_STAGES = {
     "copy_image_generation",
     "video_scripting",
@@ -59,6 +67,43 @@ REGENERATABLE_STAGES = {
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _retry_delay(attempt: int) -> float:
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    return settings.retry_base_delay_seconds * (settings.retry_backoff_multiplier ** (attempt - 1))
+
+
+def select_next_queued_task(db: Session) -> StageTask | None:
+    """Atomically claim the next queued task with priority ordering.
+
+    Priority: lower int = higher priority (0=human-rejected, 1=regen, 2=normal).
+    Within same priority, oldest tasks first (FIFO).
+    Uses a guarded UPDATE to prevent double-claiming across concurrent workers.
+    """
+    now = utcnow()
+    candidate = db.scalar(
+        select(StageTask)
+        .where(
+            StageTask.status == TaskStatus.QUEUED.value,
+            or_(StageTask.retry_at.is_(None), StageTask.retry_at <= now),
+        )
+        .order_by(StageTask.priority.asc(), StageTask.created_at.asc())
+        .limit(1)
+    )
+    if not candidate:
+        return None
+    result = db.execute(
+        update(StageTask)
+        .where(StageTask.id == candidate.id, StageTask.status == TaskStatus.QUEUED.value)
+        .values(status=TaskStatus.RUNNING.value, started_at=now)
+    )
+    if result.rowcount == 0:
+        return None
+    db.refresh(candidate)
+    return candidate
 
 
 def _truncate_text(value: str, limit: int = 800) -> str:
@@ -274,6 +319,7 @@ def create_run(db: Session, payload: RunCreateRequest) -> PipelineRun:
                 run_id=run.id,
                 stage_name=stage_name,
                 status=task_status,
+                priority=2,
                 input_payload={},
             )
         )
@@ -312,6 +358,8 @@ def _requeue_next_stage(db: Session, run_id: str, stage_name: str | None) -> Non
     next_task = get_stage_task(db, run_id, stage_name)
     if next_task.status in {TaskStatus.DRAFT.value, TaskStatus.REJECTED.value, TaskStatus.FAILED.value}:
         next_task.status = TaskStatus.QUEUED.value
+        next_task.priority = 2
+        next_task.retry_at = None
 
 
 def approve_stage(db: Session, run_id: str, notes: str = "") -> PipelineRun:
@@ -357,6 +405,8 @@ def reject_stage(db: Session, run_id: str, notes: str = "") -> PipelineRun:
     if task.status not in {TaskStatus.WAITING_REVIEW.value, TaskStatus.FAILED.value}:
         raise ValueError(f"stage {run.current_stage} is not rejectable")
     task.status = TaskStatus.QUEUED.value
+    task.priority = 0
+    task.retry_at = None
     task.rejected_at = utcnow()
     task.review_notes = notes
     task.failure_category = TaskFailureCategory.HUMAN_REJECT.value
@@ -977,19 +1027,33 @@ def _variant_library_sync(
 
 
 def execute_next_queued_stage(db: Session) -> StageTask | None:
-    task = db.scalar(select(StageTask).where(StageTask.status == TaskStatus.QUEUED.value).limit(1))
+    """Backward-compatible wrapper: claim and execute one queued task.
+
+    For concurrent worker use, prefer calling select_next_queued_task() +
+    execute_stage_task() separately so the worker controls session lifecycle.
+    """
+    task = select_next_queued_task(db)
     if not task:
         return None
     run = get_run(db, task.run_id)
-    task.status = TaskStatus.RUNNING.value
-    task.started_at = utcnow()
-    task.attempt += 1
     task.input_payload = _build_task_input(db, run, task)
+    task.attempt = (task.attempt or 0) + 1
     run.status = RunStatus.RUNNING.value
     run.current_stage = task.stage_name
     run.updated_at = utcnow()
     db.flush()
+    execute_stage_task(db, task, run)
+    return task
 
+
+def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
+    """Execute a single stage task that has already been claimed (status=RUNNING).
+
+    All outcomes are persisted to db — this function should not raise.
+    On success: sets task.status=WAITING_REVIEW, advances run state.
+    On retryable failure: sets task.status=QUEUED with retry_at backoff.
+    On permanent failure: sets task.status=FAILED, run.status=FAILED.
+    """
     try:
         lead_agent = stage_agent(task.stage_name)
         collaborators = list(stage_collaborators(task.stage_name))
@@ -1222,6 +1286,7 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
         task.completed_at = utcnow()
         task.failure_category = None
         task.error_message = None
+        task.retry_at = None
         run.budget_used = float(run.budget_used or 0.0) + output.estimated_cost
         run.updated_at = utcnow()
 
@@ -1303,31 +1368,66 @@ def execute_next_queued_stage(db: Session) -> StageTask | None:
             payload={"model_used": output.model_used, "estimated_cost": output.estimated_cost},
         )
         db.flush()
-        return task
     except Exception as exc:  # pragma: no cover
-        task.status = TaskStatus.FAILED.value
+        from app.core.config import get_settings
+
+        category = _classify_failure(exc)
         task.error_message = str(exc)
-        task.failure_category = _classify_failure(exc)
+        task.failure_category = category
         provider_errors = getattr(exc, "errors", None)
         if provider_errors:
             task.metadata_json = {**(task.metadata_json or {}), "provider_errors": provider_errors}
         task.completed_at = utcnow()
-        run.status = RunStatus.FAILED.value
+
+        settings = get_settings()
+        is_retryable = category in RETRYABLE_FAILURES
+        under_max = (task.attempt or 0) < settings.max_stage_retries
+
+        if is_retryable and under_max:
+            delay = _retry_delay(task.attempt or 1)
+            task.status = TaskStatus.QUEUED.value
+            task.retry_at = utcnow() + timedelta(seconds=delay)
+            task.priority = max(0, (task.priority or 2) - 1)
+            logger.warning(
+                "Task %s (%s) attempt %s failed (%s); retry scheduled in %ss",
+                task.id, task.stage_name, task.attempt, category, delay,
+            )
+            add_agent_trace_event(
+                db,
+                run_id=run.id,
+                stage_task_id=task.id,
+                stage_name=task.stage_name,
+                agent_name=(task.metadata_json or {}).get("agent_name") or stage_agent(task.stage_name),
+                event_type="retry_scheduled",
+                message=f"{task.stage_name} attempt {task.attempt} failed ({category}); retry in {delay:.0f}s.",
+                provider_name=((task.metadata_json or {}).get("resolved_api") or {}).get("provider_name"),
+                model_name=((task.metadata_json or {}).get("resolved_api") or {}).get("model_name"),
+                payload={
+                    "failure_category": category,
+                    "retry_at": task.retry_at.isoformat(),
+                    "retry_delay_seconds": delay,
+                    "attempt": task.attempt,
+                },
+            )
+            run.status = RunStatus.RUNNING.value
+        else:
+            task.status = TaskStatus.FAILED.value
+            run.status = RunStatus.FAILED.value
+            add_agent_trace_event(
+                db,
+                run_id=run.id,
+                stage_task_id=task.id,
+                stage_name=task.stage_name,
+                agent_name=(task.metadata_json or {}).get("agent_name") or stage_agent(task.stage_name),
+                event_type="failed",
+                message=f"{task.stage_name} failed: {_truncate_text(str(exc), 240)}",
+                provider_name=((task.metadata_json or {}).get("resolved_api") or {}).get("provider_name"),
+                model_name=((task.metadata_json or {}).get("resolved_api") or {}).get("model_name"),
+                payload={"failure_category": category, "provider_errors": provider_errors or []},
+            )
+
         run.updated_at = utcnow()
-        add_agent_trace_event(
-            db,
-            run_id=run.id,
-            stage_task_id=task.id,
-            stage_name=task.stage_name,
-            agent_name=(task.metadata_json or {}).get("agent_name") or stage_agent(task.stage_name),
-            event_type="failed",
-            message=f"{task.stage_name} failed: {_truncate_text(str(exc), 240)}",
-            provider_name=((task.metadata_json or {}).get("resolved_api") or {}).get("provider_name"),
-            model_name=((task.metadata_json or {}).get("resolved_api") or {}).get("model_name"),
-            payload={"failure_category": task.failure_category, "provider_errors": provider_errors or []},
-        )
         db.flush()
-        return task
 
 
 def _variant_summary(db: Session, run_id: str) -> dict:

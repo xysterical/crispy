@@ -397,3 +397,30 @@ class RunPreflightResponse(BaseModel):
     severity: Literal["ok", "warn", "error"] = "ok"
     summary: str = ""
     checks: list[CapabilityCheckItem] = Field(default_factory=list)
+
+
+class QueueStatusResponse(BaseModel):
+    total_queued: int
+    queued_by_stage: dict[str, int] = Field(default_factory=dict)
+    status_counts: dict[str, int] = Field(default_factory=dict)
+    currently_running: int
+
+
+class QueueRunningTask(BaseModel):
+    task_id: str
+    run_id: str
+    stage_name: str
+    attempt: int
+    started_at: str
+    duration_seconds: float
+
+
+class QueueHealthResponse(BaseModel):
+    status: str
+    uptime_seconds: float
+    concurrency: int
+    active_workers: int
+    total_completed: int
+    total_failed: int
+    video_poller_last_run: str | None = None
+    video_poller_ok: bool = True

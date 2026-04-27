@@ -23,6 +23,7 @@ from app.data.session import (
     switch_database_url,
 )
 from app.orchestrator.state_machine import PIPELINE_STAGE_PLANS, PipelineMode
+from app.orchestrator.worker import worker
 from app.schemas.api import (
     AgentApiConfigPatchRequest,
     AgentApiConfigView,
@@ -42,6 +43,9 @@ from app.schemas.api import (
     PersonaPatchRequest,
     PersonaView,
     PipelineModeView,
+    QueueHealthResponse,
+    QueueRunningTask,
+    QueueStatusResponse,
     ReviewActionRequest,
     RunCreateRequest,
     RunPreflightRequest,
@@ -386,6 +390,24 @@ def _serialize_agent_config(row) -> AgentApiConfigView:
         is_default=row.agent_name == "default",
         updated_at=row.updated_at,
     )
+
+
+# ── Queue monitoring ──────────────────────────────────────
+
+
+@router.get("/queue/status", response_model=QueueStatusResponse)
+def get_queue_status() -> QueueStatusResponse:
+    return QueueStatusResponse(**worker.get_queue_status())
+
+
+@router.get("/queue/running", response_model=list[QueueRunningTask])
+def get_queue_running() -> list[QueueRunningTask]:
+    return [QueueRunningTask(**item) for item in worker.get_running_tasks()]
+
+
+@router.get("/queue/health", response_model=QueueHealthResponse)
+def get_queue_health() -> QueueHealthResponse:
+    return QueueHealthResponse(**worker.get_health())
 
 
 def _dashboard_html() -> str:

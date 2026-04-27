@@ -21,12 +21,23 @@ def _sqlite_connect_args(url: str) -> dict:
 
 
 def _build_engine(database_url: str):
-    return create_engine(
+    engine = create_engine(
         database_url,
         echo=settings.debug,
         future=True,
         connect_args=_sqlite_connect_args(database_url),
     )
+    if database_url.startswith("sqlite"):
+        from sqlalchemy import event
+
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, _connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA busy_timeout=5000;")
+            cursor.close()
+
+    return engine
 
 
 _active_database_url = settings.database_url
@@ -146,6 +157,9 @@ def apply_runtime_migrations(target_engine) -> None:
     _add_column_if_missing(target_engine, "agent_api_config", "max_output_tokens", "ALTER TABLE agent_api_config ADD COLUMN max_output_tokens INTEGER")
     _add_column_if_missing(target_engine, "agent_api_config", "request_timeout_seconds", "ALTER TABLE agent_api_config ADD COLUMN request_timeout_seconds INTEGER")
     _add_column_if_missing(target_engine, "agent_api_config", "streaming_enabled", "ALTER TABLE agent_api_config ADD COLUMN streaming_enabled BOOLEAN")
+    _add_column_if_missing(target_engine, "stage_task", "priority", "ALTER TABLE stage_task ADD COLUMN priority INTEGER DEFAULT 2")
+    _add_column_if_missing(target_engine, "stage_task", "max_retries", "ALTER TABLE stage_task ADD COLUMN max_retries INTEGER DEFAULT 3")
+    _add_column_if_missing(target_engine, "stage_task", "retry_at", "ALTER TABLE stage_task ADD COLUMN retry_at DATETIME")
 
     with target_engine.begin() as conn:
         conn.execute(
@@ -201,6 +215,9 @@ def apply_runtime_migrations(target_engine) -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_trace_run_id ON agent_trace_event(run_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_trace_stage_task ON agent_trace_event(stage_task_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_trace_created_at ON agent_trace_event(created_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stage_task_queue ON stage_task(status, priority, created_at)"))
+        conn.execute(text("UPDATE stage_task SET priority = 2 WHERE priority IS NULL"))
+        conn.execute(text("UPDATE stage_task SET max_retries = 3 WHERE max_retries IS NULL"))
 
 
 def get_db() -> Generator[Session, None, None]:

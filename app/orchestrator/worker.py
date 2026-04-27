@@ -2,47 +2,304 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
+from sqlalchemy import func, select
 
 from app.core.config import get_settings
+from app.data.models import (
+    RunStatus,
+    StageTask,
+    TaskStatus,
+    VariantAsset,
+    utcnow as model_utcnow,
+)
 from app.data.session import SessionLocal
-from app.services.runs import execute_next_queued_stage
-
+from app.services.runs import (
+    _build_task_input,
+    execute_stage_task,
+    get_run,
+    refresh_video_task_assets,
+    select_next_queued_task,
+)
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RunningTaskInfo:
+    task_id: str
+    run_id: str
+    stage_name: str
+    attempt: int
+    started_at: datetime
 
 
 class PipelineWorker:
     def __init__(self) -> None:
         self.settings = get_settings()
-        self._task: asyncio.Task | None = None
+        self._concurrency = self.settings.worker_concurrency
+        self._poll_interval = max(0.2, self.settings.polling_interval_seconds)
+        self._video_interval = max(5.0, self.settings.video_polling_interval_seconds)
+
         self._stop_event = asyncio.Event()
+        self._worker_tasks: list[asyncio.Task] = []
+        self._video_poller_task: asyncio.Task | None = None
+
+        # In-memory state for queue visibility
+        self._started_at: datetime | None = None
+        self._running_tasks: dict[str, RunningTaskInfo] = {}
+        self._total_completed: int = 0
+        self._total_failed: int = 0
+        self._video_poller_last_run: datetime | None = None
+        self._video_poller_success: bool = True
+
+    # ── Public API ──────────────────────────────────────────
 
     async def start(self) -> None:
-        if self._task and not self._task.done():
+        if self._worker_tasks:
             return
         self._stop_event.clear()
-        self._task = asyncio.create_task(self._loop(), name="crispy-pipeline-worker")
+        self._started_at = datetime.now(UTC)
+
+        self._recover_orphaned_tasks()
+
+        self._worker_tasks = [
+            asyncio.create_task(self._worker_loop(), name=f"crispy-worker-{i}")
+            for i in range(self._concurrency)
+        ]
+        self._video_poller_task = asyncio.create_task(
+            self._video_poller_loop(), name="crispy-video-poller"
+        )
+        logger.info(
+            "PipelineWorker started | concurrency=%d | poll=%.1fs | video_poll=%.1fs",
+            self._concurrency,
+            self._poll_interval,
+            self._video_interval,
+        )
 
     async def stop(self) -> None:
-        if not self._task:
+        if not self._worker_tasks:
             return
         self._stop_event.set()
-        await self._task
-        self._task = None
+        tasks: list[asyncio.Task] = [*self._worker_tasks]
+        if self._video_poller_task:
+            tasks.append(self._video_poller_task)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._worker_tasks.clear()
+        self._video_poller_task = None
+        self._started_at = None
+        logger.info("PipelineWorker stopped")
 
-    async def _loop(self) -> None:
-        interval = max(0.2, self.settings.polling_interval_seconds)
+    def get_queue_status(self) -> dict[str, Any]:
+        db = SessionLocal()
+        try:
+            queued = (
+                db.scalar(
+                    select(func.count()).select_from(StageTask).where(
+                        StageTask.status == TaskStatus.QUEUED.value
+                    )
+                )
+                or 0
+            )
+
+            rows = (
+                db.execute(
+                    select(StageTask.stage_name, func.count())
+                    .where(StageTask.status == TaskStatus.QUEUED.value)
+                    .group_by(StageTask.stage_name)
+                )
+                .all()
+            )
+            by_stage = {row[0]: row[1] for row in rows}
+
+            status_rows = (
+                db.execute(
+                    select(StageTask.status, func.count()).group_by(StageTask.status)
+                )
+                .all()
+            )
+            by_status = {row[0]: row[1] for row in status_rows}
+
+            return {
+                "total_queued": queued,
+                "queued_by_stage": by_stage,
+                "status_counts": by_status,
+                "currently_running": len(self._running_tasks),
+            }
+        finally:
+            db.close()
+
+    def get_running_tasks(self) -> list[dict]:
+        now = datetime.now(UTC)
+        return [
+            {
+                "task_id": info.task_id,
+                "run_id": info.run_id,
+                "stage_name": info.stage_name,
+                "attempt": info.attempt,
+                "started_at": info.started_at.isoformat(),
+                "duration_seconds": round(
+                    (now - info.started_at).total_seconds(), 2
+                ),
+            }
+            for info in self._running_tasks.values()
+        ]
+
+    def get_health(self) -> dict:
+        uptime = (
+            (datetime.now(UTC) - self._started_at).total_seconds()
+            if self._started_at
+            else 0.0
+        )
+        return {
+            "status": "running" if self._worker_tasks else "stopped",
+            "uptime_seconds": round(uptime, 2),
+            "concurrency": self._concurrency,
+            "active_workers": len(self._running_tasks),
+            "total_completed": self._total_completed,
+            "total_failed": self._total_failed,
+            "video_poller_last_run": (
+                self._video_poller_last_run.isoformat()
+                if self._video_poller_last_run
+                else None
+            ),
+            "video_poller_ok": self._video_poller_success,
+        }
+
+    # ── Internal loops ──────────────────────────────────────
+
+    async def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
-                with SessionLocal() as db:
-                    task = execute_next_queued_stage(db)
-                    db.commit()
-                    if task:
-                        logger.info("Processed task %s (%s)", task.id, task.stage_name)
-            except Exception as exc:  # pragma: no cover - runtime safety
-                logger.exception("Worker loop error: %s", exc)
-            await asyncio.sleep(interval)
+                ran = await asyncio.to_thread(self._execute_one_task)
+                if not ran:
+                    await self._sleep_interruptible(self._poll_interval)
+            except Exception:
+                logger.exception("Worker loop error")
+                await self._sleep_interruptible(self._poll_interval)
+
+    async def _video_poller_loop(self) -> None:
+        while not self._stop_event.is_set():
+            await self._sleep_interruptible(self._video_interval)
+            if self._stop_event.is_set():
+                break
+            try:
+                await asyncio.to_thread(self._poll_all_video_assets)
+                self._video_poller_success = True
+            except Exception:
+                logger.exception("Video poller error")
+                self._video_poller_success = False
+            finally:
+                self._video_poller_last_run = datetime.now(UTC)
+
+    async def _sleep_interruptible(self, seconds: float) -> None:
+        try:
+            await asyncio.wait_for(self._stop_event.wait(), timeout=seconds)
+        except asyncio.TimeoutError:
+            pass
+
+    # ── Synchronous helpers (run in thread pool) ────────────
+
+    def _execute_one_task(self) -> bool:
+        db = SessionLocal()
+        try:
+            task = select_next_queued_task(db)
+            if not task:
+                db.rollback()
+                return False
+
+            run = get_run(db, task.run_id)
+            task.input_payload = _build_task_input(db, run, task)
+            task.attempt = (task.attempt or 0) + 1
+            run.status = RunStatus.RUNNING.value
+            run.current_stage = task.stage_name
+            run.updated_at = model_utcnow()
+            db.flush()
+
+            info = RunningTaskInfo(
+                task_id=task.id,
+                run_id=run.id,
+                stage_name=task.stage_name,
+                attempt=task.attempt,
+                started_at=task.started_at or model_utcnow(),
+            )
+            self._running_tasks[task.id] = info
+
+            try:
+                execute_stage_task(db, task, run)
+                db.commit()
+
+                if task.status == TaskStatus.WAITING_REVIEW.value:
+                    self._total_completed += 1
+                elif task.status == TaskStatus.FAILED.value:
+                    self._total_failed += 1
+                return True
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                self._running_tasks.pop(task.id, None)
+        except Exception:
+            db.rollback()
+            logger.exception("_execute_one_task failed")
+            return False
+        finally:
+            db.close()
+
+    def _poll_all_video_assets(self) -> None:
+        db = SessionLocal()
+        try:
+            assets = db.scalars(
+                select(VariantAsset).where(VariantAsset.asset_type == "video")
+            ).all()
+
+            pending_run_ids: set[str] = set()
+            for asset in assets:
+                payload = asset.payload or {}
+                status = str(payload.get("generation_status", "")).lower()
+                if status in {"submitted", "queued", "pending", "processing", "running"}:
+                    pending_run_ids.add(asset.run_id)
+
+            for run_id in pending_run_ids:
+                try:
+                    refresh_video_task_assets(db, run_id)
+                except Exception:
+                    logger.exception("Video poll failed for run %s", run_id)
+
+            db.commit()
+        finally:
+            db.close()
+
+    def _recover_orphaned_tasks(self) -> None:
+        """Reset any RUNNING tasks that were abandoned by a previous crash."""
+        db = SessionLocal()
+        try:
+            orphaned = (
+                db.scalars(
+                    select(StageTask).where(
+                        StageTask.status == TaskStatus.RUNNING.value
+                    )
+                )
+                .all()
+            )
+            for task in orphaned:
+                task.status = TaskStatus.QUEUED.value
+                task.retry_at = None
+                logger.warning(
+                    "Recovered orphaned task %s (%s) — reset to QUEUED",
+                    task.id,
+                    task.stage_name,
+                )
+            if orphaned:
+                db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to recover orphaned tasks")
+        finally:
+            db.close()
 
 
 worker = PipelineWorker()
-
