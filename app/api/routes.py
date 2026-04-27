@@ -689,6 +689,87 @@ def _dashboard_html() -> str:
           .quality-chip.good { background:#eaf7ee; border-color:#bde0c8; color:#21633d; }
           .quality-chip.warn { background:#fff7e6; border-color:#ead19d; color:#735418; }
           .quality-chip.bad { background:#fdeeee; border-color:#efc2c2; color:#8a2d2d; }
+          .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+          }
+          .status-pill:before {
+            content: "";
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            flex-shrink: 0;
+          }
+          .status-pill.running {
+            background: #e3f0fe;
+            border: 1px solid #b3d6fc;
+            color: #1e5a9e;
+          }
+          .status-pill.running:before {
+            background: #2b7bd6;
+            animation: statusPulse 1.4s ease-in-out infinite;
+          }
+          .status-pill.waiting_review {
+            background: #fff7e6;
+            border: 1px solid #f0cf85;
+            color: #8a5d1c;
+          }
+          .status-pill.waiting_review:before {
+            background: #e8a82a;
+            animation: statusPulse 2.2s ease-in-out infinite;
+          }
+          .status-pill.completed {
+            background: #eaf7ee;
+            border: 1px solid #bde0c8;
+            color: #21633d;
+          }
+          .status-pill.completed:before { background: #2d9d5f; }
+          .status-pill.failed {
+            background: #fdeeee;
+            border: 1px solid #efc2c2;
+            color: #8a2d2d;
+          }
+          .status-pill.failed:before { background: #d94a4a; }
+          .status-pill.rejected {
+            background: #fdf0ee;
+            border: 1px solid #efc8c2;
+            color: #8a2d2d;
+          }
+          .status-pill.rejected:before { background: #d96a4a; }
+          .status-pill.draft {
+            background: #f2f4f5;
+            border: 1px solid #d0d5d8;
+            color: #5c6b73;
+          }
+          .status-pill.draft:before { background: #8e9ba6; }
+          @keyframes statusPulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.7); }
+          }
+          .refresh-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 11px;
+            color: var(--muted);
+            margin-left: 8px;
+          }
+          .refresh-indicator .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent);
+            opacity: 0.5;
+            transition: opacity 300ms ease;
+          }
+          .refresh-indicator.active .dot { opacity: 1; animation: statusPulse 1.6s ease-in-out infinite; }
           .agent-trace {
             display:flex;
             gap:10px;
@@ -829,7 +910,7 @@ def _dashboard_html() -> str:
           </div>
           <div class="grid top-grid">
             <section class="card runs-panel">
-              <h2>Runs</h2>
+              <h2>Runs <span class="refresh-indicator active" id="runs-refresh-indicator" title="Auto-refreshing every 5s"><span class="dot"></span> live</span></h2>
               <div class="action-row">
                 <button onclick="refreshRuns()">Refresh</button>
               </div>
@@ -935,6 +1016,9 @@ def _dashboard_html() -> str:
           let variantBoardFilters = { quality: "", assetType: "", reviewStatus: "", minScore: "", q: "" };
           let runEventSource = null;
           let currentTraceEvents = [];
+          let runDetailTimer = null;
+          let runDetailLastUpdated = null;
+          let runListInterval = null;
           const variantBoardCollapsedStorageKey = "variant_board_collapsed";
           let variantBoardCollapsed = false;
 
@@ -1026,6 +1110,21 @@ def _dashboard_html() -> str:
             }
           }
 
+          function statusPillClass(status) {
+            const s = String(status || "").toLowerCase();
+            if (s === "running") return "status-pill running";
+            if (s === "waiting_review") return "status-pill waiting_review";
+            if (s === "completed") return "status-pill completed";
+            if (s === "failed") return "status-pill failed";
+            if (s === "rejected") return "status-pill rejected";
+            return "status-pill draft";
+          }
+          function statusLabel(status) {
+            const s = String(status || "").toLowerCase();
+            if (s === "waiting_review") return "REVIEW";
+            return String(status || "draft").toUpperCase();
+          }
+
           async function refreshRuns() {
             const rows = await api("/runs");
             const body = document.getElementById("runs-body");
@@ -1039,7 +1138,7 @@ def _dashboard_html() -> str:
             rows.forEach((r) => {
               const tr = document.createElement("tr");
               if (r.id === currentRunId) tr.classList.add("selected");
-              tr.innerHTML = `<td><a href="#" onclick="selectRun('${r.id}');return false;">${r.id.slice(0,8)}</a></td><td>${esc(r.status)}</td><td>${esc(r.current_stage||"-")}</td><td>${esc(r.pipeline_mode)}</td><td>${esc(r.updated_at)}</td>`;
+              tr.innerHTML = `<td><a href="#" onclick="selectRun('${r.id}');return false;">${r.id.slice(0,8)}</a></td><td><span class="${statusPillClass(r.status)}">${statusLabel(r.status)}</span></td><td>${esc(r.current_stage||"-")}</td><td>${esc(r.pipeline_mode)}</td><td>${esc(r.updated_at)}</td>`;
               body.appendChild(tr);
             });
           }
@@ -1475,12 +1574,66 @@ def _dashboard_html() -> str:
             });
           }
 
+          function startRunDetailPolling(runId) {
+            stopRunDetailPolling();
+            runDetailTimer = setInterval(async () => {
+              if (!document.hidden) {
+                try {
+                  const run = await api(`/runs/${runId}`);
+                  const newUpdated = run.updated_at;
+                  if (runDetailLastUpdated === newUpdated) return;
+                  runDetailLastUpdated = newUpdated;
+                  await silentRefreshRunDetail(run);
+                } catch (_err) {}
+              }
+            }, 3000);
+          }
+
+          function stopRunDetailPolling() {
+            if (runDetailTimer) {
+              clearInterval(runDetailTimer);
+              runDetailTimer = null;
+            }
+            runDetailLastUpdated = null;
+          }
+
+          async function silentRefreshRunDetail(run) {
+            const wasCollapsed = variantBoardCollapsed;
+            const traceBoard = document.getElementById("agent-trace-board");
+            const traceScrollLeft = traceBoard ? traceBoard.scrollLeft : 0;
+
+            const [deliverables, variants] = await Promise.all([
+              api(`/runs/${run.id}/deliverables`).catch(() => ({ run_id: run.id, deliverables: {}, score: {} })),
+              api(`/runs/${run.id}/variants`).catch(() => ({ run_id: run.id, items: [], summary: {}, variants: [], ranked: [] }))
+            ]);
+
+            // Merge: keep SSE-streamed events not yet on server, add server events on top
+            const serverEventIds = new Set((run.trace_events || []).map(e => e.id));
+            const sseOnly = currentTraceEvents.filter(e => !serverEventIds.has(e.id));
+            currentTraceEvents = [...sseOnly, ...(run.trace_events || [])];
+            run.trace_events = currentTraceEvents;
+
+            document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables, variants);
+
+            if (wasCollapsed) {
+              const body = document.getElementById("variant-board-body");
+              if (body) body.classList.add("is-collapsed");
+              const btn = document.getElementById("variant-board-toggle");
+              if (btn) btn.textContent = variantBoardToggleLabel();
+            }
+            const newTraceBoard = document.getElementById("agent-trace-board");
+            if (newTraceBoard && traceScrollLeft > 0) {
+              newTraceBoard.scrollLeft = traceScrollLeft;
+            }
+            bindTracePayloadToggles();
+          }
+
           function renderRunDetail(run, deliverables, variants){
             const score = run.latest_scorecard ? `<pre>${esc(JSON.stringify(run.latest_scorecard, null, 2))}</pre>` : `<span class="muted">No score yet.</span>`;
             return `
               <div style="margin-bottom:12px;">
                 <div><b>Run:</b> ${esc(run.id)}</div>
-                <div><span class="pill">status: ${esc(run.status)}</span><span class="pill">stage: ${esc(run.current_stage || "-")}</span><span class="pill">mode: ${esc(run.pipeline_mode)}</span></div>
+                <div><span class="${statusPillClass(run.status)}">${statusLabel(run.status)}</span> <span class="pill">stage: ${esc(run.current_stage || "-")}</span><span class="pill">mode: ${esc(run.pipeline_mode)}</span></div>
                 <div class="muted">provider/model: ${esc(run.model_provider)} / ${esc(run.model_name)} | budget: ${esc(run.budget_used)}</div>
                 <div class="muted">product_code: ${esc(run.product_code)} | industry_code: ${esc(run.industry_code)} | creative_preset: ${esc(run.creative_preset)}</div>
                 <div class="muted">creative_specs: ${esc(JSON.stringify(run.creative_specs || {}))}</div>
@@ -1506,10 +1659,12 @@ def _dashboard_html() -> str:
               api(`/runs/${runId}/variants`).catch(() => ({ run_id: runId, items: [], summary: {}, variants: [], ranked: [] }))
             ]);
             currentTraceEvents = run.trace_events || [];
+            runDetailLastUpdated = run.updated_at;
             document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables, variants);
             bindTracePayloadToggles();
             requestAnimationFrame(() => scrollTraceToLeft("auto"));
             connectRunEvents(runId);
+            startRunDetailPolling(runId);
           }
 
           async function loadPipelineModes(){
@@ -1649,6 +1804,47 @@ def _dashboard_html() -> str:
             await refreshRuns();
           }
 
+          function startRunListPolling() {
+            if (runListInterval) return;
+            runListInterval = setInterval(async () => {
+              if (!document.hidden) await refreshRuns();
+            }, 5000);
+            updateRefreshIndicator(true);
+          }
+
+          function stopRunListPolling() {
+            if (runListInterval) {
+              clearInterval(runListInterval);
+              runListInterval = null;
+            }
+            updateRefreshIndicator(false);
+          }
+
+          function updateRefreshIndicator(active) {
+            const indicator = document.getElementById("runs-refresh-indicator");
+            if (!indicator) return;
+            if (active) {
+              indicator.classList.add("active");
+              indicator.title = "Auto-refreshing every 5s";
+            } else {
+              indicator.classList.remove("active");
+              indicator.title = "Auto-refresh paused (tab hidden)";
+            }
+          }
+
+          document.addEventListener("visibilitychange", () => {
+            if (document.hidden) {
+              updateRefreshIndicator(false);
+            } else {
+              updateRefreshIndicator(true);
+              refreshRuns();
+              if (currentRunId) {
+                stopRunDetailPolling();
+                startRunDetailPolling(currentRunId);
+              }
+            }
+          });
+
           refreshResearchHint();
           refreshPresetHint();
           loadVariantBoardCollapsedState();
@@ -1663,7 +1859,7 @@ def _dashboard_html() -> str:
               }
             }
           });
-          setInterval(refreshRuns, 5000);
+          startRunListPolling();
         </script>
       </body>
     </html>
