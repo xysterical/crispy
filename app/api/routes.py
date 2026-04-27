@@ -700,6 +700,28 @@ def _dashboard_html() -> str:
             flex-wrap:wrap;
             margin-bottom:4px;
           }
+          .trace-index {
+            min-width: 20px;
+            height: 20px;
+            border-radius: 999px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 6px;
+            font-size: 11px;
+            font-weight: 700;
+            color: #1c4a3b;
+            border: 1px solid #b8d8c8;
+            background: linear-gradient(135deg, #eef9f2, #def1e6);
+            margin-right: 6px;
+            flex-shrink: 0;
+          }
+          .trace-head-main {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 4px;
+          }
           .trace-message {
             font-size:13px;
             color:#2a3f36;
@@ -1347,16 +1369,17 @@ def _dashboard_html() -> str:
             const events = [...(run.trace_events || currentTraceEvents || [])].sort((a, b) => {
               const ta = Date.parse(a.created_at || "") || 0;
               const tb = Date.parse(b.created_at || "") || 0;
-              if (ta !== tb) return ta - tb;
-              return String(a.id || "").localeCompare(String(b.id || ""));
+              if (ta !== tb) return tb - ta;
+              return String(b.id || "").localeCompare(String(a.id || ""));
             });
             if (!events.length) return '<div class="run-detail-empty">No agent trace events yet.</div>';
             return `
               <div id="agent-trace-board" class="agent-trace">
-                ${events.map((event) => `
+                ${events.map((event, index) => `
                   <article class="trace-event">
                     <div class="trace-head">
-                      <div>
+                      <div class="trace-head-main">
+                        <span class="trace-index">${events.length - index}</span>
                         <span class="pill">${esc(event.stage_name)}</span>
                         <span class="pill">${esc(event.agent_name)}</span>
                         <span class="pill">${esc(event.event_type)}</span>
@@ -1374,15 +1397,14 @@ def _dashboard_html() -> str:
               </div>
             `;
           }
-          function isNearTraceRightEdge(container){
+          function isNearTraceLeftEdge(container){
             if (!container) return true;
-            const remaining = container.scrollWidth - container.clientWidth - container.scrollLeft;
-            return remaining <= 48;
+            return container.scrollLeft <= 48;
           }
-          function scrollTraceToRight(behavior = "smooth"){
+          function scrollTraceToLeft(behavior = "smooth"){
             const container = document.getElementById("agent-trace-board");
             if (!container) return;
-            container.scrollTo({ left: container.scrollWidth, behavior });
+            container.scrollTo({ left: 0, behavior });
           }
           function bindTracePayloadToggles(){
             const container = document.getElementById("agent-trace-board");
@@ -1416,14 +1438,14 @@ def _dashboard_html() -> str:
                 if (currentRunId !== runId) return;
                 if (!currentTraceEvents.some((existing) => existing.id === item.id)) {
                   const containerBefore = document.getElementById("agent-trace-board");
-                  const shouldStickToRight = isNearTraceRightEdge(containerBefore);
-                  currentTraceEvents.push(item);
+                  const shouldStickToLeft = isNearTraceLeftEdge(containerBefore);
+                  currentTraceEvents.unshift(item);
                   const container = document.getElementById("agent-trace-container");
                   if (container) {
                     container.innerHTML = renderAgentTrace({ trace_events: currentTraceEvents });
                     bindTracePayloadToggles();
-                    if (shouldStickToRight) {
-                      requestAnimationFrame(() => scrollTraceToRight("smooth"));
+                    if (shouldStickToLeft) {
+                      requestAnimationFrame(() => scrollTraceToLeft("smooth"));
                     }
                   }
                 }
@@ -1464,7 +1486,7 @@ def _dashboard_html() -> str:
             currentTraceEvents = run.trace_events || [];
             document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables, variants);
             bindTracePayloadToggles();
-            requestAnimationFrame(() => scrollTraceToRight("auto"));
+            requestAnimationFrame(() => scrollTraceToLeft("auto"));
             connectRunEvents(runId);
           }
 
