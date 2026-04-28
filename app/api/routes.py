@@ -844,10 +844,10 @@ def _dashboard_shared_js() -> str:
                 </div>
                 <div>
                   <label>Search</label>
-                  <input value="${esc(variantBoardFilters.q)}" onchange="updateVariantFilter('q', this.value)" placeholder="angle, hook" style="width:110px;" />
-                </div>
-                <div>
-                  <button onclick="resetVariantFilters()">Reset</button>
+                  <div style="display:flex;gap:6px;align-items:center;">
+                    <input value="${esc(variantBoardFilters.q)}" onchange="updateVariantFilter('q', this.value)" placeholder="angle, hook" style="width:96px;" />
+                    <button onclick="resetVariantFilters()" style="font-size:11px;padding:5px 8px;white-space:nowrap;" title="Clear all filters">&#8634; Reset</button>
+                  </div>
                 </div>
               </div>
             `;
