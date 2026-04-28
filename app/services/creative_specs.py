@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from sqlalchemy.orm import Session
+from sqlalchemy import select
 
+from app.data.models import CreativePreset
 
 CREATIVE_PRESETS: dict[str, dict] = {
     "meta_square_5s": {
@@ -22,11 +25,76 @@ CREATIVE_PRESETS: dict[str, dict] = {
         "resolution": "1080p",
         "video_duration_seconds": 6,
     },
+    "marketplace_main_image_pack": {
+        "image_size": "1:1",
+        "video_size": "1:1",
+        "resolution": "2000px",
+        "video_duration_seconds": 5,
+        "asset_goal": "marketplace_main_image",
+        "platform_targets": ["tiktok_shop", "shopify", "alibaba", "amazon"],
+        "export_size_px": 2000,
+        "background_policy": "pure_white",
+    },
 }
 
 
-def list_creative_presets() -> dict[str, dict]:
+def list_system_presets() -> dict[str, dict]:
     return deepcopy(CREATIVE_PRESETS)
+
+
+def list_user_presets(db: Session, workspace_name: str) -> list[CreativePreset]:
+    return list(
+        db.scalars(
+            select(CreativePreset)
+            .where(CreativePreset.workspace_name == workspace_name)
+            .order_by(CreativePreset.updated_at.desc())
+        ).all()
+    )
+
+
+def get_creative_preset(db: Session, preset_id: str) -> CreativePreset:
+    preset = db.get(CreativePreset, preset_id)
+    if not preset:
+        raise ValueError(f"creative preset not found: {preset_id}")
+    return preset
+
+
+def create_creative_preset(db: Session, workspace_name: str, name: str, image_size: str | None = None, video_size: str | None = None, resolution: str | None = None, video_duration_seconds: int | None = None, platform_targets: dict | None = None) -> CreativePreset:
+    existing = db.scalar(
+        select(CreativePreset).where(
+            CreativePreset.workspace_name == workspace_name,
+            CreativePreset.name == name,
+        )
+    )
+    if existing:
+        raise ValueError(f"creative preset already exists: {name}")
+    preset = CreativePreset(
+        workspace_name=workspace_name,
+        name=name,
+        image_size=image_size,
+        video_size=video_size,
+        resolution=resolution,
+        video_duration_seconds=video_duration_seconds,
+        platform_targets=platform_targets or {},
+    )
+    db.add(preset)
+    db.flush()
+    return preset
+
+
+def update_creative_preset(db: Session, preset_id: str, **kwargs) -> CreativePreset:
+    preset = get_creative_preset(db, preset_id)
+    for key, value in kwargs.items():
+        if value is not None and hasattr(preset, key):
+            setattr(preset, key, value)
+    db.flush()
+    return preset
+
+
+def delete_creative_preset(db: Session, preset_id: str) -> None:
+    preset = get_creative_preset(db, preset_id)
+    db.delete(preset)
+    db.flush()
 
 
 def resolve_creative_specs(creative_preset: str, creative_specs: dict | None = None) -> dict:
@@ -53,3 +121,14 @@ def resolve_creative_specs(creative_preset: str, creative_specs: dict | None = N
         raise ValueError("creative_specs.video_duration_seconds must be within 1..60")
     resolved["video_duration_seconds"] = duration_int
     return resolved
+
+
+def resolve_creative_specs_from_user_preset(db: Session, preset_id: str) -> dict:
+    preset = get_creative_preset(db, preset_id)
+    return {
+        "image_size": preset.image_size or "1:1",
+        "video_size": preset.video_size or "1:1",
+        "resolution": preset.resolution or "720p",
+        "video_duration_seconds": preset.video_duration_seconds or 5,
+        "platform_targets": preset.platform_targets or {},
+    }

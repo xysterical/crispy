@@ -70,7 +70,7 @@ from app.services.agent_api_configs import (
 from app.services.feedback import import_feedback_rows, project_leaderboard
 from app.services.intake_assets import process_uploaded_payloads
 from app.services.personas import get_persona, list_persona_catalog, persona_info, update_persona
-from app.services.creative_specs import list_creative_presets
+from app.services.creative_specs import list_system_presets
 from app.services.capability_preflight import preflight_run_capabilities
 from app.services.runs import (
     approve_stage,
@@ -3292,7 +3292,7 @@ def list_pipeline_modes() -> list[PipelineModeView]:
 
 @router.get("/creative-presets", response_model=dict[str, dict])
 def get_creative_presets() -> dict[str, dict]:
-    return list_creative_presets()
+    return list_system_presets()
 
 
 @router.post("/runs/preflight", response_model=RunPreflightResponse)
