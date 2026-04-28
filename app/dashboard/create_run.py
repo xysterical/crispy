@@ -6,7 +6,7 @@ from __future__ import annotations
 CREATE_RUN_HTML = """
             <!-- Template Bar -->
             <div class="template-bar" id="template-bar">
-              <span style="font-weight:600;font-size:12px;">Template:</span>
+              <span style="font-weight:600;font-size:12px;">Creative Template:</span>
               <select id="template-selector" onchange="loadTemplate()" style="font-size:12px;padding:6px 8px;">
                 <option value="">-- choose --</option>
               </select>
@@ -63,7 +63,7 @@ CREATE_RUN_HTML = """
                       <div><label>Industry Code (required)</label><input id="industry_code" value="pet_accessories" required /></div>
                     </div>
                     <div class="action-row" style="justify-content:flex-end;margin-top:8px;">
-                      <button class="primary" onclick="nextStep(1)">Next: Platform & Creative &#8594;</button>
+                      <button class="primary" onclick="nextStep(1)">Next &#8594;</button>
                     </div>
                   </div>
                 </div>
@@ -113,8 +113,8 @@ CREATE_RUN_HTML = """
                     </div>
 
                     <div class="action-row" style="justify-content:space-between;margin-top:8px;">
-                      <button onclick="prevStep(2)">&#8592; Back: Product & Assets</button>
-                      <button class="primary" onclick="nextStep(2)">Next: Campaign & Targeting &#8594;</button>
+                      <button onclick="prevStep(2)">&#8592; Back</button>
+                      <button class="primary" onclick="nextStep(2)">Next &#8594;</button>
                     </div>
                   </div>
                 </div>
@@ -145,8 +145,8 @@ CREATE_RUN_HTML = """
                     <label>Category Tags (comma separated)</label>
                     <input id="category_tags" value="pet_accessories,dog" />
                     <div class="action-row" style="justify-content:space-between;margin-top:8px;">
-                      <button onclick="prevStep(3)">&#8592; Back: Platform & Creative</button>
-                      <button class="primary" onclick="nextStep(3)">Next: Research & Context &#8594;</button>
+                      <button onclick="prevStep(3)">&#8592; Back</button>
+                      <button class="primary" onclick="nextStep(3)">Next &#8594;</button>
                     </div>
                   </div>
                 </div>
@@ -171,7 +171,7 @@ CREATE_RUN_HTML = """
                     <label>Advanced Business Context JSON (optional)</label>
                     <textarea id="business_context_extra" rows="3" placeholder='{"landing_page_angle":"premium utility","seasonality":"spring"}'></textarea>
                     <div class="action-row" style="justify-content:space-between;margin-top:8px;">
-                      <button onclick="prevStep(4)">&#8592; Back: Campaign & Targeting</button>
+                      <button onclick="prevStep(4)">&#8592; Back</button>
                       <button class="primary" onclick="submitCreateRun()">Create Run</button>
                     </div>
                   </div>
