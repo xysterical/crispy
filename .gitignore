@@ -13,5 +13,9 @@ wheels/
 assets/
 *.db
 
+# Worktrees and superpowers
+.worktrees/
+.superpowers/
+
 # Else
 .DS_Store
