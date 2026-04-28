@@ -503,3 +503,42 @@ class ProductConfigHint(BaseModel):
     channel: str | None = None
     objective: str | None = None
     last_run_at: datetime | None = None
+
+
+class ShopAnalysisRequest(BaseModel):
+    store_url: str = Field(..., min_length=1, description="Store URL to research")
+    description: str = Field(default="", description="Operator-provided store description")
+    industry_code: str = Field(default="general", description="Industry code for GmMemory association")
+    workspace_name: str = Field(default="workspace_demo")
+    project_name: str = Field(default="project_demo")
+
+
+class ShopAnalysisResult(BaseModel):
+    source_type: str  # "shop_profile" or "competitor_analysis"
+    content: dict     # structured profile or markdown report
+    summary: str      # one-line summary for display
+
+
+class ShopAnalysisResponse(BaseModel):
+    id: str
+    store_url: str
+    industry_code: str
+    profile: ShopAnalysisResult | None = None
+    competitor_analysis: ShopAnalysisResult | None = None
+    status: str  # "running", "completed", "failed"
+    error_message: str | None = None
+    created_at: datetime
+
+
+class ShopAnalysisListItem(BaseModel):
+    id: str
+    store_url: str
+    industry_code: str
+    status: str
+    source_type: str
+    summary: str
+    created_at: datetime
+
+
+class ShopAnalysisHistoryResponse(BaseModel):
+    items: list[ShopAnalysisListItem]
