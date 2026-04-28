@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import mimetypes
 import asyncio
+import io
+import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
@@ -14,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.registry import stage_agent
 from app.core.config import get_settings
-from app.data.models import Artifact, GmMemory, PipelineRun, ScoreCard as ScoreCardModel, StageTask
+from app.data.models import Artifact, GmMemory, PipelineRun, RunVariant, ScoreCard as ScoreCardModel, StageTask, VariantAsset
 from app.data.session import (
     SessionLocal,
     get_active_database_url,
@@ -69,6 +71,7 @@ from app.services.agent_api_configs import (
 )
 from app.services.feedback import import_feedback_rows, project_leaderboard
 from app.services.intake_assets import process_uploaded_payloads
+from app.services.marketplace_qa import is_marketplace_main_image
 from app.services.personas import get_persona, list_persona_catalog, persona_info, update_persona
 from app.services.creative_specs import list_creative_presets
 from app.services.capability_preflight import preflight_run_capabilities
@@ -1101,12 +1104,23 @@ def _dashboard_html() -> str:
                       <option value="meta_square_5s" selected>Meta Square 5s</option>
                       <option value="meta_vertical_5s">Meta Vertical 5s</option>
                       <option value="youtube_landscape_6s">YouTube Landscape 6s</option>
+                      <option value="marketplace_main_image_pack">Marketplace Main Image Pack</option>
                       <option value="custom">Custom</option>
                     </select>
                   </div>
                   <div><label>Channel</label><input id="channel" value="meta" /></div>
                 </div>
                 <div id="preset-hint" class="hint muted"></div>
+                <div id="marketplace-options" class="hint" style="display:none;">
+                  <label>Marketplace Targets</label>
+                  <div class="action-row" style="gap:10px;flex-wrap:wrap;">
+                    <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input id="platform_tiktok_shop" type="checkbox" checked /> TikTok Shop</label>
+                    <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input id="platform_shopify" type="checkbox" checked /> Shopify</label>
+                    <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input id="platform_alibaba" type="checkbox" checked /> Alibaba</label>
+                    <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input id="platform_amazon" type="checkbox" checked /> Amazon</label>
+                  </div>
+                  <div class="muted">Upload phone product photos or short videos. This workflow keeps square white-background product images and exports pass/approved candidates.</div>
+                </div>
                 <div class="row">
                   <div><label>Image Size (custom only)</label><input id="custom_image_size" placeholder="1:1" /></div>
                   <div><label>Video Size (custom only)</label><input id="custom_video_size" placeholder="9:16" /></div>
@@ -1183,6 +1197,24 @@ def _dashboard_html() -> str:
             if (preset === "meta_square_5s") return { image_size: "1:1", video_size: "1:1", resolution: "720p", video_duration_seconds: 5 };
             if (preset === "meta_vertical_5s") return { image_size: "9:16", video_size: "9:16", resolution: "720p", video_duration_seconds: 5 };
             if (preset === "youtube_landscape_6s") return { image_size: "16:9", video_size: "16:9", resolution: "1080p", video_duration_seconds: 6 };
+            if (preset === "marketplace_main_image_pack") {
+              const targets = [
+                ["platform_tiktok_shop", "tiktok_shop"],
+                ["platform_shopify", "shopify"],
+                ["platform_alibaba", "alibaba"],
+                ["platform_amazon", "amazon"],
+              ].filter(([id]) => document.getElementById(id)?.checked).map(([_id, value]) => value);
+              return {
+                image_size: "1:1",
+                video_size: "1:1",
+                resolution: "2000px",
+                video_duration_seconds: 5,
+                asset_goal: "marketplace_main_image",
+                platform_targets: targets.length ? targets : ["tiktok_shop", "shopify", "alibaba", "amazon"],
+                export_size_px: 2000,
+                background_policy: "pure_white",
+              };
+            }
             const imageSize = document.getElementById("custom_image_size").value.trim();
             const videoSize = document.getElementById("custom_video_size").value.trim();
             const resolution = document.getElementById("custom_resolution").value.trim();
@@ -1197,13 +1229,24 @@ def _dashboard_html() -> str:
             const preset = document.getElementById("creative_preset").value;
             const hint = document.getElementById("preset-hint");
             const isCustom = preset === "custom";
+            const isMarketplace = preset === "marketplace_main_image_pack";
             ["custom_image_size", "custom_video_size", "custom_resolution", "custom_duration"].forEach((id) => {
               const el = document.getElementById(id);
               el.disabled = !isCustom;
             });
+            document.getElementById("marketplace-options").style.display = isMarketplace ? "block" : "none";
             if (preset === "meta_square_5s") hint.textContent = "Preset: image/video 1:1, 720p, duration 5s.";
             else if (preset === "meta_vertical_5s") hint.textContent = "Preset: image/video 9:16, 720p, duration 5s.";
             else if (preset === "youtube_landscape_6s") hint.textContent = "Preset: image/video 16:9, 1080p, duration 6s.";
+            else if (isMarketplace) {
+              hint.textContent = "Preset: square 2000px marketplace main-image pack with pure-white background QA.";
+              document.getElementById("pipeline_mode").value = "copy_image_only";
+              document.getElementById("approval_mode").value = "semi_auto";
+              document.getElementById("variant_count").value = "4";
+              document.getElementById("channel").value = "marketplace";
+              document.getElementById("objective").value = "product_listing_quality";
+              refreshModeHint();
+            }
             else hint.textContent = "Custom preset: fill image/video size, resolution, and duration manually.";
           }
           function mediaUrl(path){ return `/media?path=${encodeURIComponent(path || "")}`; }
@@ -1293,6 +1336,12 @@ def _dashboard_html() -> str:
             });
           }
 
+          function readinessChips(readiness) {
+            const entries = Object.entries(readiness || {});
+            if (!entries.length) return "";
+            return `<div class="quality-row" style="margin-top:8px;">${entries.map(([platform, status]) => `<span class="quality-chip ${qualityChipClass(status)}">${esc(platform)}: ${esc(status)}</span>`).join("")}</div>`;
+          }
+
           function renderDeliverables(deliverables) {
             const winner = deliverables?.winner_variant_id || "-";
             const copy = deliverables?.deliverables?.copy_variant || null;
@@ -1300,9 +1349,10 @@ def _dashboard_html() -> str:
             const video = deliverables?.deliverables?.video_asset || null;
             const image = images.length ? images[0] : null;
             const scoreAction = deliverables?.score?.forecast?.recommended_action || deliverables?.score?.recommended_action || "-";
+            const zipLink = currentRunId ? `<a href="/runs/${currentRunId}/deliverables.zip" target="_blank" class="muted">Download ZIP</a>` : "";
             return `
               <h3>Deliverables Overview</h3>
-              <div class="muted">winner: ${esc(winner)} | recommendation: ${esc(scoreAction)}</div>
+              <div class="muted">winner: ${esc(winner)} | recommendation: ${esc(scoreAction)}${zipLink ? " | " + zipLink : ""}</div>
               <div class="deliverables">
                 <article class="deliverable-card">
                   <div class="stage-title">Copy</div>
@@ -1318,6 +1368,8 @@ def _dashboard_html() -> str:
                     <a href="${mediaViewUrl(image.uri)}" target="_blank">
                       <img class="media-preview image" src="${mediaUrl(image.uri)}" alt="generated image" />
                     </a>
+                    ${readinessChips(image.platform_readiness || image.marketplace_qa?.platform_readiness)}
+                    ${image.image_role ? `<div><span class="pill">${esc(image.image_role)}</span><span class="pill">export_ready: ${esc(image.export_ready ? "yes" : "no")}</span></div>` : ""}
                     <div class="muted">${esc(image.aspect_ratio || "1:1")} | ${esc(image.uri)}</div>
                   ` : '<div class="muted">No image winner yet.</div>'}
                 </article>
@@ -1351,9 +1403,9 @@ def _dashboard_html() -> str:
           }
 
           function qualityChipClass(flag){
-            if (["ready_to_review", "winner", "shortlisted"].includes(flag)) return "good";
-            if (["processing_assets", "missing_assets", "compliance_attention", "low_score", "pending_review", "visual_qa_attention", "visual_qa_needs_frame_review", "visual_qa_remote_unchecked", "visual_qa_aspect_mismatch", "visual_qa_low_information", "visual_qa_video_header_unverified"].includes(flag)) return "warn";
-            if (["failed_assets", "media_issue", "operator_quality_issue", "needs_regeneration", "rejected", "visual_qa_failed", "visual_qa_placeholder", "visual_qa_empty_video", "visual_qa_decode_error", "visual_qa_empty_file", "visual_qa_missing_file"].includes(flag)) return "bad";
+            if (["pass", "ready_to_review", "ready", "winner", "shortlisted", "export_ready"].includes(flag)) return "good";
+            if (["warn", "processing_assets", "missing_assets", "compliance_attention", "low_score", "pending_review", "visual_qa_attention", "visual_qa_needs_frame_review", "visual_qa_remote_unchecked", "visual_qa_aspect_mismatch", "visual_qa_low_information", "visual_qa_video_header_unverified", "marketplace_attention", "marketplace_background_not_pure_white", "marketplace_export_size_under_target", "marketplace_identity_uncertain", "product_fill_low"].includes(flag)) return "warn";
+            if (["fail", "failed_assets", "media_issue", "operator_quality_issue", "needs_regeneration", "rejected", "visual_qa_failed", "visual_qa_placeholder", "visual_qa_empty_video", "visual_qa_decode_error", "visual_qa_empty_file", "visual_qa_missing_file", "marketplace_failed", "marketplace_placeholder", "marketplace_background_not_white", "marketplace_missing_reference", "marketplace_resolution_low"].includes(flag)) return "bad";
             return "";
           }
 
@@ -1476,6 +1528,24 @@ def _dashboard_html() -> str:
             }
           }
 
+          function renderMarketplaceQa(asset) {
+            const payload = asset?.payload || {};
+            const qa = payload.marketplace_qa || {};
+            if (!qa.status && !payload.image_role) return "";
+            const checks = (qa.checks || []).slice(0, 8).map((check) => `
+              <div class="muted">[${esc(check.status || "-")}] ${esc(check.key || "-")}: ${esc(check.message || "-")}</div>
+            `).join("");
+            const refs = (payload.reference_manifest || []).slice(0, 4).map((item) => esc(item.source || item.uri || "-")).join(", ");
+            return `
+              <div style="margin-top:10px;">
+                <div><b>Marketplace QA</b> <span class="quality-chip ${qualityChipClass(qa.status)}">${esc(qa.status || "-")}</span> <span class="pill">${esc(payload.image_role || "main_image")}</span></div>
+                ${readinessChips(payload.platform_readiness || qa.platform_readiness)}
+                <div class="muted">score: ${esc(qa.score ?? "-")} | export_ready: ${esc(payload.export_ready ? "yes" : "no")} | refs: ${refs || "-"}</div>
+                ${checks}
+              </div>
+            `;
+          }
+
           function renderVariantDetail(runId, variantId) {
             const allItems = window.__lastVariants?.items || [];
             const item = allItems.find((v) => v.variant_id === variantId);
@@ -1504,6 +1574,7 @@ def _dashboard_html() -> str:
               <div class="variant-detail-grid" style="margin-top:14px;">
                 <div>
                   ${image ? `<a href="${mediaViewUrl(image.uri)}" target="_blank"><img class="detail-image" src="${mediaUrl(image.uri)}" alt="variant image" /></a>` : '<div class="muted">No image asset.</div>'}
+                  ${renderMarketplaceQa(image)}
                   ${video?.video_uri ? `
                     <div style="margin-top:10px;">
                       <video controls playsinline class="media-preview video" src="${mediaUrl(video.video_uri)}" style="max-height:400px;"></video>
@@ -1554,11 +1625,14 @@ def _dashboard_html() -> str:
                     <option value="ready_to_review" ${variantBoardFilters.quality === "ready_to_review" ? "selected" : ""}>Ready</option>
                     <option value="winner" ${variantBoardFilters.quality === "winner" ? "selected" : ""}>Winner</option>
                     <option value="shortlisted" ${variantBoardFilters.quality === "shortlisted" ? "selected" : ""}>Shortlisted</option>
+                    <option value="export_ready" ${variantBoardFilters.quality === "export_ready" ? "selected" : ""}>Export Ready</option>
                     <option value="pending_review" ${variantBoardFilters.quality === "pending_review" ? "selected" : ""}>Pending</option>
                     <option value="processing_assets" ${variantBoardFilters.quality === "processing_assets" ? "selected" : ""}>Processing</option>
                     <option value="failed_assets" ${variantBoardFilters.quality === "failed_assets" ? "selected" : ""}>Failed</option>
                     <option value="visual_qa_attention" ${variantBoardFilters.quality === "visual_qa_attention" ? "selected" : ""}>QA Attn</option>
                     <option value="visual_qa_failed" ${variantBoardFilters.quality === "visual_qa_failed" ? "selected" : ""}>QA Fail</option>
+                    <option value="marketplace_attention" ${variantBoardFilters.quality === "marketplace_attention" ? "selected" : ""}>Marketplace QA</option>
+                    <option value="marketplace_failed" ${variantBoardFilters.quality === "marketplace_failed" ? "selected" : ""}>Marketplace Fail</option>
                     <option value="needs_regeneration" ${variantBoardFilters.quality === "needs_regeneration" ? "selected" : ""}>Regen</option>
                     <option value="rejected" ${variantBoardFilters.quality === "rejected" ? "selected" : ""}>Rejected</option>
                   </select>
@@ -1942,12 +2016,14 @@ def _dashboard_html() -> str:
             try {
               const files = document.getElementById("input_files").files;
               const mediaFlags = detectInputKinds(files);
+              const creativeSpecs = buildCreativeSpecs();
               const preflight = await api("/runs/preflight", {
                 method: "POST",
                 body: JSON.stringify({
                   pipeline_mode: document.getElementById("pipeline_mode").value,
                   has_image_inputs: mediaFlags.hasImageInputs,
                   has_video_inputs: mediaFlags.hasVideoInputs,
+                  creative_specs: creativeSpecs,
                 }),
               });
               const detailText = preflightDetail(preflight);
@@ -1984,7 +2060,7 @@ def _dashboard_html() -> str:
               payload.append("channel", document.getElementById("channel").value);
               payload.append("objective", document.getElementById("objective").value);
               payload.append("creative_preset", document.getElementById("creative_preset").value);
-              payload.append("creative_specs", JSON.stringify(buildCreativeSpecs()));
+              payload.append("creative_specs", JSON.stringify(creativeSpecs));
               payload.append("pipeline_mode", document.getElementById("pipeline_mode").value);
               payload.append("approval_mode", document.getElementById("approval_mode").value);
               payload.append("variant_count", String(Number(document.getElementById("variant_count").value || 8)));
@@ -3302,6 +3378,7 @@ def preflight_pipeline_run(payload: RunPreflightRequest, db: Session = Depends(g
         pipeline_mode=payload.pipeline_mode,
         has_image_inputs=payload.has_image_inputs,
         has_video_inputs=payload.has_video_inputs,
+        creative_specs=payload.creative_specs,
     )
     return RunPreflightResponse(**result)
 
@@ -3440,6 +3517,11 @@ async def create_pipeline_run_rich(
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if is_marketplace_main_image(run.creative_specs) and not (
+        assets_summary.get("sample_images") or assets_summary.get("sample_videos")
+    ):
+        db.rollback()
+        raise HTTPException(status_code=400, detail="marketplace_main_image requires at least one uploaded product image or video")
 
     run.context_json = {
         **(run.context_json or {}),
@@ -3526,6 +3608,78 @@ def get_run_deliverables(run_id: str, db: Session = Depends(get_db)) -> Delivera
         winner_variant_id=deliverables.get("winner_variant_id"),
         deliverables=deliverables,
         score=score,
+    )
+
+
+@router.get("/runs/{run_id}/deliverables.zip")
+def get_run_deliverables_zip(run_id: str, db: Session = Depends(get_db)) -> StreamingResponse:
+    try:
+        run = get_run(db, run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    assets = db.scalars(
+        select(VariantAsset).where(VariantAsset.run_id == run_id, VariantAsset.asset_type == "image")
+    ).all()
+    intake_payload = get_stage_payload(db, run_id, "intake") if run.stage_tasks else {}
+    exported: list[dict] = []
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for asset in assets:
+            payload = asset.payload or {}
+            marketplace_qa = payload.get("marketplace_qa") or {}
+            readiness = payload.get("platform_readiness") or marketplace_qa.get("platform_readiness") or {}
+            variant = db.get(RunVariant, asset.run_variant_id)
+            approved = bool(
+                variant
+                and (
+                    variant.is_winner
+                    or variant.review_status in {"approved", "winner", "export_ready"}
+                    or variant.status in {"approved", "winner"}
+                )
+            )
+            export_ready = bool(payload.get("export_ready") or marketplace_qa.get("export_ready"))
+            if not (export_ready or approved):
+                continue
+            if marketplace_qa.get("status") == "fail" and not approved:
+                continue
+            try:
+                media_path = _resolve_media_path(asset.uri or "")
+            except HTTPException:
+                continue
+            image_role = str(payload.get("image_role") or "main_image").replace("/", "_")
+            variant_id = str(payload.get("variant_id") or (variant.variant_id if variant else asset.id)).replace("/", "_")
+            suffix = media_path.suffix or ".png"
+            export_name = f"{run.product_code}_{variant_id}_{image_role}{suffix}"
+            zf.write(media_path, export_name)
+            exported.append(
+                {
+                    "file": export_name,
+                    "variant_id": variant_id,
+                    "image_role": image_role,
+                    "uri": asset.uri,
+                    "platform_readiness": readiness,
+                    "marketplace_qa": marketplace_qa,
+                    "approved": approved,
+                    "export_ready": export_ready,
+                }
+            )
+        qa_report = {
+            "run_id": run.id,
+            "product_code": run.product_code,
+            "industry_code": run.industry_code,
+            "creative_preset": run.creative_preset,
+            "creative_specs": run.creative_specs or {},
+            "visual_identity": intake_payload.get("visual_identity") if isinstance(intake_payload, dict) else {},
+            "exported_count": len(exported),
+            "images": exported,
+        }
+        zf.writestr("qa_report.json", json.dumps(qa_report, ensure_ascii=False, indent=2))
+    archive.seek(0)
+    filename = f"{run.product_code or run.id}_deliverables.zip"
+    return StreamingResponse(
+        archive,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

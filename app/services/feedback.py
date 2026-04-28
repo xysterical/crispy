@@ -14,6 +14,7 @@ from app.data.models import (
     Project,
     RunVariant,
     VariantAsset,
+    VariantReview,
     Workspace,
 )
 from app.schemas.contracts import FeedbackRow
@@ -79,12 +80,24 @@ def _variant_pattern_payload(db: Session, variant: RunVariant | None) -> dict:
     copy_asset = _latest_variant_asset(variant.id, "copy", db)
     image_asset = _latest_variant_asset(variant.id, "image", db)
     script_asset = _latest_variant_asset(variant.id, "video_script", db)
+    image_payload = (image_asset.payload or {}) if image_asset else {}
+    platform_readiness = {}
+    if image_asset:
+        platform_readiness = image_payload.get("platform_readiness") or (image_payload.get("marketplace_qa") or {}).get("platform_readiness") or {}
+    reviews = db.scalars(
+        select(VariantReview).where(VariantReview.run_variant_id == variant.id).order_by(desc(VariantReview.created_at))
+    ).all()
+    review_tags = sorted({tag for review in reviews for tag in (review.tags or [])})
     return {
         "variant_id": variant.variant_id,
         "angle": variant.angle,
         "hook": variant.hook,
         "message": variant.message,
-        "visual_pattern": ((image_asset.payload or {}).get("prompt") if image_asset else None),
+        "visual_pattern": image_payload.get("prompt") if image_asset else None,
+        "image_role": image_payload.get("image_role") if image_asset else None,
+        "marketplace_qa_status": (image_payload.get("marketplace_qa") or {}).get("status") if image_asset else None,
+        "platform_readiness": platform_readiness,
+        "visual_review_tags": review_tags,
         "copy_pattern": ((copy_asset.payload or {}).get("headline") if copy_asset else None),
         "script_pattern": ((script_asset.payload or {}).get("hook") if script_asset else None),
     }

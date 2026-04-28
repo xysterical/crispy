@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.registry import stage_agent
 from app.orchestrator.state_machine import stage_plan_for
+from app.services.marketplace_qa import is_marketplace_main_image
 from app.services.agent_api_configs import resolve_agent_config
 
 Severity = Literal["ok", "warn", "error"]
@@ -98,6 +99,30 @@ def _assess_image_generation(provider: str | None, model: str | None, api_base_u
     return None
 
 
+def _assess_reference_image_edit(
+    provider: str | None,
+    model: str | None,
+    api_base_url: str | None,
+    extra: dict | None,
+) -> bool | None:
+    image_extra = ((extra or {}).get("image_config") or {}) if isinstance(extra, dict) else {}
+    for key in ("supports_reference_edit", "reference_edit_supported", "supports_image_references"):
+        if key in image_extra:
+            return bool(image_extra.get(key))
+    p = _norm(provider)
+    m = _norm(model)
+    b = _norm(api_base_url)
+    if "/images/" in b and _contains_any(m, ("gpt-image", "flux-kontext", "qwen-image-edit", "seedream", "recraft")):
+        return True
+    if _contains_any(m, ("gpt-image", "flux-kontext", "qwen-image-edit", "image-edit", "seedream", "recraft")):
+        return True
+    if _contains_any(m, ("dall", "sdxl", "stable-diffusion")):
+        return None
+    if p in {"openai", "apimart", "xai", "kimi"}:
+        return None
+    return None
+
+
 def _assess_video_generation(provider: str | None, model: str | None, api_base_url: str | None) -> bool | None:
     p = _norm(provider)
     m = _norm(model)
@@ -137,8 +162,11 @@ def preflight_run_capabilities(
     pipeline_mode: str,
     has_image_inputs: bool,
     has_video_inputs: bool,
+    creative_specs: dict | None = None,
 ) -> dict:
     stage_plan = stage_plan_for(pipeline_mode)
+    creative_specs = creative_specs or {}
+    marketplace_goal = is_marketplace_main_image(creative_specs)
     checks: list[dict] = []
     overall: Severity = "ok"
 
@@ -229,6 +257,14 @@ def preflight_run_capabilities(
 
     if "copy_image_generation" in stage_plan:
         agent_name, cfg = resolved("copy_image_generation")
+        if marketplace_goal and not (has_image_inputs or has_video_inputs):
+            add_check(
+                key="marketplace_main_image.reference_media",
+                severity="error",
+                message="Marketplace main-image generation requires at least one uploaded product image or video reference.",
+                stage_name="intake",
+                agent_name="gm_orchestrator",
+            )
         if not cfg.get("image_api_key_available"):
             add_check(
                 key="copy_image_generation.image_api_key",
@@ -266,6 +302,34 @@ def preflight_run_capabilities(
                 stage_name="copy_image_generation",
                 agent_name=agent_name,
             )
+        if marketplace_goal:
+            reference_support = _assess_reference_image_edit(
+                cfg.get("image_provider_name"),
+                cfg.get("image_model_name"),
+                cfg.get("image_api_base_url"),
+                cfg.get("extra"),
+            )
+            if reference_support is False:
+                add_check(
+                    key="copy_image_generation.reference_edit",
+                    severity="error",
+                    message=(
+                        "Marketplace main-image generation requires reference/edit image support, but image_config explicitly disables it."
+                    ),
+                    stage_name="copy_image_generation",
+                    agent_name=agent_name,
+                )
+            elif reference_support is None:
+                add_check(
+                    key="copy_image_generation.reference_edit",
+                    severity="warn",
+                    message=(
+                        f"Reference/edit support is unknown for `{cfg.get('image_provider_name')}/{cfg.get('image_model_name')}`. "
+                        "Generated images will be held for marketplace QA and human review if fidelity cannot be trusted."
+                    ),
+                    stage_name="copy_image_generation",
+                    agent_name=agent_name,
+                )
 
     if "video_generation" in stage_plan:
         agent_name, cfg = resolved("video_generation")

@@ -385,6 +385,7 @@ class RunPreflightRequest(BaseModel):
     pipeline_mode: PipelineMode = "full_multimodal"
     has_image_inputs: bool = False
     has_video_inputs: bool = False
+    creative_specs: dict = Field(default_factory=dict)
 
 
 class CapabilityCheckItem(BaseModel):

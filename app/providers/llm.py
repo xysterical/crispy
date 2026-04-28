@@ -137,6 +137,9 @@ class ImageGenRequest:
     prompt: str
     n: int = 1
     size: str = "1:1"
+    reference_image_urls: list[str] = field(default_factory=list)
+    mode: str = "generate"
+    input_fidelity: str | None = None
 
 
 @dataclass(slots=True)
@@ -698,6 +701,13 @@ class OpenAICompatibleProvider(LlmProvider):
             "n": request.n,
             "size": request.size,
         }
+        if request.reference_image_urls:
+            payload["image_urls"] = request.reference_image_urls
+            payload["reference_image_urls"] = request.reference_image_urls
+        if request.mode and request.mode != "generate":
+            payload["mode"] = request.mode
+        if request.input_fidelity:
+            payload["input_fidelity"] = request.input_fidelity
         if isinstance(extra, dict) and isinstance(extra.get("image_payload"), dict):
             payload = {**payload, **extra["image_payload"]}
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -49,10 +50,7 @@ def _parse_xlsx_bytes(data: bytes) -> list[dict]:
     return parsed
 
 
-def _extract_video_frame_placeholders(run_id: str, variant: str, count: int = 3) -> list[str]:
-    settings = get_settings()
-    frame_dir = settings.assets_dir / run_id / "input_frames"
-    frame_dir.mkdir(parents=True, exist_ok=True)
+def _write_video_frame_placeholders(frame_dir: Path, variant: str, count: int = 3) -> list[str]:
     frame_paths = []
     try:
         from PIL import Image  # type: ignore
@@ -61,12 +59,51 @@ def _extract_video_frame_placeholders(run_id: str, variant: str, count: int = 3)
     for idx in range(count):
         path = frame_dir / f"{variant}_frame_{idx + 1}.png"
         if Image is not None:
-            img = Image.new("RGB", (720, 1280), color=(242, 246, 251))
+            img = Image.new("RGB", (720, 720), color=(255, 255, 255))
             img.save(path, format="PNG")
         else:
             path.write_bytes(b"")
         frame_paths.append(str(path))
     return frame_paths
+
+
+def _extract_video_frames(run_id: str, variant: str, video_path: Path, count: int = 3) -> list[str]:
+    settings = get_settings()
+    frame_dir = settings.assets_dir / run_id / "input_frames"
+    frame_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        import imageio_ffmpeg  # type: ignore
+
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return _write_video_frame_placeholders(frame_dir, variant, count=count)
+
+    output_pattern = frame_dir / f"{variant}_frame_%03d.png"
+    cmd = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(video_path),
+        "-vf",
+        "fps=1,scale='min(1200,iw)':-2",
+        "-frames:v",
+        str(count),
+        str(output_pattern),
+    ]
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45)
+    except Exception:
+        return _write_video_frame_placeholders(frame_dir, variant, count=count)
+
+    extracted = sorted(frame_dir.glob(f"{variant}_frame_*.png"))[:count]
+    if not extracted:
+        return _write_video_frame_placeholders(frame_dir, variant, count=count)
+    if len(extracted) < count:
+        extracted.extend(Path(path) for path in _write_video_frame_placeholders(frame_dir, f"{variant}_fallback", count=count - len(extracted)))
+    return [str(path) for path in extracted[:count]]
 
 
 def process_uploaded_payloads(run_id: str, uploads: list[dict[str, Any]]) -> tuple[dict, list[dict]]:
@@ -117,7 +154,7 @@ def process_uploaded_payloads(run_id: str, uploads: list[dict[str, Any]]) -> tup
         elif ext in IMAGE_EXTENSIONS:
             sample_images.append(entry)
         elif ext in VIDEO_EXTENSIONS:
-            frames = _extract_video_frame_placeholders(run_id, Path(filename).stem, count=3)
+            frames = _extract_video_frames(run_id, Path(filename).stem, path, count=3)
             sample_videos.append({**entry, "frame_placeholders": frames, "duration_seconds": 15.0})
             for frame_path in frames:
                 artifacts.append(

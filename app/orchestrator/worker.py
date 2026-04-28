@@ -18,6 +18,7 @@ from app.data.models import (
 )
 from app.data.session import SessionLocal
 from app.orchestrator.state_machine import should_auto_approve
+from app.services.marketplace_qa import is_marketplace_main_image
 from app.services.runs import (
     _build_task_input,
     auto_approve_stage,
@@ -238,7 +239,7 @@ class PipelineWorker:
                 if task.status == TaskStatus.WAITING_REVIEW.value:
                     self._total_completed += 1
                     # Auto-approval check
-                    if should_auto_approve(run.approval_mode, task.stage_name):
+                    if should_auto_approve(run.approval_mode, task.stage_name) or self._should_marketplace_auto_approve(run, task):
                         auto_advance = True
                         if task.stage_name == "visual_quality_assessment" and run.approval_mode == "full_auto":
                             auto_advance = self._full_auto_visual_qa_regen(db, run, task)
@@ -263,6 +264,19 @@ class PipelineWorker:
             return False
         finally:
             db.close()
+
+    def _should_marketplace_auto_approve(self, run, task: StageTask) -> bool:
+        if run.approval_mode != "semi_auto" or not is_marketplace_main_image(run.creative_specs):
+            return False
+        if task.stage_name == "copy_image_generation":
+            return True
+        if task.stage_name == "visual_quality_assessment":
+            summaries = (task.output_payload or {}).get("variant_summaries") or []
+            return bool(summaries) and all(
+                isinstance(item, dict) and item.get("export_ready") is True
+                for item in summaries
+            )
+        return False
 
     def _poll_all_video_assets(self) -> None:
         db = SessionLocal()

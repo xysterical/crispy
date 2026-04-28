@@ -44,6 +44,7 @@ from app.schemas.contracts import (
 )
 from app.services.agent_api_configs import resolve_agent_config, resolve_agent_runtime
 from app.services.creative_specs import resolve_creative_specs
+from app.services.marketplace_qa import MARKETPLACE_REVIEW_TAGS, is_marketplace_main_image
 from app.services.personas import get_persona
 from app.services.visual_qa import inspect_visual_asset
 
@@ -363,6 +364,23 @@ def _requeue_next_stage(db: Session, run_id: str, stage_name: str | None) -> Non
         next_task.retry_at = None
 
 
+def _store_run_visual_identity(db: Session, run: PipelineRun, task: StageTask) -> None:
+    if task.stage_name != "intake" or not is_marketplace_main_image(run.creative_specs):
+        return
+    visual_identity = (task.output_payload or {}).get("visual_identity")
+    if not isinstance(visual_identity, dict):
+        return
+    product = db.get(Product, run.product_id)
+    if not product:
+        return
+    product.metadata_json = {
+        **(product.metadata_json or {}),
+        "latest_visual_identity": visual_identity,
+        "latest_visual_identity_run_id": run.id,
+        "latest_visual_identity_updated_at": utcnow().isoformat(),
+    }
+
+
 def approve_stage(db: Session, run_id: str, notes: str = "") -> PipelineRun:
     run = get_run(db, run_id)
     if not run.current_stage:
@@ -374,6 +392,7 @@ def approve_stage(db: Session, run_id: str, notes: str = "") -> PipelineRun:
     task.approved_at = utcnow()
     task.review_notes = notes
     task.failure_category = None
+    _store_run_visual_identity(db, run, task)
     add_agent_trace_event(
         db,
         run_id=run.id,
@@ -410,6 +429,7 @@ def auto_approve_stage(db: Session, run_id: str, approved_stage: str) -> Pipelin
     task.approved_at = utcnow()
     task.review_notes = f"auto_approved ({run.approval_mode})"
     task.failure_category = None
+    _store_run_visual_identity(db, run, task)
     add_agent_trace_event(
         db,
         run_id=run.id,
@@ -995,6 +1015,11 @@ def _variant_library_sync(
                 variant.status = VariantLifecycleStatus.NEEDS_REGENERATION.value
             if summary.get("recommended_action") in {"manual_review", "wait_for_asset", "request_regeneration"}:
                 variant.review_status = summary.get("recommended_action")
+            if summary.get("export_ready"):
+                variant.shortlisted = True
+                variant.review_status = "export_ready"
+                if variant.status in {VariantLifecycleStatus.DRAFT.value, VariantLifecycleStatus.GENERATED.value}:
+                    variant.status = VariantLifecycleStatus.SHORTLISTED.value
         return
 
     if stage_name == "evaluation_selection":
@@ -1555,6 +1580,13 @@ def _variant_quality_summary(
             visual_qa_scores.append(float(visual_qa["score"]))
         if visual_qa.get("status") == "fail":
             media_issues.append({"asset_id": asset.id, "asset_type": asset.asset_type, "issue": "visual_qa_failed", "uri": asset.uri})
+        marketplace_qa = (asset.payload or {}).get("marketplace_qa") or {}
+        for flag in marketplace_qa.get("flags") or []:
+            visual_qa_flags.append(str(flag))
+        if isinstance(marketplace_qa.get("score"), (int, float)):
+            visual_qa_scores.append(float(marketplace_qa["score"]))
+        if marketplace_qa.get("status") == "fail":
+            media_issues.append({"asset_id": asset.id, "asset_type": asset.asset_type, "issue": "marketplace_qa_failed", "uri": asset.uri})
 
     evaluation = _latest_score(scores, "evaluation")
     compliance = _latest_score(scores, "compliance")
@@ -1565,6 +1597,8 @@ def _variant_quality_summary(
     quality_flags: list[str] = []
     if row.is_winner:
         quality_flags.append("winner")
+    if row.review_status == "export_ready":
+        quality_flags.append("export_ready")
     if row.shortlisted:
         quality_flags.append("shortlisted")
     if row.regenerate_requested or row.status == VariantLifecycleStatus.NEEDS_REGENERATION.value:
@@ -1587,6 +1621,10 @@ def _variant_quality_summary(
         quality_flags.append("visual_qa_attention")
     if any(flag in visual_qa_flags for flag in {"visual_qa_placeholder", "visual_qa_empty_video", "visual_qa_decode_error"}):
         quality_flags.append("visual_qa_failed")
+    if any(str(flag).startswith("marketplace_") or flag == "product_fill_low" for flag in visual_qa_flags):
+        quality_flags.append("marketplace_attention")
+    if any(flag in visual_qa_flags for flag in {"marketplace_placeholder", "marketplace_background_not_white", "marketplace_missing_reference", "marketplace_resolution_low"}):
+        quality_flags.append("marketplace_failed")
     if asset_status_counts.get("processing"):
         quality_flags.append("processing_assets")
     if asset_status_counts.get("failed"):
@@ -1602,8 +1640,10 @@ def _variant_quality_summary(
     if not any(flag in quality_flags for flag in ["missing_assets", "media_issue", "processing_assets", "failed_assets", "compliance_attention", "needs_regeneration", "rejected"]):
         quality_flags.append("ready_to_review")
 
-    if "failed_assets" in quality_flags or "media_issue" in quality_flags or "operator_quality_issue" in quality_flags or "visual_qa_failed" in quality_flags:
+    if "failed_assets" in quality_flags or "media_issue" in quality_flags or "operator_quality_issue" in quality_flags or "visual_qa_failed" in quality_flags or "marketplace_failed" in quality_flags:
         quality_status = "asset_issue"
+    elif "export_ready" in quality_flags:
+        quality_status = "export_ready"
     elif "processing_assets" in quality_flags:
         quality_status = "processing"
     elif "needs_regeneration" in quality_flags:
@@ -2120,6 +2160,7 @@ def review_variant(
     metadata: dict | None = None,
 ) -> RunVariant:
     variant = get_run_variant(db, run_id, variant_id)
+    run = get_run(db, run_id)
     tags = tags or []
     metadata = metadata or {}
     if action == VariantReviewAction.APPROVE.value:
@@ -2161,6 +2202,29 @@ def review_variant(
             metadata_json=metadata,
         )
     )
+    marketplace_tags = sorted(set(tags).intersection(MARKETPLACE_REVIEW_TAGS))
+    if marketplace_tags and is_marketplace_main_image(run.creative_specs):
+        db.add(
+            GmMemory(
+                project_id=run.project_id,
+                run_id=run.id,
+                memory_scope="product",
+                product_code=run.product_code,
+                industry_code=run.industry_code,
+                source_type="operator_visual_review",
+                score_hint=1.0 if action in {VariantReviewAction.APPROVE.value, VariantReviewAction.SET_WINNER.value} else -1.0,
+                memory_type="visual_quality",
+                content={
+                    "source": "operator_review",
+                    "asset_goal": "marketplace_main_image",
+                    "variant_id": variant_id,
+                    "action": action,
+                    "tags": marketplace_tags,
+                    "comment": comment,
+                    "summary": "Use product-level marketplace image QA tags to avoid repeated visual defects.",
+                },
+            )
+        )
     add_agent_trace_event(
         db,
         run_id=run_id,

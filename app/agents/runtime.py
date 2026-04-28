@@ -17,6 +17,12 @@ from app.providers.llm import (
     decode_placeholder_png,
 )
 from app.providers.media import LocalMediaProvider
+from app.services.marketplace_qa import (
+    infer_visual_identity,
+    inspect_marketplace_image,
+    is_marketplace_main_image,
+    normalize_platform_targets,
+)
 from app.services.visual_qa import inspect_visual_asset
 from app.schemas.contracts import (
     ComplianceLevel,
@@ -27,6 +33,7 @@ from app.schemas.contracts import (
     ImageAssetRef,
     PlanningBrief,
     ProductIntake,
+    ProductVisualIdentity,
     RankedVariant,
     ScoreBreakdown,
     ScoreCard,
@@ -127,6 +134,9 @@ class AgentsRuntime:
         prompt: str,
         size: str,
         runtime_config: dict | None,
+        reference_image_urls: list[str] | None = None,
+        mode: str = "generate",
+        input_fidelity: str | None = None,
     ):
         runtime = runtime_config or {}
         image_runtime = runtime.get("image") or {}
@@ -134,7 +144,15 @@ class AgentsRuntime:
         model_name = image_runtime.get("model_name") or fallback_model
         llm = self.providers.get(provider_name)
         result = llm.generate_image(
-            ImageGenRequest(model=model_name, prompt=prompt, n=1, size=size),
+            ImageGenRequest(
+                model=model_name,
+                prompt=prompt,
+                n=1,
+                size=size,
+                reference_image_urls=reference_image_urls or [],
+                mode=mode,
+                input_fidelity=input_fidelity,
+            ),
             api_base_url=image_runtime.get("api_base_url") or runtime.get("api_base_url"),
             api_key=image_runtime.get("api_key") or runtime.get("api_key"),
             extra=image_runtime.get("extra") or runtime.get("extra"),
@@ -256,6 +274,41 @@ class AgentsRuntime:
             if data_url:
                 inputs.append(data_url)
         return inputs
+
+    def _marketplace_reference_inputs(self, intake: ProductIntake | None, max_inputs: int = 4) -> tuple[list[str], list[dict]]:
+        if not intake:
+            return [], []
+        identity = intake.visual_identity.model_dump() if hasattr(intake.visual_identity, "model_dump") else dict(intake.visual_identity or {})
+        candidates: list[dict] = []
+        for uri in identity.get("best_reference_images") or []:
+            candidates.append({"uri": uri, "source": "visual_identity_image"})
+        for uri in identity.get("best_reference_frames") or []:
+            candidates.append({"uri": uri, "source": "visual_identity_video_frame"})
+        for row in intake.image_references or []:
+            if isinstance(row, dict) and row.get("uri"):
+                candidates.append({"uri": row["uri"], "source": "uploaded_image"})
+        for row in intake.video_references or []:
+            if not isinstance(row, dict):
+                continue
+            for uri in row.get("frame_placeholders") or row.get("frame_uris") or []:
+                candidates.append({"uri": uri, "source": "uploaded_video_frame", "source_video": row.get("uri")})
+
+        data_urls: list[str] = []
+        manifest: list[dict] = []
+        seen: set[str] = set()
+        for item in candidates:
+            uri = item.get("uri")
+            if not isinstance(uri, str) or not uri or uri in seen:
+                continue
+            seen.add(uri)
+            data_url = self._local_image_to_data_url(uri)
+            if not data_url:
+                continue
+            data_urls.append(data_url)
+            manifest.append({**item, "input_index": len(manifest) + 1})
+            if len(data_urls) >= max_inputs:
+                break
+        return data_urls, manifest
 
     def _download_url_bytes(self, url: str) -> bytes | None:
         try:
@@ -396,6 +449,15 @@ class AgentsRuntime:
         summary, model_used, llm_cost = self._chat_complete(provider, model, prompt, runtime_config)
         estimated_cost += llm_cost
         intake.asset_media_summary = media_summary
+        intake.visual_identity = ProductVisualIdentity.model_validate(
+            infer_visual_identity(
+                product_name=intake.product_name,
+                category_tags=intake.category_tags,
+                media_summary=media_summary,
+                image_references=intake.image_references,
+                video_references=intake.video_references,
+            )
+        )
         normalized = {**intake.model_dump(), "llm_summary": summary}
         uri = self.media.write_text_artifact(run_id, "intake_summary.json", intake.model_dump_json(indent=2))
         return StageOutput(
@@ -532,6 +594,190 @@ class AgentsRuntime:
             artifacts=[{"type": "variant_set", "uri": uri, "payload": output}],
         )
 
+    def _run_marketplace_main_image_generation(
+        self,
+        run_id: str,
+        variant_set: VariantSet,
+        *,
+        intake: ProductIntake | None,
+        business_context: dict | None,
+        creative_specs: dict | None,
+        market: str,
+        locale: str,
+        provider: str,
+        model: str,
+        runtime_config: dict | None = None,
+    ) -> StageOutput:
+        business_context = business_context or {}
+        creative_specs = creative_specs or {}
+        platform_targets = normalize_platform_targets(creative_specs)
+        export_size_px = int(creative_specs.get("export_size_px") or 2000)
+        image_size = str(creative_specs.get("image_size") or "1:1")
+        visual_summary = intake.asset_media_summary.strip() if intake and intake.asset_media_summary else "No reference media analysis."
+        visual_identity = (
+            intake.visual_identity.model_dump()
+            if intake and hasattr(intake.visual_identity, "model_dump")
+            else dict((intake.visual_identity if intake else {}) or {})
+        )
+        reference_inputs, reference_manifest = self._marketplace_reference_inputs(intake, max_inputs=4)
+        roles = [
+            {
+                "image_role": "compliance_master",
+                "style": (
+                    "strict marketplace master photo, exact product only, pure #FFFFFF background, no props, no model, "
+                    "no text overlay, no watermark, product centered and filling 65-90% of the square frame"
+                ),
+            },
+            {
+                "image_role": "premium_white",
+                "style": (
+                    "premium white-background catalog photo with improved material texture, clean edge refinement, "
+                    "natural product-contained lighting, color correction, and no scene background"
+                ),
+            },
+        ]
+        estimated_cost = 0.0
+        copies: list[CopyVariant] = []
+        images: list[ImageAssetRef] = []
+        artifacts: list[dict] = []
+        image_models_used: set[str] = set()
+        audience = business_context.get("target_audience", "marketplace shoppers")
+        cta = business_context.get("primary_cta", "View Product")
+        product_name = intake.product_name if intake else str(business_context.get("product_name") or "the product")
+
+        for idx, item in enumerate(variant_set.variants):
+            role = roles[idx % len(roles)]
+            image_role = role["image_role"]
+            copies.append(
+                CopyVariant(
+                    variant_id=item.variant_id,
+                    primary_text=(
+                        f"{item.variant_id}: Marketplace main image candidate for {product_name}; "
+                        f"role={image_role}; audience={audience}."
+                    ),
+                    headline=f"{product_name} Main Image",
+                    description=f"White-background product-photo candidate for {', '.join(platform_targets)}.",
+                    call_to_action=cta,
+                )
+            )
+            prompt = (
+                "Edit the uploaded source product media into a source-accurate marketplace main image. "
+                "Preserve exact product shape, color, logo/text, material, proportions, and included parts from the references. "
+                "Do not invent accessories, packaging, labels, claims, props, people, animals, hands, lifestyle scenes, or text overlays. "
+                f"Product visual identity: {json.dumps(visual_identity, ensure_ascii=False)[:2200]}. "
+                f"Media summary: {visual_summary[:1600]}. "
+                f"Role: {image_role}; style requirements: {role['style']}. "
+                f"Output: square {export_size_px}x{export_size_px}px master, pure white background, marketplace-ready for {platform_targets}. "
+                "If source media is low quality, improve lighting, material clarity, edge quality, and color balance while preserving product truth."
+            )
+            image_uri = ""
+            image_source = "placeholder"
+            image_model = ""
+            image_provider = ""
+            error_text = None
+            provider_errors: list[dict] = []
+            asset_suffix = str((runtime_config or {}).get("asset_name_suffix") or "")
+            force_regenerate = bool((runtime_config or {}).get("force_regenerate"))
+            image_filename = f"marketplace_{item.variant_id}_{image_role}{asset_suffix}.png"
+            existing_image_path = self.media.settings.assets_dir / run_id / image_filename
+            try:
+                if not force_regenerate and existing_image_path.exists() and existing_image_path.stat().st_size > 1024:
+                    image_uri = str(existing_image_path)
+                    image_source = "reused_existing"
+                else:
+                    image_result, image_provider, image_model = self._generate_image(
+                        fallback_provider=provider,
+                        fallback_model=model,
+                        prompt=prompt,
+                        size=image_size,
+                        runtime_config=runtime_config,
+                        reference_image_urls=reference_inputs,
+                        mode="edit" if reference_inputs else "generate",
+                        input_fidelity="high" if reference_inputs else None,
+                    )
+                    estimated_cost += image_result.estimated_cost
+                    image_models_used.add(image_result.model_used or image_model)
+                    selected = image_result.images[0] if image_result.images else None
+                    if selected:
+                        image_bytes, image_source = self._materialize_generated_image(selected)
+                    else:
+                        image_bytes, image_source = decode_placeholder_png(), "placeholder"
+                    image_uri = self.media.write_binary_artifact(run_id, image_filename, image_bytes)
+            except Exception as exc:
+                error_text = str(exc)
+                provider_errors = getattr(exc, "errors", []) or []
+                image_uri = self.media.write_binary_artifact(run_id, image_filename, decode_placeholder_png())
+
+            image_ref = ImageAssetRef(
+                variant_id=item.variant_id,
+                uri=image_uri,
+                aspect_ratio=image_size,
+                prompt=prompt,
+            )
+            image_payload = {
+                **image_ref.model_dump(),
+                "asset_goal": "marketplace_main_image",
+                "image_role": image_role,
+                "platform_targets": platform_targets,
+                "export_size_px": export_size_px,
+                "source": image_source,
+                "image_provider": image_provider,
+                "image_model": image_model,
+                "error": error_text,
+                "provider_errors": provider_errors,
+                "reference_source_count": len(reference_inputs),
+                "reference_manifest": reference_manifest,
+                "visual_identity": visual_identity,
+            }
+            image_payload["visual_qa"] = self._local_media_qa(
+                asset_type="image",
+                uri=image_uri,
+                payload=image_payload,
+                expected_ratio=image_size,
+            )
+            image_payload["marketplace_qa"] = inspect_marketplace_image(
+                uri=image_uri,
+                payload=image_payload,
+                creative_specs=creative_specs,
+                visual_identity=visual_identity,
+            )
+            image_payload["platform_readiness"] = image_payload["marketplace_qa"].get("platform_readiness", {})
+            image_payload["export_ready"] = bool(image_payload["marketplace_qa"].get("export_ready"))
+            images.append(image_ref)
+            artifacts.append({"type": "generated_image", "uri": image_uri, "payload": image_payload})
+
+        bundle = CopyImageBundle(copy_variants=copies, image_assets=images)
+        bundle_payload = {
+            "asset_goal": "marketplace_main_image",
+            "copy_variants": [item.model_dump() for item in copies],
+            "image_assets": [artifact["payload"] for artifact in artifacts if artifact["type"] == "generated_image"],
+            "visual_identity": visual_identity,
+            "reference_manifest": reference_manifest,
+            "strategy_handoff": self._business_strategy_handoff(
+                stage="copy_image_generation",
+                decisions=[
+                    f"generated marketplace main-image candidates for {len(copies)} variants",
+                    "used source media references when available",
+                    f"target_platforms={','.join(platform_targets)}",
+                ],
+                risks=["Provider reference-edit support may vary; marketplace QA and source-product review are required before export."],
+                review_questions=[
+                    "Does the generated product match the phone reference exactly?",
+                    "Is the background pure white without prop/model leakage?",
+                    "Which candidate is ready for marketplace export?",
+                ],
+            ),
+        }
+        bundle_uri = self.media.write_text_artifact(run_id, "marketplace_main_image_bundle.json", bundle.model_dump_json(indent=2))
+        artifacts.insert(0, {"type": "copy_image_bundle", "uri": bundle_uri, "payload": bundle_payload})
+        model_used = f"text={model};image={','.join(sorted(m for m in image_models_used if m)) or 'placeholder'}"
+        return StageOutput(
+            payload=bundle_payload,
+            model_used=model_used,
+            estimated_cost=estimated_cost,
+            artifacts=artifacts,
+        )
+
     def run_copy_image_generation(
         self,
         run_id: str,
@@ -546,6 +792,20 @@ class AgentsRuntime:
         model: str,
         runtime_config: dict | None = None,
     ) -> StageOutput:
+        if is_marketplace_main_image(creative_specs):
+            return self._run_marketplace_main_image_generation(
+                run_id,
+                variant_set,
+                intake=intake,
+                business_context=business_context,
+                creative_specs=creative_specs,
+                market=market,
+                locale=locale,
+                provider=provider,
+                model=model,
+                runtime_config=runtime_config,
+            )
+
         business_context = business_context or {}
         creative_specs = creative_specs or {}
         image_size = str(creative_specs.get("image_size") or "1:1")
@@ -1053,6 +1313,8 @@ class AgentsRuntime:
         intake = intake or {}
         business_context = business_context or {}
         creative_specs = creative_specs or {}
+        marketplace_goal = is_marketplace_main_image(creative_specs)
+        visual_identity = dict(intake.get("visual_identity") or {}) if isinstance(intake, dict) else {}
 
         def _asset_items(payload: dict, key: str) -> list[dict]:
             rows = payload.get(key) or []
@@ -1090,9 +1352,11 @@ class AgentsRuntime:
             variant_assets = [item for item in asset_rows if item.get("variant_id") == variant.variant_id]
             asset_reports: list[dict] = []
             blocking_issues: list[str] = []
+            platform_readiness: dict[str, str] = {}
             score_values: list[float] = []
             pending = False
             warn = False
+            export_ready_assets = 0
             for asset in variant_assets:
                 asset_type = str(asset.get("asset_type") or "")
                 expected_ratio = None
@@ -1112,6 +1376,35 @@ class AgentsRuntime:
                     score_values.append(float(qa["score"]))
                 if status == "fail":
                     blocking_issues.extend(str(flag) for flag in flags)
+                marketplace_qa = asset.get("marketplace_qa")
+                if marketplace_goal and asset_type == "image":
+                    if not isinstance(marketplace_qa, dict):
+                        marketplace_qa = inspect_marketplace_image(
+                            uri=asset.get("uri"),
+                            payload=asset,
+                            creative_specs=creative_specs,
+                            visual_identity=visual_identity,
+                        )
+                        asset["marketplace_qa"] = marketplace_qa
+                    market_status = str(marketplace_qa.get("status") or "warn")
+                    market_flags = [str(flag) for flag in (marketplace_qa.get("flags") or [])]
+                    flags = sorted(set([*flags, *market_flags]))
+                    if isinstance(marketplace_qa.get("score"), (int, float)):
+                        score_values.append(float(marketplace_qa["score"]))
+                    if market_status == "fail":
+                        blocking_issues.extend(market_flags or ["marketplace_qa_failed"])
+                    if market_status == "warn":
+                        warn = True
+                    if marketplace_qa.get("export_ready"):
+                        export_ready_assets += 1
+                    for platform, readiness in (marketplace_qa.get("platform_readiness") or {}).items():
+                        current = platform_readiness.get(platform)
+                        if current == "fail" or readiness == "fail":
+                            platform_readiness[platform] = "fail"
+                        elif current == "warn" or readiness == "warn":
+                            platform_readiness[platform] = "warn"
+                        else:
+                            platform_readiness[platform] = str(readiness)
                 if "visual_qa_video_processing" in flags or str(asset.get("generation_status") or "").lower() in {"submitted", "queued", "pending", "processing", "running"}:
                     pending = True
                 if status == "warn":
@@ -1155,6 +1448,7 @@ class AgentsRuntime:
                         "visual_score": qa.get("score"),
                         "flags": flags,
                         "checks": qa.get("checks") or [],
+                        "marketplace_qa": marketplace_qa if marketplace_goal and asset_type == "image" else None,
                     }
                 )
 
@@ -1167,12 +1461,18 @@ class AgentsRuntime:
             elif blocking_issues:
                 qa_status = "fail"
                 recommended_action = "request_regeneration"
+            elif marketplace_goal and variant_assets and export_ready_assets <= 0:
+                qa_status = "warn"
+                recommended_action = "manual_review"
             elif warn or visual_score < 80:
                 qa_status = "warn"
                 recommended_action = "manual_review"
             else:
                 qa_status = "pass"
                 recommended_action = "pass_to_evaluation"
+            export_ready = marketplace_goal and not pending and not blocking_issues and bool(platform_readiness) and all(
+                value == "pass" for value in platform_readiness.values()
+            )
 
             script = scripts_by_variant.get(variant.variant_id) or {}
             report = {
@@ -1188,6 +1488,8 @@ class AgentsRuntime:
                     f"{len(asset_reports)} assets checked; action={recommended_action}."
                 ),
                 "recommended_action": recommended_action,
+                "platform_readiness": platform_readiness,
+                "export_ready": export_ready,
                 "script_hook": script.get("hook"),
             }
             reports.append(report)
@@ -1199,6 +1501,8 @@ class AgentsRuntime:
                     "blocking_issue_count": len(report["blocking_issues"]),
                     "recommended_action": recommended_action,
                     "issues": report["blocking_issues"],
+                    "platform_readiness": platform_readiness,
+                    "export_ready": export_ready,
                 }
             )
 

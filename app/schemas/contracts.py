@@ -150,6 +150,20 @@ class FeedbackRow(BaseModel):
         return value
 
 
+class ProductVisualIdentity(BaseModel):
+    product_type: str = ""
+    category_tags: list[str] = Field(default_factory=list)
+    colors: list[str] = Field(default_factory=list)
+    materials: list[str] = Field(default_factory=list)
+    visible_text_logo: list[str] = Field(default_factory=list)
+    must_preserve_details: list[str] = Field(default_factory=list)
+    missing_fact_warnings: list[str] = Field(default_factory=list)
+    best_reference_images: list[str] = Field(default_factory=list)
+    best_reference_frames: list[str] = Field(default_factory=list)
+    source_media_count: dict = Field(default_factory=dict)
+    raw_media_summary: str = ""
+
+
 class ProductIntake(BaseModel):
     product_name: str
     market: str = "US"
@@ -162,6 +176,7 @@ class ProductIntake(BaseModel):
     image_references: list[dict] = Field(default_factory=list)
     video_references: list[dict] = Field(default_factory=list)
     asset_media_summary: str = ""
+    visual_identity: ProductVisualIdentity = Field(default_factory=ProductVisualIdentity)
 
 
 class PlanningBrief(BaseModel):

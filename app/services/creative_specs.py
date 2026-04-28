@@ -22,6 +22,16 @@ CREATIVE_PRESETS: dict[str, dict] = {
         "resolution": "1080p",
         "video_duration_seconds": 6,
     },
+    "marketplace_main_image_pack": {
+        "image_size": "1:1",
+        "video_size": "1:1",
+        "resolution": "2000px",
+        "video_duration_seconds": 5,
+        "asset_goal": "marketplace_main_image",
+        "platform_targets": ["tiktok_shop", "shopify", "alibaba", "amazon"],
+        "export_size_px": 2000,
+        "background_policy": "pure_white",
+    },
 }
 
 
