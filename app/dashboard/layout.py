@@ -172,7 +172,7 @@ button.primary:hover { background: var(--accent-dark); }
 
 /* runs table (shared JS compatibility) */
 .table-wrap { overflow: auto; border-radius: 12px; border: 1px solid var(--line); }
-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 620px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { border-bottom: 1px solid #e8eee8; padding: 9px 10px; text-align: left; vertical-align: top; }
 thead th { background: #f8fbf8; font-weight: 700; color: #295345; }
 tr.selected { background: #eef8f2; }
@@ -180,6 +180,7 @@ tr:hover { background: #f8fcfa; }
 
 .runs-panel { display: flex; flex-direction: column; min-height: 0; }
 .runs-panel .table-wrap { flex: 1; min-height: 0; overflow: auto; }
+.runs-panel table { table-layout: fixed; min-width: 0; }
 .runs-actions {
   margin-top: 10px;
   display:flex;
@@ -627,8 +628,7 @@ a:hover { text-decoration: underline; }
 }
 .topbar { margin-bottom: 14px; }
 .top-actions { display:flex; gap:10px; flex-wrap: wrap; align-items: center; }
-.top-divider { border-top: 1px solid #d8e4dc; margin: 12px 0; }
-.data-source-block { width: min(620px, 100%); }
+.data-source-block { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
 
 /* pill (used in timeline, trace, run detail) */
 .pill {
@@ -706,23 +706,22 @@ def render_shell_top() -> str:
           <a class="nav-link" href="/dashboard/assets">Asset Library</a>
           <a class="nav-link" href="/dashboard/personas">Personas</a>
         </div>
-        <div class="top-divider"></div>
-        <div class="data-source-block">
-          <label>Data Source</label>
-          <select id="data-source-select" onchange="switchDataSource()"></select>
-          <div id="data-source-path" class="muted mono"></div>
-        </div>
       </div>
       <div style="display:flex;gap:20px;flex-wrap:wrap;">
         <div style="flex:0 0 480px;min-width:0;">
           <section class="card runs-panel" style="position:sticky;top:12px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-              <h2 style="margin-bottom:0;">Runs <span class="refresh-indicator active" id="runs-refresh-indicator" title="Auto-refreshing every 5s"><span class="dot"></span> live</span></h2>
+              <h2 style="margin-bottom:0;display:flex;align-items:center;gap:6px;">Runs <span class="refresh-indicator active" id="runs-refresh-indicator" title="Auto-refreshing every 5s"><span class="dot"></span> live</span></h2>
               <button onclick="refreshRuns()" style="font-size:12px;padding:6px 10px;">Refresh</button>
+            </div>
+            <div class="data-source-block" style="margin-bottom:10px;padding:8px 12px;background:#f8fbf9;border-radius:10px;border:1px solid var(--line);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <label style="margin-bottom:0;white-space:nowrap;">Data Source</label>
+              <select id="data-source-select" onchange="switchDataSource()" style="width:auto;min-width:160px;font-size:12px;padding:5px 8px;"></select>
+              <div id="data-source-path" class="muted mono" style="font-size:11px;"></div>
             </div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>Run ID</th><th>Status</th><th>Stage</th><th>Mode</th><th>Updated</th></tr></thead>
+                <thead><tr><th style="width:18%">Run ID</th><th style="width:34%">Status</th><th style="width:18%">Mode</th><th style="width:30%">Updated</th></tr></thead>
                 <tbody id="runs-body"></tbody>
               </table>
             </div>

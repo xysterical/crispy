@@ -456,6 +456,16 @@ def _dashboard_shared_js() -> str:
           let expandedVariantId = null;
 
           function esc(v){ return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
+          function fmtTime(iso){
+            if (!iso) return "-";
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return iso;
+            const MM = String(d.getMonth()+1).padStart(2,'0');
+            const DD = String(d.getDate()).padStart(2,'0');
+            const hh = String(d.getHours()).padStart(2,'0');
+            const mm = String(d.getMinutes()).padStart(2,'0');
+            return MM + "-" + DD + " " + hh + ":" + mm;
+          }
           function toList(raw){ return String(raw || "").split(",").map(s => s.trim()).filter(Boolean); }
           function parseJsonObject(raw){
             if (!raw || !raw.trim()) return {};
@@ -529,6 +539,13 @@ def _dashboard_shared_js() -> str:
             if (s === "waiting_review") return "REVIEW";
             return String(status || "draft").toUpperCase();
           }
+          function modeLabel(mode) {
+            const m = String(mode || "");
+            if (m === "full_multimodal") return "Full";
+            if (m === "video_only") return "Video";
+            if (m === "copy_image_only") return "Image";
+            return m;
+          }
 
           async function refreshRuns() {
             const rows = await api("/runs");
@@ -536,14 +553,14 @@ def _dashboard_shared_js() -> str:
             body.innerHTML = "";
             if (!rows.length) {
               const tr = document.createElement("tr");
-              tr.innerHTML = `<td colspan="5" class="muted">No runs available in current data source.</td>`;
+              tr.innerHTML = `<td colspan="4" class="muted">No runs available in current data source.</td>`;
               body.appendChild(tr);
               return;
             }
             rows.forEach((r) => {
               const tr = document.createElement("tr");
               if (r.id === currentRunId) tr.classList.add("selected");
-              tr.innerHTML = `<td><a href="#" onclick="selectRun('${r.id}');return false;">${r.id.slice(0,8)}</a></td><td><span class="${statusPillClass(r.status)}">${statusLabel(r.status)}</span></td><td>${esc(r.current_stage||"-")}</td><td>${esc(r.pipeline_mode)}</td><td>${esc(r.updated_at)}</td>`;
+              tr.innerHTML = `<td><a href="#" onclick="selectRun('${r.id}');return false;">${r.id.slice(0,8)}</a></td><td><span class="${statusPillClass(r.status)}">${statusLabel(r.status)}</span></td><td>${modeLabel(r.pipeline_mode)}</td><td>${fmtTime(r.updated_at)}</td>`;
               body.appendChild(tr);
             });
           }
