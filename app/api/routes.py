@@ -2252,8 +2252,15 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           let toastTimer = null;
           const byAgent = Object.fromEntries(existing.map(c => [c.agent_name, c]));
           const baseRows = [{{ agent_name: "default", display_name: "Default Fallback", stage: "global" }}, ...personas];
+          const shopAnalysisAgents = new Set(["shop_analyst"]);
           const rows = baseRows.flatMap((r) => {{
             const title = (r.display_name || r.agent_name);
+            if (shopAnalysisAgents.has(r.agent_name)) {{
+              return [
+                {{ row_key: "__divider_shop__", agent_name: "__divider__", mode: "text", title: "divider", source: "divider", isDivider: true }},
+                {{ row_key: `shop_analyst__text`, agent_name: "shop_analyst", mode: "text", title: "Shop Analyst - Text", source: "shop_analyst" }},
+              ];
+            }}
             if (r.agent_name === "copy_image_agent") {{
               return [
                 {{ row_key: "copy_image_agent__text", agent_name: "copy_image_agent", mode: "text", title: "Copy Image Agent - Text", source: "copy_image_agent" }},
@@ -2306,6 +2313,12 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             const body = document.getElementById("cfg-body");
             body.innerHTML = "";
             rows.forEach((r) => {{
+              if (r.isDivider) {{
+                const tr = document.createElement("tr");
+                tr.innerHTML = '<td colspan="12" style="padding:8px 10px;background:#f0f4f2;border-bottom:2px solid var(--accent);font-weight:700;font-size:12px;color:var(--accent);">Shop Analysis Agents</td>';
+                body.appendChild(tr);
+                return;
+              }}
               const cfg = byAgent[r.agent_name] || {{}};
               const provider = r.mode === "text" ? (cfg.provider_name || "") : (r.mode === "image" ? (cfg.image_provider_name || "") : (cfg.video_provider_name || ""));
               const model = r.mode === "text" ? (cfg.model_name || "") : (r.mode === "image" ? (cfg.image_model_name || "") : (cfg.video_model_name || ""));
