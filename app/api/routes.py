@@ -58,6 +58,14 @@ from app.schemas.api import (
     VariantReviewRequest,
     VariantSelectRequest,
     VariantsResponse,
+    CreativePresetCreate,
+    CreativePresetListResponse,
+    CreativePresetUpdate,
+    CreativePresetView,
+    ProductConfigHint,
+    RunTemplateCreate,
+    RunTemplateUpdate,
+    RunTemplateView,
 )
 from app.schemas.contracts import ComplianceLevel, ConversionForecast, ScoreCard
 from app.services.agent_api_configs import (
@@ -70,11 +78,26 @@ from app.services.agent_api_configs import (
 from app.services.feedback import import_feedback_rows, project_leaderboard
 from app.services.intake_assets import process_uploaded_payloads
 from app.services.personas import get_persona, list_persona_catalog, persona_info, update_persona
-from app.services.creative_specs import list_system_presets
+from app.services.creative_specs import (
+    create_creative_preset,
+    delete_creative_preset,
+    get_creative_preset,
+    list_system_presets,
+    list_user_presets,
+    update_creative_preset,
+)
 from app.services.capability_preflight import preflight_run_capabilities
+from app.services.templates import (
+    create_run_template,
+    delete_run_template,
+    get_run_template,
+    list_run_templates,
+    update_run_template,
+)
 from app.services.runs import (
     approve_stage,
     create_run,
+    get_last_product_config,
     get_run,
     latest_scorecard,
     reject_stage,
@@ -3290,9 +3313,137 @@ def list_pipeline_modes() -> list[PipelineModeView]:
     return _pipeline_mode_views()
 
 
-@router.get("/creative-presets", response_model=dict[str, dict])
-def get_creative_presets() -> dict[str, dict]:
-    return list_system_presets()
+# ── Creative Preset CRUD ──────────────────────────────────────────
+
+@router.get("/creative-presets", response_model=CreativePresetListResponse)
+def list_presets(
+    workspace_name: str = Query(default="workspace_demo"),
+    db: Session = Depends(get_db),
+) -> dict:
+    system = []
+    for key, spec in list_system_presets().items():
+        system.append({"key": key, **spec})
+    user = list_user_presets(db, workspace_name)
+    return {"system": system, "user": [CreativePresetView.model_validate(p) for p in user]}
+
+
+@router.post("/creative-presets", response_model=CreativePresetView, status_code=201)
+def create_preset(payload: CreativePresetCreate, db: Session = Depends(get_db)) -> CreativePresetView:
+    try:
+        preset = create_creative_preset(
+            db,
+            workspace_name=payload.workspace_name,
+            name=payload.name,
+            image_size=payload.image_size,
+            video_size=payload.video_size,
+            resolution=payload.resolution,
+            video_duration_seconds=payload.video_duration_seconds,
+            platform_targets=payload.platform_targets,
+        )
+        db.commit()
+        db.refresh(preset)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return CreativePresetView.model_validate(preset)
+
+
+@router.put("/creative-presets/{preset_id}", response_model=CreativePresetView)
+def update_preset(preset_id: str, payload: CreativePresetUpdate, db: Session = Depends(get_db)) -> CreativePresetView:
+    try:
+        preset = update_creative_preset(
+            db,
+            preset_id,
+            name=payload.name,
+            image_size=payload.image_size,
+            video_size=payload.video_size,
+            resolution=payload.resolution,
+            video_duration_seconds=payload.video_duration_seconds,
+            platform_targets=payload.platform_targets,
+        )
+        db.commit()
+        db.refresh(preset)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return CreativePresetView.model_validate(preset)
+
+
+@router.delete("/creative-presets/{preset_id}", status_code=204)
+def delete_preset(preset_id: str, db: Session = Depends(get_db)):
+    try:
+        delete_creative_preset(db, preset_id)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ── Run Template CRUD ────────────────────────────────────────────
+
+@router.get("/run-templates", response_model=list[RunTemplateView])
+def list_templates(
+    workspace_name: str = Query(default="workspace_demo"),
+    db: Session = Depends(get_db),
+) -> list[RunTemplateView]:
+    templates = list_run_templates(db, workspace_name)
+    return [RunTemplateView.model_validate(t) for t in templates]
+
+
+@router.post("/run-templates", response_model=RunTemplateView, status_code=201)
+def create_template(payload: RunTemplateCreate, db: Session = Depends(get_db)) -> RunTemplateView:
+    try:
+        template = create_run_template(
+            db,
+            workspace_name=payload.workspace_name,
+            name=payload.name,
+            config_json=payload.config_json,
+            is_shared=payload.is_shared,
+        )
+        db.commit()
+        db.refresh(template)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return RunTemplateView.model_validate(template)
+
+
+@router.put("/run-templates/{template_id}", response_model=RunTemplateView)
+def update_template(template_id: str, payload: RunTemplateUpdate, db: Session = Depends(get_db)) -> RunTemplateView:
+    try:
+        template = update_run_template(
+            db,
+            template_id,
+            name=payload.name,
+            config_json=payload.config_json,
+            is_shared=payload.is_shared,
+        )
+        db.commit()
+        db.refresh(template)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return RunTemplateView.model_validate(template)
+
+
+@router.delete("/run-templates/{template_id}", status_code=204)
+def delete_template(template_id: str, db: Session = Depends(get_db)):
+    try:
+        delete_run_template(db, template_id)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ── Product Config Hint ──────────────────────────────────────────
+
+@router.get("/product-config-hint", response_model=ProductConfigHint | None)
+def product_config_hint(
+    product_code: str = Query(...),
+    db: Session = Depends(get_db),
+) -> dict | None:
+    return get_last_product_config(db, product_code)
 
 
 @router.post("/runs/preflight", response_model=RunPreflightResponse)
