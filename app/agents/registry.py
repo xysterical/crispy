@@ -56,15 +56,15 @@ Own run governance, strategy continuity, and review readiness across the full mu
 """,
     ),
     AgentSpec(
-        name="research_agent",
-        display_name="Research Agent",
+        name="product_research_agent",
+        display_name="Product Research Agent",
         stage="research",
-        role="market_research",
-        relative_path="stages/01_research_agent.md",
+        role="product_market_research",
+        relative_path="stages/01_product_research_agent.md",
         order=10,
-        default_content="""# Research Agent
+        default_content="""# Product Research Agent
 ## Mission
-Produce competitor, audience, and claim-risk intelligence when research is enabled.
+Produce competitor, audience, and claim-risk intelligence for a specific product when research is enabled.
 
 ## Must Output
 - Audience insights and purchase triggers.
@@ -272,7 +272,7 @@ Produce independent compliance judgment for each variant.
 
 STAGE_ASSIGNMENTS: dict[str, StageAssignment] = {
     "intake": StageAssignment(lead_agent="gm_orchestrator"),
-    "planning": StageAssignment(lead_agent="planning_agent", collaborators=("research_agent", "gm_orchestrator")),
+    "planning": StageAssignment(lead_agent="planning_agent", collaborators=("product_research_agent", "gm_orchestrator")),
     "divergence": StageAssignment(lead_agent="variant_strategy_agent", collaborators=("planning_agent",)),
     "copy_image_generation": StageAssignment(lead_agent="copy_image_agent", collaborators=("gm_orchestrator",)),
     "video_scripting": StageAssignment(lead_agent="video_script_agent", collaborators=("gm_orchestrator",)),

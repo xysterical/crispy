@@ -110,19 +110,19 @@ def test_persona_read_and_patch(client):
     catalog = catalog_resp.json()
     gm_row = [row for row in catalog if row["agent_name"] == "gm_orchestrator"][0]
     assert "/gm/" in gm_row["source_path"] or "personas/gm/" in gm_row["source_path"]
-    research_row = [row for row in catalog if row["agent_name"] == "research_agent"][0]
-    assert "stages/01_research_agent.md" in research_row["source_path"]
+    research_row = [row for row in catalog if row["agent_name"] == "product_research_agent"][0]
+    assert "stages/01_product_research_agent.md" in research_row["source_path"]
 
-    get_resp = client.get("/personas/research_agent")
+    get_resp = client.get("/personas/product_research_agent")
     assert get_resp.status_code == 200
     before = get_resp.json()
-    assert "Research Agent" in before["content"]
-    assert before["display_name"] == "Research Agent"
+    assert "Product Research Agent" in before["content"]
+    assert before["display_name"] == "Product Research Agent"
     assert before["stage"] == "research"
 
     patch_resp = client.patch(
-        "/personas/research_agent",
-        json={"content": "# Research Agent\n- Updated from dashboard.", "changed_by": "test-suite"},
+        "/personas/product_research_agent",
+        json={"content": "# Product Research Agent\n- Updated from dashboard.", "changed_by": "test-suite"},
     )
     assert patch_resp.status_code == 200
     after = patch_resp.json()
