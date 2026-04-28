@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import io
 import json
+import uuid
 import mimetypes
 import asyncio
 import zipfile
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -68,6 +69,10 @@ from app.schemas.api import (
     RunTemplateCreate,
     RunTemplateUpdate,
     RunTemplateView,
+    ShopAnalysisRequest,
+    ShopAnalysisResponse,
+    ShopAnalysisListItem,
+    ShopAnalysisHistoryResponse,
 )
 from app.schemas.contracts import ComplianceLevel, ConversionForecast, ScoreCard
 from app.services.agent_api_configs import (
@@ -111,6 +116,11 @@ from app.services.runs import (
     run_deliverables,
     run_trace_events,
     run_variants,
+)
+from app.services.shop_analysis import (
+    list_shop_analyses,
+    save_competitor_analysis,
+    save_shop_profile,
 )
 
 
@@ -1290,6 +1300,310 @@ def _dashboard_shared_js() -> str:
           startRunListPolling();
         </script>
     """
+@router.get("/dashboard/shop-analysis", response_class=HTMLResponse)
+def dashboard_shop_analysis() -> str:
+    return _shop_analysis_page_html()
+
+
+def _shop_analysis_page_html() -> str:
+    return """
+    <html>
+      <head>
+        <title>Crispy Shop Analysis</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style>
+          :root {
+            --bg: #f4f7f2;
+            --bg-alt: #e8f2f8;
+            --card: rgba(255, 255, 255, 0.92);
+            --text: #183329;
+            --muted: #5e6e66;
+            --line: #d8e5dc;
+            --accent: #1f7a62;
+            --radius: 16px;
+            --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          }
+          * { box-sizing: border-box; }
+          body {
+            margin: 0;
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            background:
+              radial-gradient(circle at 10% -20%, #d9ede6 0%, transparent 40%),
+              radial-gradient(circle at 90% -20%, #d8e9f6 0%, transparent 42%),
+              linear-gradient(180deg, var(--bg-alt), var(--bg) 30%);
+          }
+          .app-shell { width: min(1100px, calc(100% - 24px)); margin: 22px auto 30px auto; }
+          .hero { display:flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-bottom: 14px; }
+          h1, h2, h3 { margin: 0; line-height: 1.25; }
+          h1 { font-size: 27px; letter-spacing: -0.02em; }
+          h2 { font-size: 19px; margin-bottom: 10px; }
+          .subtitle { margin-top: 6px; color: var(--muted); font-size: 14px; }
+          .muted { color: var(--muted); font-size: 12px; }
+          a { color: #135f4c; text-decoration: none; }
+          a:hover { text-decoration: underline; }
+          .nav-link {
+            border: 1px solid var(--line);
+            background: #fff;
+            padding: 8px 12px;
+            border-radius: 999px;
+            font-size: 13px;
+            font-weight: 600;
+          }
+          .card {
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 20px;
+            background: var(--card);
+            box-shadow: 0 8px 24px rgba(30, 62, 50, 0.07);
+            margin-bottom: 16px;
+          }
+          input, textarea, select {
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-family: inherit;
+            font-size: 14px;
+            background: #fff;
+            color: var(--text);
+          }
+          input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(31, 122, 98, 0.15); }
+          label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+          button {
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 10px 18px;
+            font-family: inherit;
+            font-size: 14px;
+            cursor: pointer;
+            background: #fff;
+            color: var(--text);
+            font-weight: 600;
+            transition: background 0.15s;
+          }
+          button:hover { background: #f0f5f2; }
+          button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+          button.primary:hover { background: #145746; }
+          button:disabled { opacity: 0.5; cursor: not-allowed; }
+          .form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+          .form-row > div { flex: 1; min-width: 200px; }
+          .result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+          .result-panel {
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 16px;
+            background: #fafdfb;
+            max-height: 600px;
+            overflow-y: auto;
+          }
+          .result-panel pre {
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: var(--mono);
+            font-size: 12px;
+            line-height: 1.5;
+          }
+          .history-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--line);
+            font-size: 13px;
+          }
+          .history-item:last-child { border-bottom: none; }
+          .status-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+          }
+          .status-badge.completed { background: #eaf7ee; color: #21633d; }
+          .status-badge.failed { background: #fdeeee; color: #8a2d2d; }
+          .status-badge.running { background: #fff7e6; color: #8a5d1c; }
+          .loading { text-align: center; padding: 32px; color: var(--muted); }
+          .loading .spinner {
+            display: inline-block;
+            width: 24px; height: 24px;
+            border: 3px solid var(--line);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+          }
+          @keyframes spin { to { transform: rotate(360deg); } }
+          @media (max-width: 860px) {
+            .result-grid { grid-template-columns: 1fr; }
+            .form-row > div { min-width: 100%; }
+          }
+        </style>
+      </head>
+      <body>
+        <main class="app-shell">
+          <header class="hero">
+            <div>
+              <h1>Shop Analysis</h1>
+              <div class="subtitle">Research store positioning, SEO, and competitive landscape. Results feed into GM memory for creative strategy.</div>
+            </div>
+            <a class="nav-link" href="/dashboard">Back to Dashboard</a>
+          </header>
+
+          <section class="card">
+            <h2>New Analysis</h2>
+            <div class="form-row">
+              <div>
+                <label>Store URL (required)</label>
+                <input id="store-url" type="url" placeholder="https://example.com" />
+              </div>
+              <div>
+                <label>Industry Code</label>
+                <input id="industry-code" value="general" placeholder="e.g. pet_accessories" />
+              </div>
+            </div>
+            <div style="margin-top:10px;">
+              <label>Store Description (optional)</label>
+              <textarea id="store-description" rows="2" placeholder="Brief description: what they sell, target market, known positioning..."></textarea>
+            </div>
+            <div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
+              <button class="primary" id="btn-run" onclick="runAnalysis()">Run Analysis</button>
+              <span id="run-status" class="muted"></span>
+            </div>
+          </section>
+
+          <section class="card" id="results-card" style="display:none;">
+            <h2 id="results-title">Results</h2>
+            <div class="result-grid">
+              <div>
+                <h3>Store Profile</h3>
+                <div class="result-panel" id="profile-panel">
+                  <div class="loading" id="profile-loading"><div class="spinner"></div><div>Analyzing store...</div></div>
+                  <pre id="profile-content" style="display:none;"></pre>
+                  <div id="profile-error" class="muted" style="display:none;color:#be3b3b;"></div>
+                </div>
+              </div>
+              <div>
+                <h3>Competitor Analysis</h3>
+                <div class="result-panel" id="competitor-panel">
+                  <div class="loading" id="competitor-loading"><div class="spinner"></div><div>Researching competitors...</div></div>
+                  <div id="competitor-content" style="display:none;"></div>
+                  <div id="competitor-error" class="muted" style="display:none;color:#be3b3b;"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2>History</h2>
+            <div id="history-list" class="muted">Loading...</div>
+          </section>
+        </main>
+
+        <script>
+          async function api(path, options = {}) {
+            const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+            if (!res.ok) throw new Error(await res.text());
+            return res.json();
+          }
+
+          async function runAnalysis() {
+            const storeUrl = document.getElementById("store-url").value.trim();
+            if (!storeUrl) { alert("Please enter a store URL."); return; }
+
+            const btn = document.getElementById("btn-run");
+            const status = document.getElementById("run-status");
+            btn.disabled = true;
+            status.textContent = "Running...";
+
+            const card = document.getElementById("results-card");
+            card.style.display = "block";
+            document.getElementById("results-title").textContent = "Results: " + storeUrl;
+
+            document.getElementById("profile-loading").style.display = "block";
+            document.getElementById("profile-content").style.display = "none";
+            document.getElementById("profile-error").style.display = "none";
+            document.getElementById("competitor-loading").style.display = "block";
+            document.getElementById("competitor-content").style.display = "none";
+            document.getElementById("competitor-error").style.display = "none";
+
+            try {
+              const data = await api("/shop-analysis/run", {
+                method: "POST",
+                body: JSON.stringify({
+                  store_url: storeUrl,
+                  description: document.getElementById("store-description").value.trim(),
+                  industry_code: document.getElementById("industry-code").value.trim() || "general",
+                }),
+              });
+
+              document.getElementById("profile-loading").style.display = "none";
+              if (data.profile) {
+                document.getElementById("profile-content").style.display = "block";
+                document.getElementById("profile-content").textContent = JSON.stringify(data.profile.content, null, 2);
+              } else {
+                document.getElementById("profile-error").style.display = "block";
+                document.getElementById("profile-error").textContent = data.error_message || "Profile analysis failed.";
+              }
+
+              document.getElementById("competitor-loading").style.display = "none";
+              if (data.competitor_analysis) {
+                document.getElementById("competitor-content").style.display = "block";
+                const report = data.competitor_analysis.content.report || "";
+                document.getElementById("competitor-content").innerHTML = report
+                  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                  .replace(/\\n/g, "<br>")
+                  .replace(/## (.+)/g, "<h3>$1</h3>")
+                  .replace(/### (.+)/g, "<h4>$1</h4>")
+                  .replace(/\\*\\*(.+?)\\*\\*/g, "<b>$1</b>");
+              } else {
+                document.getElementById("competitor-error").style.display = "block";
+                document.getElementById("competitor-error").textContent = data.error_message || "Competitor analysis failed.";
+              }
+
+              status.textContent = "Done!";
+              loadHistory();
+            } catch (err) {
+              status.textContent = "Error: " + err.message;
+              document.getElementById("profile-loading").style.display = "none";
+              document.getElementById("competitor-loading").style.display = "none";
+            } finally {
+              btn.disabled = false;
+            }
+          }
+
+          async function loadHistory() {
+            try {
+              const data = await api("/shop-analysis/history");
+              const list = document.getElementById("history-list");
+              if (!data.items.length) {
+                list.innerHTML = '<div class="muted">No analyses yet.</div>';
+                return;
+              }
+              list.innerHTML = data.items.map(item => {
+                const badgeClass = item.status === "completed" ? "completed" : "failed";
+                const dt = new Date(item.created_at);
+                const timeStr = String(dt.getMonth()+1).padStart(2,'0') + "-" +
+                  String(dt.getDate()).padStart(2,'0') + " " +
+                  String(dt.getHours()).padStart(2,'0') + ":" +
+                  String(dt.getMinutes()).padStart(2,'0');
+                return '<div class="history-item">'
+                  + '<div><b>' + item.store_url.replace(/</g, "&lt;") + '</b>'
+                  + ' <span class="status-badge ' + badgeClass + '">' + item.source_type + '</span>'
+                  + '<br><span class="muted">' + (item.summary || '').replace(/</g, "&lt;").substring(0, 100) + '</span></div>'
+                  + '<div class="muted">' + timeStr + '</div>'
+                  + '</div>';
+              }).join("");
+            } catch (err) {
+              document.getElementById("history-list").innerHTML = '<div class="muted">Failed to load history.</div>';
+            }
+          }
+
+          document.addEventListener("DOMContentLoaded", loadHistory);
+        </script>
+      </body>
+    </html>
+    """
+
 
 def _dashboard_html() -> str:
     """Render the dashboard page using the new app/dashboard/ module."""
@@ -2504,6 +2818,113 @@ def dashboard_agent_apis(db: Session = Depends(get_db)) -> str:
 @router.get("/pipeline-modes", response_model=list[PipelineModeView])
 def list_pipeline_modes() -> list[PipelineModeView]:
     return _pipeline_mode_views()
+
+
+# ── Shop Analysis ─────────────────────────────────────────────────
+
+@router.post("/shop-analysis/run", response_model=ShopAnalysisResponse)
+def run_shop_analysis(
+    payload: ShopAnalysisRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.agents.runtime import AgentsRuntime
+    from app.services.agent_api_configs import resolve_agent_config, resolve_agent_runtime
+    from app.services.shop_analysis import (
+        _get_or_create_workspace_project,
+        save_shop_profile,
+        save_competitor_analysis,
+    )
+
+    workspace, project = _get_or_create_workspace_project(
+        db, payload.workspace_name, payload.project_name
+    )
+    runtime = AgentsRuntime()
+    config = resolve_agent_config(db, agent_name="shop_analyst", run_provider="", run_model="")
+    provider = config["provider_name"]
+    model = config["model_name"]
+    runtime_config = resolve_agent_runtime(config)
+
+    analysis_id = str(uuid.uuid4())
+    errors: list[str] = []
+
+    # Phase 1: Store profile
+    profile_result = None
+    try:
+        result = runtime.run_shop_profile_analysis(
+            store_url=payload.store_url,
+            description=payload.description,
+            provider=provider,
+            model=model,
+            runtime_config=runtime_config,
+        )
+        entry = save_shop_profile(
+            db,
+            project_id=project.id,
+            industry_code=payload.industry_code,
+            store_url=payload.store_url,
+            profile_data=result["profile"],
+        )
+        profile_result = {
+            "source_type": "shop_profile",
+            "content": entry.content,
+            "summary": result["profile"].get("positioning", payload.store_url),
+        }
+    except Exception as exc:
+        errors.append(f"shop_profile: {exc}")
+
+    # Phase 2: Competitor analysis (depends on profile success)
+    competitor_result = None
+    if profile_result:
+        try:
+            result = runtime.run_competitor_analysis(
+                store_url=payload.store_url,
+                description=payload.description,
+                store_profile=profile_result["content"].get("profile", {}),
+                provider=provider,
+                model=model,
+                runtime_config=runtime_config,
+            )
+            entry = save_competitor_analysis(
+                db,
+                project_id=project.id,
+                industry_code=payload.industry_code,
+                store_url=payload.store_url,
+                analysis_markdown=result["report"],
+            )
+            competitor_result = {
+                "source_type": "competitor_analysis",
+                "content": entry.content,
+                "summary": result["report"][:120] + "..." if len(result["report"]) > 120 else result["report"],
+            }
+        except Exception as exc:
+            errors.append(f"competitor_analysis: {exc}")
+
+    db.commit()
+
+    status = "failed" if not profile_result and not competitor_result else "completed"
+    return ShopAnalysisResponse(
+        id=analysis_id,
+        store_url=payload.store_url,
+        industry_code=payload.industry_code,
+        profile=profile_result,
+        competitor_analysis=competitor_result,
+        status=status,
+        error_message="; ".join(errors) if errors else None,
+        created_at=datetime.now(UTC),
+    ).model_dump(mode="json")
+
+
+@router.get("/shop-analysis/history", response_model=ShopAnalysisHistoryResponse)
+def shop_analysis_history(
+    workspace_name: str = Query(default="workspace_demo"),
+    project_name: str = Query(default="project_demo"),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.shop_analysis import _get_or_create_workspace_project
+    _, project = _get_or_create_workspace_project(db, workspace_name, project_name)
+    items = list_shop_analyses(db, project.id, limit=limit)
+    return {"items": items}
 
 
 # ── Creative Preset CRUD ──────────────────────────────────────────
