@@ -6,15 +6,14 @@ from __future__ import annotations
 CREATE_RUN_HTML = """
             <!-- Template Bar -->
             <div class="template-bar" id="template-bar">
-              <span style="font-weight:600;font-size:13px;">Load Template:</span>
-              <select id="template-selector" onchange="loadTemplate()">
-                <option value="">-- choose or type to save new --</option>
+              <span style="font-weight:600;font-size:12px;">Template:</span>
+              <select id="template-selector" onchange="loadTemplate()" style="font-size:12px;padding:6px 8px;">
+                <option value="">-- choose --</option>
               </select>
-              <button onclick="applyTemplate()">Apply</button>
-              <span style="color:var(--line);margin:0 4px;">|</span>
-              <button onclick="saveAsTemplate()">Save Current as Template</button>
-              <button onclick="renameTemplate()" id="btn-rename-tpl" disabled>Rename</button>
-              <button onclick="deleteTemplate()" id="btn-delete-tpl" disabled style="color:var(--danger);">Delete</button>
+              <button onclick="applyTemplate()" style="font-size:12px;padding:6px 10px;">Apply</button>
+              <button onclick="saveAsTemplate()" style="font-size:12px;padding:6px 10px;">Save</button>
+              <button onclick="renameTemplate()" id="btn-rename-tpl" disabled style="font-size:12px;padding:6px 10px;">Rename</button>
+              <button onclick="deleteTemplate()" id="btn-delete-tpl" disabled style="font-size:12px;padding:6px 10px;color:var(--danger);">Delete</button>
             </div>
 
             <!-- Mode Toggle -->

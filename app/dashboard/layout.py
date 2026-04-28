@@ -87,7 +87,7 @@ button.primary:hover { background: var(--accent-dark); }
 }
 .drawer-overlay.open { opacity: 1; pointer-events: auto; }
 .drawer-panel {
-  position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 92vw);
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(700px, 94vw);
   background: var(--bg); z-index: 1000; overflow-y: auto;
   transform: translateX(100%); transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: -4px 0 28px rgba(0,0,0,0.12); padding: 20px 24px 40px;
@@ -143,8 +143,8 @@ button.primary:hover { background: var(--accent-dark); }
 .quick-fill-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .spec-row { display: flex; gap: 8px; }
 .spec-field { flex: 1; min-width: 80px; }
-.template-bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: #f9fafb; border-radius: var(--radius); margin-bottom: 14px; border: 1px solid var(--line); }
-.template-bar select { width: auto; min-width: 180px; }
+.template-bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #f9fafb; border-radius: var(--radius); margin-bottom: 14px; border: 1px solid var(--line); flex-wrap: wrap; }
+.template-bar select { width: auto; min-width: 140px; }
 .preset-popover { position: absolute; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.1); z-index: 100; min-width: 280px; }
 .preset-section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; color: #9ca3af; padding: 8px 14px 2px; }
 .preset-item { padding: 6px 14px; font-size: 13px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
