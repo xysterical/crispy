@@ -116,14 +116,14 @@ button.primary:hover { background: var(--accent-dark); }
 .fab-pill.advance { background: var(--accent); color: #fff; }
 .fab-pill.reject { background: #fff; color: var(--danger); border: 1.5px solid var(--danger); }
 .fab-create {
-  width: 56px; height: 56px; border-radius: 50%;
-  background: var(--accent); color: #fff; border: none;
-  font-size: 24px; cursor: pointer;
-  box-shadow: 0 4px 16px rgba(31, 122, 98, 0.35);
+  width: 40px; height: 40px; border-radius: 50%;
+  background: #fff; color: var(--accent); border: 1.5px solid var(--accent);
+  font-size: 18px; cursor: pointer;
+  box-shadow: 0 4px 16px rgba(31, 122, 98, 0.18);
   display: flex; align-items: center; justify-content: center;
   transition: transform 0.15s, box-shadow 0.15s;
 }
-.fab-create:hover { transform: scale(1.06); box-shadow: 0 6px 20px rgba(31, 122, 98, 0.45); }
+.fab-create:hover { transform: scale(1.06); box-shadow: 0 6px 20px rgba(31, 122, 98, 0.28); }
 
 /* accordion / wizard specific */
 .accordion { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
