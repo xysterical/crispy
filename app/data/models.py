@@ -35,6 +35,12 @@ class RunStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class ApprovalMode(StrEnum):
+    MANUAL = "manual"
+    SEMI_AUTO = "semi_auto"
+    FULL_AUTO = "full_auto"
+
+
 class TaskStatus(StrEnum):
     DRAFT = "draft"
     QUEUED = "queued"
@@ -151,6 +157,7 @@ class PipelineRun(Base):
     market: Mapped[str] = mapped_column(String(16), default="US")
     locale: Mapped[str] = mapped_column(String(16), default="en-US")
     pipeline_mode: Mapped[str] = mapped_column(String(32), default="full_multimodal")
+    approval_mode: Mapped[str] = mapped_column(String(16), default=ApprovalMode.MANUAL.value)
     product_code: Mapped[str] = mapped_column(String(128), default="")
     industry_code: Mapped[str] = mapped_column(String(128), default="general")
     creative_preset: Mapped[str] = mapped_column(String(64), default="meta_square_5s")

@@ -46,6 +46,26 @@ PIPELINE_STAGE_PLANS: dict[str, list[str]] = {
 # Backward-compatible alias for tests and existing imports.
 STAGE_ORDER: list[str] = PIPELINE_STAGE_PLANS[PipelineMode.FULL_MULTIMODAL.value]
 
+# Stages that auto-approve under each approval mode.
+# semi_auto: strategy stages auto-advance, creative/evaluation stages hold for human review.
+# full_auto: every stage auto-advances.
+# manual: no stage auto-advances (empty set).
+AUTO_APPROVE_STAGES: dict[str, set[str]] = {
+    "manual": set(),
+    "semi_auto": {
+        StageName.INTAKE.value,
+        StageName.PLANNING.value,
+        StageName.DIVERGENCE.value,
+        StageName.VIDEO_SCRIPTING.value,
+    },
+    "full_auto": set(PIPELINE_STAGE_PLANS[PipelineMode.FULL_MULTIMODAL.value]),
+}
+
+
+def should_auto_approve(approval_mode: str, stage_name: str) -> bool:
+    stages = AUTO_APPROVE_STAGES.get(approval_mode, set())
+    return stage_name in stages
+
 
 def stage_plan_for(pipeline_mode: str | None) -> list[str]:
     if not pipeline_mode:

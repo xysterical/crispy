@@ -289,6 +289,7 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
         creative_preset=run.creative_preset,
         creative_specs=run.creative_specs or {},
         pipeline_mode=run.pipeline_mode,
+        approval_mode=run.approval_mode or "manual",
         enable_research=run.enable_research,
         manual_research_brief=run.manual_research_brief or "",
         business_context=run.business_context or {},
@@ -942,7 +943,11 @@ def _dashboard_html() -> str:
                 </div>
                 <div class="row">
                   <div><label>Pipeline Mode</label><select id="pipeline_mode"></select></div>
+                  <div><label>Approval Mode</label><select id="approval_mode"><option value="manual" selected>Manual</option><option value="semi_auto">Semi-Auto</option><option value="full_auto">Full-Auto</option></select></div>
+                </div>
+                <div class="row">
                   <div><label>Variant Count</label><input id="variant_count" type="number" min="1" max="16" value="8" /></div>
+                  <div></div>
                 </div>
                 <div id="mode-summary" class="hint muted">Loading pipeline modes...</div>
                 <div class="row">
@@ -1466,16 +1471,22 @@ def _dashboard_html() -> str:
           function renderTimeline(run) {
             const stageHtml = (run.stage_tasks || []).map((task) => {
               const agent = task.metadata_json?.agent_name || "-";
+              const isAutoApproved = task.status === "approved" && String(task.review_notes || "").includes("auto_approved");
+              const statusLabel = isAutoApproved ? "AUTO-APPROVED" : esc(task.status);
+              const reviewDisplay = isAutoApproved
+                ? '<span class="quality-chip good">AUTO-APPROVED</span>'
+                : esc(task.review_notes || "-");
               return `
-                <article class="stage-card">
+                <article class="stage-card${isAutoApproved ? " auto-approved" : ""}">
                   <div class="stage-title">${esc(task.stage_name)}</div>
                   <div>
-                    <span class="pill">status: ${esc(task.status)}</span>
+                    <span class="pill">status: ${statusLabel}</span>
                     <span class="pill">attempt: ${esc(task.attempt)}</span>
                     <span class="pill">agent: ${esc(agent)}</span>
+                    ${isAutoApproved ? '<span class="quality-chip good">auto</span>' : ""}
                   </div>
                   <div>${esc(task.summary || "No summary")}</div>
-                  <div class="muted">started: ${esc(task.started_at || "-")} | completed: ${esc(task.completed_at || "-")} | review: ${esc(task.review_notes || "-")}</div>
+                  <div class="muted">started: ${esc(task.started_at || "-")} | completed: ${esc(task.completed_at || "-")} | review: ${reviewDisplay}</div>
                   <details>
                     <summary>Raw JSON</summary>
                     <pre>${esc(JSON.stringify(task.output_payload || {}, null, 2))}</pre>
@@ -1633,7 +1644,7 @@ def _dashboard_html() -> str:
             return `
               <div style="margin-bottom:12px;">
                 <div><b>Run:</b> ${esc(run.id)}</div>
-                <div><span class="${statusPillClass(run.status)}">${statusLabel(run.status)}</span> <span class="pill">stage: ${esc(run.current_stage || "-")}</span><span class="pill">mode: ${esc(run.pipeline_mode)}</span></div>
+                <div><span class="${statusPillClass(run.status)}">${statusLabel(run.status)}</span> <span class="pill">stage: ${esc(run.current_stage || "-")}</span><span class="pill">mode: ${esc(run.pipeline_mode)}</span><span class="pill">approval: ${esc(run.approval_mode || "manual")}</span></div>
                 <div class="muted">provider/model: ${esc(run.model_provider)} / ${esc(run.model_name)} | budget: ${esc(run.budget_used)}</div>
                 <div class="muted">product_code: ${esc(run.product_code)} | industry_code: ${esc(run.industry_code)} | creative_preset: ${esc(run.creative_preset)}</div>
                 <div class="muted">creative_specs: ${esc(JSON.stringify(run.creative_specs || {}))}</div>
@@ -1770,6 +1781,7 @@ def _dashboard_html() -> str:
               payload.append("creative_preset", document.getElementById("creative_preset").value);
               payload.append("creative_specs", JSON.stringify(buildCreativeSpecs()));
               payload.append("pipeline_mode", document.getElementById("pipeline_mode").value);
+              payload.append("approval_mode", document.getElementById("approval_mode").value);
               payload.append("variant_count", String(Number(document.getElementById("variant_count").value || 8)));
               payload.append("category_tags", JSON.stringify(toList(document.getElementById("category_tags").value)));
               payload.append("url_references", JSON.stringify(urlReferences));
@@ -3172,6 +3184,7 @@ async def create_pipeline_run_rich(
     model_provider: str | None = Form(None),
     model_name: str | None = Form(None),
     pipeline_mode: str = Form(PipelineMode.FULL_MULTIMODAL.value),
+    approval_mode: str = Form("manual"),
     enable_research: bool = Form(False),
     manual_research_brief: str = Form(""),
     business_context: str = Form("{}"),
@@ -3199,6 +3212,7 @@ async def create_pipeline_run_rich(
         model_provider=model_provider,
         model_name=model_name,
         pipeline_mode=pipeline_mode,
+        approval_mode=approval_mode,
         enable_research=enable_research,
         manual_research_brief=manual_research_brief,
         business_context=_load_json_dict(business_context, "business_context"),

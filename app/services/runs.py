@@ -32,7 +32,7 @@ from app.data.models import (
     VariantScore,
     Workspace,
 )
-from app.orchestrator.state_machine import next_stage, stage_plan_for
+from app.orchestrator.state_machine import next_stage, should_auto_approve, stage_plan_for
 from app.schemas.api import RunCreateRequest
 from app.schemas.contracts import (
     CopyImageBundle,
@@ -296,6 +296,7 @@ def create_run(db: Session, payload: RunCreateRequest) -> PipelineRun:
         market=payload.market,
         locale=payload.locale,
         pipeline_mode=payload.pipeline_mode,
+        approval_mode=payload.approval_mode or "manual",
         product_code=product.product_code,
         industry_code=payload.industry_code,
         creative_preset=payload.creative_preset,
@@ -382,6 +383,42 @@ def approve_stage(db: Session, run_id: str, notes: str = "") -> PipelineRun:
         event_type="human_approved",
         message=f"Human approved stage {run.current_stage}.",
         payload={"notes": notes},
+    )
+
+    nxt = next_stage(run.current_stage, run.pipeline_mode)
+    if nxt is None:
+        run.current_stage = None
+        run.status = RunStatus.COMPLETED.value
+    else:
+        _requeue_next_stage(db, run.id, nxt)
+        run.current_stage = nxt
+        run.status = RunStatus.RUNNING.value
+    run.updated_at = utcnow()
+    db.flush()
+    return run
+
+
+def auto_approve_stage(db: Session, run_id: str, approved_stage: str) -> PipelineRun:
+    """Programmatic auto-approval — same logic as approve_stage but with auto_approved trace."""
+    run = get_run(db, run_id)
+    if not run.current_stage or run.current_stage != approved_stage:
+        return run
+    task = get_stage_task(db, run_id, approved_stage)
+    if task.status != TaskStatus.WAITING_REVIEW.value:
+        return run
+    task.status = TaskStatus.APPROVED.value
+    task.approved_at = utcnow()
+    task.review_notes = f"auto_approved ({run.approval_mode})"
+    task.failure_category = None
+    add_agent_trace_event(
+        db,
+        run_id=run.id,
+        stage_task_id=task.id,
+        stage_name=task.stage_name,
+        agent_name="system_auto_approve",
+        event_type="auto_approved",
+        message=f"Auto-approved stage {approved_stage} (mode={run.approval_mode}).",
+        payload={"approval_mode": run.approval_mode},
     )
 
     nxt = next_stage(run.current_stage, run.pipeline_mode)

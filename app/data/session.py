@@ -160,6 +160,7 @@ def apply_runtime_migrations(target_engine) -> None:
     _add_column_if_missing(target_engine, "stage_task", "priority", "ALTER TABLE stage_task ADD COLUMN priority INTEGER DEFAULT 2")
     _add_column_if_missing(target_engine, "stage_task", "max_retries", "ALTER TABLE stage_task ADD COLUMN max_retries INTEGER DEFAULT 3")
     _add_column_if_missing(target_engine, "stage_task", "retry_at", "ALTER TABLE stage_task ADD COLUMN retry_at DATETIME")
+    _add_column_if_missing(target_engine, "pipeline_run", "approval_mode", "ALTER TABLE pipeline_run ADD COLUMN approval_mode VARCHAR(16) DEFAULT 'manual'")
 
     with target_engine.begin() as conn:
         conn.execute(
@@ -218,6 +219,7 @@ def apply_runtime_migrations(target_engine) -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stage_task_queue ON stage_task(status, priority, created_at)"))
         conn.execute(text("UPDATE stage_task SET priority = 2 WHERE priority IS NULL"))
         conn.execute(text("UPDATE stage_task SET max_retries = 3 WHERE max_retries IS NULL"))
+        conn.execute(text("UPDATE pipeline_run SET approval_mode = 'manual' WHERE approval_mode IS NULL OR approval_mode = ''"))
 
 
 def get_db() -> Generator[Session, None, None]:

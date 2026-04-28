@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.contracts import ConversionForecast, FeedbackRow, ScoreCard, StageName
 
 PipelineMode = Literal["copy_image_only", "video_only", "full_multimodal"]
+ApprovalMode = Literal["manual", "semi_auto", "full_auto"]
 
 
 class RunCreateRequest(BaseModel):
@@ -28,6 +29,7 @@ class RunCreateRequest(BaseModel):
     model_provider: str | None = "openai"
     model_name: str | None = "gpt-4.1"
     pipeline_mode: PipelineMode = "full_multimodal"
+    approval_mode: ApprovalMode = "manual"
     enable_research: bool = False
     manual_research_brief: str = ""
     business_context: dict = Field(default_factory=dict)
@@ -85,6 +87,7 @@ class RunView(BaseModel):
     creative_preset: str
     creative_specs: dict = Field(default_factory=dict)
     pipeline_mode: PipelineMode = "full_multimodal"
+    approval_mode: str = "manual"
     enable_research: bool = False
     manual_research_brief: str = ""
     business_context: dict = Field(default_factory=dict)

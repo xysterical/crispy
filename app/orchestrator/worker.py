@@ -17,11 +17,14 @@ from app.data.models import (
     utcnow as model_utcnow,
 )
 from app.data.session import SessionLocal
+from app.orchestrator.state_machine import should_auto_approve
 from app.services.runs import (
     _build_task_input,
+    auto_approve_stage,
     execute_stage_task,
     get_run,
     refresh_video_task_assets,
+    regenerate_variant_assets,
     select_next_queued_task,
 )
 
@@ -55,6 +58,7 @@ class PipelineWorker:
         self._total_failed: int = 0
         self._video_poller_last_run: datetime | None = None
         self._video_poller_success: bool = True
+        self._full_auto_regen_cycles: int = 0
 
     # ── Public API ──────────────────────────────────────────
 
@@ -230,12 +234,23 @@ class PipelineWorker:
 
             try:
                 execute_stage_task(db, task, run)
-                db.commit()
 
                 if task.status == TaskStatus.WAITING_REVIEW.value:
                     self._total_completed += 1
+                    # Auto-approval check
+                    if should_auto_approve(run.approval_mode, task.stage_name):
+                        auto_advance = True
+                        if task.stage_name == "visual_quality_assessment" and run.approval_mode == "full_auto":
+                            auto_advance = self._full_auto_visual_qa_regen(db, run, task)
+                        if auto_advance:
+                            auto_approve_stage(db, run.id, task.stage_name)
+                            logger.info(
+                                "Auto-approved %s for run %s (mode=%s)",
+                                task.stage_name, run.id, run.approval_mode,
+                            )
                 elif task.status == TaskStatus.FAILED.value:
                     self._total_failed += 1
+                db.commit()
                 return True
             except Exception:
                 db.rollback()
@@ -272,6 +287,57 @@ class PipelineWorker:
             db.commit()
         finally:
             db.close()
+
+    def _full_auto_visual_qa_regen(self, db, run, task) -> bool:
+        """Full-auto regeneration for visual_qa. Returns True if safe to auto-approve."""
+        output_payload = task.output_payload or {}
+        summaries = output_payload.get("variant_summaries") or []
+        regen_variants = [
+            s for s in summaries
+            if isinstance(s, dict) and s.get("recommended_action") == "request_regeneration"
+        ]
+        if not regen_variants:
+            return True
+
+        if self._full_auto_regen_cycles >= 2:
+            logger.warning(
+                "Full-auto visual_qa regen limit reached for run %s; advancing anyway",
+                run.id,
+            )
+            self._full_auto_regen_cycles = 0
+            return True
+
+        self._full_auto_regen_cycles += 1
+        regenerated = 0
+        for summary in regen_variants[:3]:
+            variant_id = summary.get("variant_id")
+            if not variant_id:
+                continue
+            try:
+                regenerate_variant_assets(
+                    db,
+                    run_id=run.id,
+                    variant_id=str(variant_id),
+                    reason=f"full_auto_visual_qa_cycle_{self._full_auto_regen_cycles}",
+                )
+                regenerated += 1
+            except Exception:
+                logger.exception(
+                    "Full-auto regen failed for variant %s in run %s",
+                    variant_id, run.id,
+                )
+
+        if regenerated > 0:
+            task.status = TaskStatus.QUEUED.value
+            task.retry_at = None
+            task.priority = 1
+            logger.info(
+                "Full-auto visual_qa: regenerated %d variants for run %s; re-queued visual_qa (cycle %d)",
+                regenerated, run.id, self._full_auto_regen_cycles,
+            )
+            return False
+
+        return True
 
     def _recover_orphaned_tasks(self) -> None:
         """Reset any RUNNING tasks that were abandoned by a previous crash."""
