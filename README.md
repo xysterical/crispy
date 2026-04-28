@@ -19,7 +19,7 @@ ROI-focused multi-agent ad creative pipeline for cross-border ecommerce.
   - `ideation_agent`: `planning`, `divergence`
   - `generation_agent`: `copy_image_generation`, `video_scripting`, `storyboard_image_generation`, `video_generation`
   - `scoring_agent`: `evaluation_selection`
-- `research_agent` and `compliance_agent` are still first-class personas, but in current MVP flow:
+- `product_research_agent` and `compliance_agent` are still first-class personas, but in current MVP flow:
   - autonomous research is optional (`enable_research=false` by default), so no standalone research stage is always executed;
   - compliance checks are included in evaluation outputs rather than a separate mandatory stage.
 - Source of truth for runtime mapping: `app/agents/registry.py`.
