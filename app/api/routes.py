@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
 import mimetypes
 import asyncio
-import io
 import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -60,6 +60,14 @@ from app.schemas.api import (
     VariantReviewRequest,
     VariantSelectRequest,
     VariantsResponse,
+    CreativePresetCreate,
+    CreativePresetListResponse,
+    CreativePresetUpdate,
+    CreativePresetView,
+    ProductConfigHint,
+    RunTemplateCreate,
+    RunTemplateUpdate,
+    RunTemplateView,
 )
 from app.schemas.contracts import ComplianceLevel, ConversionForecast, ScoreCard
 from app.services.agent_api_configs import (
@@ -71,13 +79,27 @@ from app.services.agent_api_configs import (
 )
 from app.services.feedback import import_feedback_rows, project_leaderboard
 from app.services.intake_assets import process_uploaded_payloads
-from app.services.marketplace_qa import is_marketplace_main_image
 from app.services.personas import get_persona, list_persona_catalog, persona_info, update_persona
-from app.services.creative_specs import list_creative_presets
+from app.services.creative_specs import (
+    create_creative_preset,
+    delete_creative_preset,
+    get_creative_preset,
+    list_system_presets,
+    list_user_presets,
+    update_creative_preset,
+)
 from app.services.capability_preflight import preflight_run_capabilities
+from app.services.templates import (
+    create_run_template,
+    delete_run_template,
+    get_run_template,
+    list_run_templates,
+    update_run_template,
+)
 from app.services.runs import (
     approve_stage,
     create_run,
+    get_last_product_config,
     get_run,
     latest_scorecard,
     reject_stage,
@@ -414,763 +436,9 @@ def get_queue_health() -> QueueHealthResponse:
     return QueueHealthResponse(**worker.get_health())
 
 
-def _dashboard_html() -> str:
+def _dashboard_shared_js() -> str:
+    """Shared JavaScript for dashboard pages: run list, run detail, polling, data sources."""
     return """
-    <html>
-      <head>
-        <title>Crispy Dashboard</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <style>
-          :root {
-            --bg: #f4f7f2;
-            --bg-alt: #e9f1f7;
-            --card: rgba(255, 255, 255, 0.9);
-            --text: #173027;
-            --muted: #5d6f66;
-            --line: #d9e4dc;
-            --accent: #1f7a62;
-            --accent-dark: #145746;
-            --soft: #edf5f0;
-            --danger: #be3b3b;
-            --radius: 16px;
-            --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-          }
-          * { box-sizing: border-box; }
-          body {
-            margin: 0;
-            color: var(--text);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-            background:
-              radial-gradient(circle at 10% -20%, #d9ede6 0%, transparent 40%),
-              radial-gradient(circle at 90% -20%, #d8e9f6 0%, transparent 42%),
-              linear-gradient(180deg, var(--bg-alt), var(--bg) 30%);
-          }
-          .app-shell { width: min(1460px, calc(100% - 24px)); margin: 22px auto 36px auto; }
-          .hero {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-end;
-            gap: 12px;
-            margin-bottom: 14px;
-          }
-          h1, h2, h3 { margin: 0; line-height: 1.25; }
-          h1 { font-size: 28px; letter-spacing: -0.02em; }
-          h2 { font-size: 20px; margin-bottom: 10px; }
-          h3 { font-size: 15px; margin-bottom: 8px; }
-          .subtitle { color: var(--muted); margin-top: 6px; font-size: 14px; }
-          .topbar { margin-bottom: 14px; }
-          .top-actions { display:flex; gap:10px; flex-wrap: wrap; align-items: center; }
-          .top-divider { border-top: 1px solid #d8e4dc; margin: 12px 0; }
-          .data-source-block { width: min(620px, 100%); }
-          .links { display:flex; gap:10px; flex-wrap: wrap; }
-          a { color: var(--accent-dark); text-decoration: none; }
-          a:hover { text-decoration: underline; }
-          .nav-link {
-            border: 1px solid var(--line);
-            background: #fff;
-            padding: 8px 12px;
-            border-radius: 999px;
-            font-size: 13px;
-            font-weight: 600;
-          }
-          .card {
-            border: 1px solid var(--line);
-            border-radius: var(--radius);
-            padding: 16px;
-            background: var(--card);
-            box-shadow: 0 8px 24px rgba(30, 62, 50, 0.07);
-            backdrop-filter: blur(4px);
-          }
-          .grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-          .top-grid { align-items: stretch; }
-          .top-grid > .card { height: 100%; }
-          .runs-panel { display: flex; flex-direction: column; min-height: 0; }
-          .runs-panel .table-wrap { flex: 1; min-height: 0; overflow: auto; }
-          .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-          .table-wrap { overflow: auto; border-radius: 12px; border: 1px solid var(--line); }
-          table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 620px; }
-          th, td { border-bottom: 1px solid #e8eee8; padding: 9px 10px; text-align: left; vertical-align: top; }
-          thead th { background: #f8fbf8; font-weight: 700; color: #295345; }
-          tr.selected { background: #eef8f2; }
-          tr:hover { background: #f8fcfa; }
-          textarea, input, select {
-            width: 100%;
-            padding: 9px 10px;
-            border-radius: 10px;
-            border: 1px solid #c8d8ce;
-            margin: 4px 0 10px 0;
-            background: #fff;
-            color: var(--text);
-            font-size: 14px;
-          }
-          textarea:focus, input:focus, select:focus {
-            outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 3px rgba(31, 122, 98, 0.16);
-          }
-          button {
-            padding: 8px 12px;
-            border-radius: 10px;
-            border: 1px solid #c0d0c6;
-            background: #f4faf5;
-            color: #20473a;
-            font-weight: 600;
-            cursor: pointer;
-          }
-          button:hover { background: #eaf6ee; }
-          button.primary {
-            background: linear-gradient(135deg, var(--accent), #2d9d79);
-            border-color: #1b735b;
-            color: #fff;
-          }
-          button.primary:hover { filter: brightness(0.96); }
-          .action-row { margin-bottom: 10px; display:flex; gap:8px; flex-wrap: wrap; }
-          .runs-actions {
-            margin-top: 10px;
-            display:flex;
-            justify-content:center;
-            gap:8px;
-            flex-wrap: wrap;
-          }
-          .runs-actions button {
-            min-width: 148px;
-            padding: 10px 16px;
-            font-size: 14px;
-            font-weight: 700;
-          }
-          .hint {
-            padding: 8px 10px;
-            border: 1px solid #d8e8df;
-            border-radius: 10px;
-            background: var(--soft);
-            margin-bottom: 8px;
-          }
-          .muted { color: var(--muted); font-size: 12px; }
-          .mono { font-family: var(--mono); }
-          .pill {
-            display:inline-block;
-            padding:2px 8px;
-            border-radius:20px;
-            font-size:12px;
-            border:1px solid #c9ddd1;
-            background: #f7fcf8;
-            margin-right:6px;
-            margin-bottom:4px;
-          }
-          .deliverables { display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:10px; margin-top:10px; }
-          .deliverable-card {
-            border:1px solid #deebe2;
-            border-radius:12px;
-            padding:11px;
-            background:#fdfefe;
-            min-height: 190px;
-          }
-          .stage-title { font-weight: 700; margin-bottom: 4px; color: #1f463a; }
-          .timeline {
-            margin-top: 12px;
-            max-height: 560px;
-            overflow-y: auto;
-            border:1px solid #dfeadf;
-            border-radius:12px;
-            padding:10px;
-            background:#fcfffd;
-          }
-          .stage-card {
-            border-left: 3px solid #8dbda8;
-            padding: 8px 10px;
-            margin-bottom: 10px;
-            background:#f7fcf8;
-            border-radius: 8px;
-          }
-          .img-preview {
-            width: 100%;
-            border-radius: 10px;
-            border: 1px solid #dce7e1;
-            object-fit: contain;
-            max-height: 520px;
-            background:#f2f5fa;
-          }
-          .media-preview {
-            width: 100%;
-            border-radius: 10px;
-            border: 1px solid #dce7e1;
-            background:#f2f5fa;
-            display:block;
-          }
-          .media-preview.image {
-            object-fit: contain;
-            max-height: 520px;
-          }
-          .media-preview.video {
-            aspect-ratio: 9 / 16;
-            max-height: 520px;
-            object-fit: contain;
-            background:#050807;
-          }
-          .variant-board {
-            display:grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap:10px;
-            margin-top:10px;
-          }
-          .variant-scoreboard {
-            display: flex;
-            gap: 10px;
-            overflow-x: auto;
-            padding: 8px 2px 12px 2px;
-            scroll-behavior: smooth;
-            scroll-snap-type: x proximity;
-          }
-          .variant-score-card {
-            flex: 0 0 188px;
-            border: 1px solid #dce7e1;
-            border-radius: 14px;
-            padding: 12px;
-            background: #fdfefe;
-            cursor: pointer;
-            scroll-snap-align: start;
-            transition: border-color 150ms ease, box-shadow 150ms ease, transform 120ms ease;
-            position: relative;
-          }
-          .variant-score-card:hover {
-            border-color: #b3cfbf;
-            box-shadow: 0 4px 14px rgba(28, 68, 52, 0.1);
-            transform: translateY(-2px);
-          }
-          .variant-score-card.selected {
-            border-color: var(--accent);
-            box-shadow: 0 0 0 3px rgba(31, 122, 98, 0.18);
-            background: #f6fdf9;
-          }
-          .variant-score-card .rank-badge {
-            position: absolute;
-            top: -8px;
-            left: -6px;
-            width: 28px;
-            height: 28px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #2d9d79, #1f7a62);
-            color: #fff;
-            font-size: 13px;
-            font-weight: 800;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 2px 8px rgba(31, 122, 98, 0.28);
-          }
-          .variant-score-card .score-number {
-            font-size: 36px;
-            font-weight: 800;
-            line-height: 1;
-            margin: 6px 0 2px 0;
-          }
-          .variant-score-card .score-number.high { color: #1f7a62; }
-          .variant-score-card .score-number.mid { color: #b8860b; }
-          .variant-score-card .score-number.low { color: #b5453a; }
-          .variant-score-card .thumb {
-            width: 100%;
-            height: 140px;
-            object-fit: cover;
-            border-radius: 8px;
-            border: 1px solid #e8eee8;
-            background: #f3f5f8;
-            margin: 6px 0;
-          }
-          .variant-score-card .quick-actions {
-            display: flex;
-            gap: 5px;
-            margin-top: 6px;
-          }
-          .variant-score-card .quick-actions button {
-            flex: 1;
-            padding: 5px 6px;
-            font-size: 11px;
-            border-radius: 8px;
-          }
-          .variant-detail-panel {
-            border: 2px solid var(--accent);
-            border-radius: 16px;
-            padding: 20px;
-            margin-top: 14px;
-            background: #fafdfb;
-            display: none;
-            animation: detailSlideIn 200ms ease;
-          }
-          .variant-detail-panel.open { display: block; }
-          @keyframes detailSlideIn {
-            from { opacity: 0; transform: translateY(-6px); }
-            to { opacity: 1; transform: translateY(0); }
-          }
-          .variant-detail-panel .detail-image {
-            max-width: 100%;
-            max-height: 540px;
-            border-radius: 12px;
-            border: 1px solid #dce7e1;
-            object-fit: contain;
-            background: #f3f5f8;
-            display: block;
-          }
-          .variant-detail-grid {
-            display: grid;
-            grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
-            gap: 16px;
-            align-items: start;
-          }
-          .variant-score-breakdown {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 6px;
-            margin-top: 10px;
-          }
-          .variant-score-breakdown .score-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 6px 10px;
-            border-radius: 8px;
-            background: #f4f8f5;
-            font-size: 13px;
-          }
-          .variant-score-breakdown .score-item .bar {
-            flex: 1;
-            height: 5px;
-            border-radius: 3px;
-            margin: 0 8px;
-            background: #dce7e1;
-          }
-          .variant-score-breakdown .score-item .bar-fill {
-            height: 100%;
-            border-radius: 3px;
-            background: var(--accent);
-          }
-          .variant-detail-actions {
-            display: flex;
-            gap: 8px;
-            margin-top: 14px;
-            flex-wrap: wrap;
-          }
-          .variant-detail-actions button {
-            padding: 10px 14px;
-            font-size: 13px;
-            font-weight: 700;
-          }
-          .variant-board-header {
-            margin-top:14px;
-            display:flex;
-            align-items:center;
-            justify-content:space-between;
-            gap:10px;
-            flex-wrap:wrap;
-          }
-          .variant-board-header h3 { margin: 0; }
-          .variant-toggle-btn {
-            padding: 7px 10px;
-            font-size: 12px;
-            border-radius: 999px;
-          }
-          .variant-board-body {
-            overflow: hidden;
-            max-height: 8000px;
-            opacity: 1;
-            transform: translateY(0);
-            transition: max-height 220ms ease, opacity 180ms ease, transform 180ms ease;
-          }
-          .variant-board-body.is-collapsed {
-            max-height: 0;
-            opacity: 0;
-            transform: translateY(-4px);
-          }
-          .variant-card {
-            border:1px solid #deebe2;
-            border-radius:12px;
-            padding:11px;
-            background:#fdfefe;
-          }
-          .variant-head {
-            display:flex;
-            justify-content:space-between;
-            gap:8px;
-            align-items:flex-start;
-            margin-bottom:8px;
-          }
-          .variant-actions {
-            display:flex;
-            gap:6px;
-            flex-wrap:wrap;
-            margin-top:8px;
-          }
-          .variant-actions button {
-            padding: 6px 8px;
-            font-size: 12px;
-          }
-          .variant-filter-bar {
-            display:grid;
-            grid-template-columns: repeat(5, minmax(0, 1fr));
-            gap:8px;
-            align-items:end;
-            margin:10px 0;
-            padding:10px;
-            border:1px solid #dce7e1;
-            border-radius:10px;
-            background:#f8fbf9;
-          }
-          .quality-row {
-            display:flex;
-            gap:6px;
-            flex-wrap:wrap;
-            margin-top:8px;
-          }
-          .quality-chip {
-            display:inline-flex;
-            align-items:center;
-            border-radius:999px;
-            padding:3px 7px;
-            border:1px solid #d5e4dc;
-            background:#f4f8f5;
-            color:#315a4b;
-            font-size:11px;
-            font-weight:600;
-          }
-          .quality-chip.good { background:#eaf7ee; border-color:#bde0c8; color:#21633d; }
-          .quality-chip.warn { background:#fff7e6; border-color:#ead19d; color:#735418; }
-          .quality-chip.bad { background:#fdeeee; border-color:#efc2c2; color:#8a2d2d; }
-          .status-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 3px 10px;
-            border-radius: 999px;
-            font-size: 12px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-          }
-          .status-pill:before {
-            content: "";
-            width: 7px;
-            height: 7px;
-            border-radius: 50%;
-            flex-shrink: 0;
-          }
-          .status-pill.running {
-            background: #e3f0fe;
-            border: 1px solid #b3d6fc;
-            color: #1e5a9e;
-          }
-          .status-pill.running:before {
-            background: #2b7bd6;
-            animation: statusPulse 1.4s ease-in-out infinite;
-          }
-          .status-pill.waiting_review {
-            background: #fff7e6;
-            border: 1px solid #f0cf85;
-            color: #8a5d1c;
-          }
-          .status-pill.waiting_review:before {
-            background: #e8a82a;
-            animation: statusPulse 2.2s ease-in-out infinite;
-          }
-          .status-pill.completed {
-            background: #eaf7ee;
-            border: 1px solid #bde0c8;
-            color: #21633d;
-          }
-          .status-pill.completed:before { background: #2d9d5f; }
-          .status-pill.failed {
-            background: #fdeeee;
-            border: 1px solid #efc2c2;
-            color: #8a2d2d;
-          }
-          .status-pill.failed:before { background: #d94a4a; }
-          .status-pill.rejected {
-            background: #fdf0ee;
-            border: 1px solid #efc8c2;
-            color: #8a2d2d;
-          }
-          .status-pill.rejected:before { background: #d96a4a; }
-          .status-pill.draft {
-            background: #f2f4f5;
-            border: 1px solid #d0d5d8;
-            color: #5c6b73;
-          }
-          .status-pill.draft:before { background: #8e9ba6; }
-          @keyframes statusPulse {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.4; transform: scale(0.7); }
-          }
-          .refresh-indicator {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            font-size: 11px;
-            color: var(--muted);
-            margin-left: 8px;
-          }
-          .refresh-indicator .dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background: var(--accent);
-            opacity: 0.5;
-            transition: opacity 300ms ease;
-          }
-          .refresh-indicator.active .dot { opacity: 1; animation: statusPulse 1.6s ease-in-out infinite; }
-          .agent-trace {
-            display:flex;
-            gap:10px;
-            overflow-x:auto;
-            overflow-y:hidden;
-            padding: 4px 0 6px 0;
-            scroll-behavior: smooth;
-            scroll-snap-type: x proximity;
-          }
-          .trace-event {
-            border:1px solid #dce7e1;
-            border-radius:10px;
-            padding:9px;
-            background:#fbfdfb;
-            min-width: 220px;
-            max-width: 280px;
-            flex: 0 0 clamp(220px, 22vw, 280px);
-            scroll-snap-align: end;
-            transition: min-width 200ms ease, max-width 200ms ease, flex-basis 200ms ease, box-shadow 180ms ease;
-          }
-          .trace-event.trace-event-expanded {
-            min-width: 420px;
-            max-width: 560px;
-            flex-basis: clamp(420px, 48vw, 560px);
-            box-shadow: 0 8px 18px rgba(28, 68, 52, 0.12);
-          }
-          .trace-head {
-            display:flex;
-            justify-content:space-between;
-            gap:8px;
-            flex-wrap:wrap;
-            margin-bottom:4px;
-          }
-          .trace-index {
-            min-width: 20px;
-            height: 20px;
-            border-radius: 999px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            padding: 0 6px;
-            font-size: 11px;
-            font-weight: 700;
-            color: #1c4a3b;
-            border: 1px solid #b8d8c8;
-            background: linear-gradient(135deg, #eef9f2, #def1e6);
-            margin-right: 6px;
-            flex-shrink: 0;
-          }
-          .trace-head-main {
-            display: flex;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 4px;
-          }
-          .trace-message {
-            font-size:13px;
-            color:#2a3f36;
-            line-height: 1.4;
-            display: -webkit-box;
-            -webkit-line-clamp: 4;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-          }
-          .trace-payload {
-            margin-top: 6px;
-          }
-          .trace-payload[open] {
-            animation: tracePayloadOpen 180ms ease;
-          }
-          @keyframes tracePayloadOpen {
-            from { opacity: 0; transform: translateY(-2px); }
-            to { opacity: 1; transform: translateY(0); }
-          }
-          pre {
-            white-space: pre-wrap;
-            word-break: break-word;
-            border: 1px solid #d8e4db;
-            border-radius: 10px;
-            padding: 10px;
-            background: #f7faf8;
-            font-size: 12px;
-          }
-          summary { cursor: pointer; font-weight: 600; color: #2a5b4a; }
-          .status-msg { margin-top: 6px; font-size: 13px; font-weight: 600; }
-          .status-ok { color: #1f7a62; }
-          .status-error { color: var(--danger); }
-          .run-detail-empty { padding: 12px; background: #f5faf6; border-radius: 10px; border: 1px dashed #c8dacd; }
-          @media (max-width: 1140px) {
-            .grid { grid-template-columns: 1fr; }
-          }
-          @media (max-width: 860px) {
-            .app-shell { width: calc(100% - 12px); margin-top: 10px; }
-            .row { grid-template-columns: 1fr; gap: 0; }
-            .deliverables { grid-template-columns: 1fr; }
-            .variant-board { grid-template-columns: 1fr; }
-            .variant-score-card { flex: 0 0 156px; }
-            .variant-score-card .thumb { height: 110px; }
-            .variant-detail-grid { grid-template-columns: 1fr; }
-            .variant-filter-bar { grid-template-columns: 1fr; }
-            .hero { flex-direction: column; align-items: flex-start; }
-            .trace-event {
-              min-width: min(86vw, 320px);
-              flex-basis: min(86vw, 320px);
-            }
-            .trace-event.trace-event-expanded {
-              min-width: min(94vw, 640px);
-              flex-basis: min(94vw, 640px);
-            }
-            .runs-actions { justify-content: stretch; }
-            .runs-actions button {
-              flex: 1 1 48%;
-              min-width: 136px;
-              padding: 11px 16px;
-              font-size: 14px;
-            }
-          }
-        </style>
-      </head>
-      <body>
-        <main class="app-shell">
-          <header class="hero">
-            <div>
-              <h1>Crispy Dashboard</h1>
-              <div class="subtitle">Production MVP control plane for multimodal creative generation and review.</div>
-              <div class="subtitle">Flow: input product/task -> GM intake summary -> planning with product+industry memory -> divergence -> copy/image & video generation -> evaluation winner -> feedback updates GM memory.</div>
-            </div>
-          </header>
-          <div class="topbar">
-            <div class="top-actions links">
-              <a class="nav-link" href="/dashboard/agent-apis">Agent API Configs</a>
-              <a class="nav-link" href="/dashboard/assets">Asset Library</a>
-              <a class="nav-link" href="/dashboard/personas">Personas</a>
-            </div>
-            <div class="top-divider"></div>
-            <div class="data-source-block">
-              <label>Data Source</label>
-              <select id="data-source-select" onchange="switchDataSource()"></select>
-              <div id="data-source-path" class="muted mono"></div>
-            </div>
-          </div>
-          <div class="grid top-grid">
-            <section class="card runs-panel">
-              <h2>Runs <span class="refresh-indicator active" id="runs-refresh-indicator" title="Auto-refreshing every 5s"><span class="dot"></span> live</span></h2>
-              <div class="action-row">
-                <button onclick="refreshRuns()">Refresh</button>
-              </div>
-              <div class="table-wrap">
-                <table>
-                  <thead><tr><th>Run ID</th><th>Status</th><th>Stage</th><th>Mode</th><th>Updated</th></tr></thead>
-                  <tbody id="runs-body"></tbody>
-                </table>
-              </div>
-              <div class="runs-actions">
-                <button onclick="advanceRun()">Advance</button>
-                <button onclick="rejectRun()">Reject</button>
-              </div>
-            </section>
-            <section class="card">
-              <h2>Create Run</h2>
-              <form onsubmit="createRun(event)">
-                <div class="row">
-                  <div><label>Workspace</label><input id="workspace_name" value="workspace_demo" /></div>
-                  <div><label>Project</label><input id="project_name" value="project_demo" /></div>
-                </div>
-                <div class="row">
-                  <div><label>Product</label><input id="product_name" value="dog leash" /></div>
-                  <div><label>Campaign</label><input id="campaign_name" value="meta_dog_leash_1" /></div>
-                </div>
-                <div class="row">
-                  <div><label>Product Code (required)</label><input id="product_code" value="DL-001" required /></div>
-                  <div><label>Industry Code (required)</label><input id="industry_code" value="pet_accessories" required /></div>
-                </div>
-                <div class="row">
-                  <div><label>Pipeline Mode</label><select id="pipeline_mode"></select></div>
-                  <div><label>Approval Mode</label><select id="approval_mode"><option value="manual" selected>Manual</option><option value="semi_auto">Semi-Auto</option><option value="full_auto">Full-Auto</option></select></div>
-                </div>
-                <div class="row">
-                  <div><label>Variant Count</label><input id="variant_count" type="number" min="1" max="16" value="8" /></div>
-                  <div></div>
-                </div>
-                <div id="mode-summary" class="hint muted">Loading pipeline modes...</div>
-                <div class="row">
-                  <div>
-                    <label>Creative Preset (required)</label>
-                    <select id="creative_preset" onchange="refreshPresetHint()">
-                      <option value="meta_square_5s" selected>Meta Square 5s</option>
-                      <option value="meta_vertical_5s">Meta Vertical 5s</option>
-                      <option value="youtube_landscape_6s">YouTube Landscape 6s</option>
-                      <option value="marketplace_main_image_pack">Marketplace Main Image Pack</option>
-                      <option value="custom">Custom</option>
-                    </select>
-                  </div>
-                  <div><label>Channel</label><input id="channel" value="meta" /></div>
-                </div>
-                <div id="preset-hint" class="hint muted"></div>
-                <div id="marketplace-options" class="hint" style="display:none;">
-                  <label>Marketplace Targets</label>
-                  <div class="action-row" style="gap:10px;flex-wrap:wrap;">
-                    <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input id="platform_tiktok_shop" type="checkbox" checked /> TikTok Shop</label>
-                    <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input id="platform_shopify" type="checkbox" checked /> Shopify</label>
-                    <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input id="platform_alibaba" type="checkbox" checked /> Alibaba</label>
-                    <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input id="platform_amazon" type="checkbox" checked /> Amazon</label>
-                  </div>
-                  <div class="muted">Upload phone product photos or short videos. This workflow keeps square white-background product images and exports pass/approved candidates.</div>
-                </div>
-                <div class="row">
-                  <div><label>Image Size (custom only)</label><input id="custom_image_size" placeholder="1:1" /></div>
-                  <div><label>Video Size (custom only)</label><input id="custom_video_size" placeholder="9:16" /></div>
-                </div>
-                <div class="row">
-                  <div><label>Resolution (custom only)</label><input id="custom_resolution" placeholder="720p" /></div>
-                  <div><label>Video Duration Seconds (custom only)</label><input id="custom_duration" type="number" min="1" max="60" placeholder="5" /></div>
-                </div>
-                <div class="row">
-                  <div><label>Objective</label><input id="objective" value="conversions" /></div>
-                  <div></div>
-                </div>
-                <label>Product Description</label>
-                <textarea id="product_description" rows="3" placeholder="What is the product, who uses it, and why it matters."></textarea>
-                <div class="row">
-                  <div><label>Target Audience</label><input id="target_audience" value="dog owners in US cities" /></div>
-                  <div><label>Price Range</label><input id="price_range" placeholder="$19.99 - $29.99" /></div>
-                </div>
-                <label>Key Value Props (comma separated)</label>
-                <input id="key_value_props" value="hands-free walking,anti-pull comfort,durable nylon" />
-                <div class="row">
-                  <div><label>Primary CTA</label><input id="primary_cta" value="Shop Now" /></div>
-                  <div><label>Campaign Goal</label><input id="campaign_goal" value="purchase" /></div>
-                </div>
-                <label>Category Tags (comma separated)</label>
-                <input id="category_tags" value="pet_accessories,dog" />
-                <label>Reference URLs (one per line)</label>
-                <textarea id="url_references" rows="2" placeholder="https://example.com/product"></textarea>
-                <label>Research Source</label>
-                <select id="research_mode" onchange="refreshResearchHint()">
-                  <option value="manual_validated" selected>Use my validated research (Default)</option>
-                  <option value="autonomous_web">Run autonomous web research</option>
-                </select>
-                <div id="research-hint" class="hint muted"></div>
-                <label>Validated Research Notes (optional)</label>
-                <textarea id="manual_research_brief" rows="3" placeholder="Paste your manually validated market notes, claims boundaries, and competitor findings."></textarea>
-                <label>Advanced Business Context JSON (optional)</label>
-                <textarea id="business_context_extra" rows="3" placeholder='{"landing_page_angle":"premium utility","seasonality":"spring"}'></textarea>
-                <label>Upload Product Inputs (max 10 files, 50MB each, 200MB total)</label>
-                <input id="input_files" type="file" multiple accept=".csv,.xlsx,.png,.jpg,.jpeg,.webp,.mp4,.mov,.m4v" />
-                <button class="primary" type="submit">Create Run</button>
-              </form>
-              <div id="create-msg" class="status-msg muted"></div>
-            </section>
-          </div>
-          <section class="card" style="margin-top:18px;">
-            <h2>Run Detail</h2>
-            <div id="run-detail" class="run-detail-empty">Select a run.</div>
-          </section>
-        </main>
         <script>
           let currentRunId = null;
           let pipelineModes = [];
@@ -1191,63 +459,6 @@ def _dashboard_html() -> str:
           function parseJsonObject(raw){
             if (!raw || !raw.trim()) return {};
             try { return JSON.parse(raw); } catch (_e) { throw new Error("Advanced Business Context JSON is invalid."); }
-          }
-          function buildCreativeSpecs() {
-            const preset = document.getElementById("creative_preset").value;
-            if (preset === "meta_square_5s") return { image_size: "1:1", video_size: "1:1", resolution: "720p", video_duration_seconds: 5 };
-            if (preset === "meta_vertical_5s") return { image_size: "9:16", video_size: "9:16", resolution: "720p", video_duration_seconds: 5 };
-            if (preset === "youtube_landscape_6s") return { image_size: "16:9", video_size: "16:9", resolution: "1080p", video_duration_seconds: 6 };
-            if (preset === "marketplace_main_image_pack") {
-              const targets = [
-                ["platform_tiktok_shop", "tiktok_shop"],
-                ["platform_shopify", "shopify"],
-                ["platform_alibaba", "alibaba"],
-                ["platform_amazon", "amazon"],
-              ].filter(([id]) => document.getElementById(id)?.checked).map(([_id, value]) => value);
-              return {
-                image_size: "1:1",
-                video_size: "1:1",
-                resolution: "2000px",
-                video_duration_seconds: 5,
-                asset_goal: "marketplace_main_image",
-                platform_targets: targets.length ? targets : ["tiktok_shop", "shopify", "alibaba", "amazon"],
-                export_size_px: 2000,
-                background_policy: "pure_white",
-              };
-            }
-            const imageSize = document.getElementById("custom_image_size").value.trim();
-            const videoSize = document.getElementById("custom_video_size").value.trim();
-            const resolution = document.getElementById("custom_resolution").value.trim();
-            const durationRaw = document.getElementById("custom_duration").value.trim();
-            const duration = Number(durationRaw);
-            if (!imageSize || !videoSize || !resolution || !durationRaw || Number.isNaN(duration) || duration <= 0) {
-              throw new Error("Custom preset requires image_size, video_size, resolution, and positive video duration.");
-            }
-            return { image_size: imageSize, video_size: videoSize, resolution, video_duration_seconds: Math.round(duration) };
-          }
-          function refreshPresetHint() {
-            const preset = document.getElementById("creative_preset").value;
-            const hint = document.getElementById("preset-hint");
-            const isCustom = preset === "custom";
-            const isMarketplace = preset === "marketplace_main_image_pack";
-            ["custom_image_size", "custom_video_size", "custom_resolution", "custom_duration"].forEach((id) => {
-              const el = document.getElementById(id);
-              el.disabled = !isCustom;
-            });
-            document.getElementById("marketplace-options").style.display = isMarketplace ? "block" : "none";
-            if (preset === "meta_square_5s") hint.textContent = "Preset: image/video 1:1, 720p, duration 5s.";
-            else if (preset === "meta_vertical_5s") hint.textContent = "Preset: image/video 9:16, 720p, duration 5s.";
-            else if (preset === "youtube_landscape_6s") hint.textContent = "Preset: image/video 16:9, 1080p, duration 6s.";
-            else if (isMarketplace) {
-              hint.textContent = "Preset: square 2000px marketplace main-image pack with pure-white background QA.";
-              document.getElementById("pipeline_mode").value = "copy_image_only";
-              document.getElementById("approval_mode").value = "semi_auto";
-              document.getElementById("variant_count").value = "4";
-              document.getElementById("channel").value = "marketplace";
-              document.getElementById("objective").value = "product_listing_quality";
-              refreshModeHint();
-            }
-            else hint.textContent = "Custom preset: fill image/video size, resolution, and duration manually.";
           }
           function mediaUrl(path){ return `/media?path=${encodeURIComponent(path || "")}`; }
           function mediaViewUrl(path){ return `/media/view?path=${encodeURIComponent(path || "")}`; }
@@ -1336,12 +547,6 @@ def _dashboard_html() -> str:
             });
           }
 
-          function readinessChips(readiness) {
-            const entries = Object.entries(readiness || {});
-            if (!entries.length) return "";
-            return `<div class="quality-row" style="margin-top:8px;">${entries.map(([platform, status]) => `<span class="quality-chip ${qualityChipClass(status)}">${esc(platform)}: ${esc(status)}</span>`).join("")}</div>`;
-          }
-
           function renderDeliverables(deliverables) {
             const winner = deliverables?.winner_variant_id || "-";
             const copy = deliverables?.deliverables?.copy_variant || null;
@@ -1349,10 +554,9 @@ def _dashboard_html() -> str:
             const video = deliverables?.deliverables?.video_asset || null;
             const image = images.length ? images[0] : null;
             const scoreAction = deliverables?.score?.forecast?.recommended_action || deliverables?.score?.recommended_action || "-";
-            const zipLink = currentRunId ? `<a href="/runs/${currentRunId}/deliverables.zip" target="_blank" class="muted">Download ZIP</a>` : "";
             return `
               <h3>Deliverables Overview</h3>
-              <div class="muted">winner: ${esc(winner)} | recommendation: ${esc(scoreAction)}${zipLink ? " | " + zipLink : ""}</div>
+              <div class="muted">winner: ${esc(winner)} | recommendation: ${esc(scoreAction)}</div>
               <div class="deliverables">
                 <article class="deliverable-card">
                   <div class="stage-title">Copy</div>
@@ -1368,8 +572,6 @@ def _dashboard_html() -> str:
                     <a href="${mediaViewUrl(image.uri)}" target="_blank">
                       <img class="media-preview image" src="${mediaUrl(image.uri)}" alt="generated image" />
                     </a>
-                    ${readinessChips(image.platform_readiness || image.marketplace_qa?.platform_readiness)}
-                    ${image.image_role ? `<div><span class="pill">${esc(image.image_role)}</span><span class="pill">export_ready: ${esc(image.export_ready ? "yes" : "no")}</span></div>` : ""}
                     <div class="muted">${esc(image.aspect_ratio || "1:1")} | ${esc(image.uri)}</div>
                   ` : '<div class="muted">No image winner yet.</div>'}
                 </article>
@@ -1403,9 +605,9 @@ def _dashboard_html() -> str:
           }
 
           function qualityChipClass(flag){
-            if (["pass", "ready_to_review", "ready", "winner", "shortlisted", "export_ready"].includes(flag)) return "good";
-            if (["warn", "processing_assets", "missing_assets", "compliance_attention", "low_score", "pending_review", "visual_qa_attention", "visual_qa_needs_frame_review", "visual_qa_remote_unchecked", "visual_qa_aspect_mismatch", "visual_qa_low_information", "visual_qa_video_header_unverified", "marketplace_attention", "marketplace_background_not_pure_white", "marketplace_export_size_under_target", "marketplace_identity_uncertain", "product_fill_low"].includes(flag)) return "warn";
-            if (["fail", "failed_assets", "media_issue", "operator_quality_issue", "needs_regeneration", "rejected", "visual_qa_failed", "visual_qa_placeholder", "visual_qa_empty_video", "visual_qa_decode_error", "visual_qa_empty_file", "visual_qa_missing_file", "marketplace_failed", "marketplace_placeholder", "marketplace_background_not_white", "marketplace_missing_reference", "marketplace_resolution_low"].includes(flag)) return "bad";
+            if (["ready_to_review", "winner", "shortlisted"].includes(flag)) return "good";
+            if (["processing_assets", "missing_assets", "compliance_attention", "low_score", "pending_review", "visual_qa_attention", "visual_qa_needs_frame_review", "visual_qa_remote_unchecked", "visual_qa_aspect_mismatch", "visual_qa_low_information", "visual_qa_video_header_unverified"].includes(flag)) return "warn";
+            if (["failed_assets", "media_issue", "operator_quality_issue", "needs_regeneration", "rejected", "visual_qa_failed", "visual_qa_placeholder", "visual_qa_empty_video", "visual_qa_decode_error", "visual_qa_empty_file", "visual_qa_missing_file"].includes(flag)) return "bad";
             return "";
           }
 
@@ -1528,24 +730,6 @@ def _dashboard_html() -> str:
             }
           }
 
-          function renderMarketplaceQa(asset) {
-            const payload = asset?.payload || {};
-            const qa = payload.marketplace_qa || {};
-            if (!qa.status && !payload.image_role) return "";
-            const checks = (qa.checks || []).slice(0, 8).map((check) => `
-              <div class="muted">[${esc(check.status || "-")}] ${esc(check.key || "-")}: ${esc(check.message || "-")}</div>
-            `).join("");
-            const refs = (payload.reference_manifest || []).slice(0, 4).map((item) => esc(item.source || item.uri || "-")).join(", ");
-            return `
-              <div style="margin-top:10px;">
-                <div><b>Marketplace QA</b> <span class="quality-chip ${qualityChipClass(qa.status)}">${esc(qa.status || "-")}</span> <span class="pill">${esc(payload.image_role || "main_image")}</span></div>
-                ${readinessChips(payload.platform_readiness || qa.platform_readiness)}
-                <div class="muted">score: ${esc(qa.score ?? "-")} | export_ready: ${esc(payload.export_ready ? "yes" : "no")} | refs: ${refs || "-"}</div>
-                ${checks}
-              </div>
-            `;
-          }
-
           function renderVariantDetail(runId, variantId) {
             const allItems = window.__lastVariants?.items || [];
             const item = allItems.find((v) => v.variant_id === variantId);
@@ -1574,7 +758,6 @@ def _dashboard_html() -> str:
               <div class="variant-detail-grid" style="margin-top:14px;">
                 <div>
                   ${image ? `<a href="${mediaViewUrl(image.uri)}" target="_blank"><img class="detail-image" src="${mediaUrl(image.uri)}" alt="variant image" /></a>` : '<div class="muted">No image asset.</div>'}
-                  ${renderMarketplaceQa(image)}
                   ${video?.video_uri ? `
                     <div style="margin-top:10px;">
                       <video controls playsinline class="media-preview video" src="${mediaUrl(video.video_uri)}" style="max-height:400px;"></video>
@@ -1625,14 +808,11 @@ def _dashboard_html() -> str:
                     <option value="ready_to_review" ${variantBoardFilters.quality === "ready_to_review" ? "selected" : ""}>Ready</option>
                     <option value="winner" ${variantBoardFilters.quality === "winner" ? "selected" : ""}>Winner</option>
                     <option value="shortlisted" ${variantBoardFilters.quality === "shortlisted" ? "selected" : ""}>Shortlisted</option>
-                    <option value="export_ready" ${variantBoardFilters.quality === "export_ready" ? "selected" : ""}>Export Ready</option>
                     <option value="pending_review" ${variantBoardFilters.quality === "pending_review" ? "selected" : ""}>Pending</option>
                     <option value="processing_assets" ${variantBoardFilters.quality === "processing_assets" ? "selected" : ""}>Processing</option>
                     <option value="failed_assets" ${variantBoardFilters.quality === "failed_assets" ? "selected" : ""}>Failed</option>
                     <option value="visual_qa_attention" ${variantBoardFilters.quality === "visual_qa_attention" ? "selected" : ""}>QA Attn</option>
                     <option value="visual_qa_failed" ${variantBoardFilters.quality === "visual_qa_failed" ? "selected" : ""}>QA Fail</option>
-                    <option value="marketplace_attention" ${variantBoardFilters.quality === "marketplace_attention" ? "selected" : ""}>Marketplace QA</option>
-                    <option value="marketplace_failed" ${variantBoardFilters.quality === "marketplace_failed" ? "selected" : ""}>Marketplace Fail</option>
                     <option value="needs_regeneration" ${variantBoardFilters.quality === "needs_regeneration" ? "selected" : ""}>Regen</option>
                     <option value="rejected" ${variantBoardFilters.quality === "rejected" ? "selected" : ""}>Rejected</option>
                   </select>
@@ -1968,7 +1148,6 @@ def _dashboard_html() -> str:
               if (m.mode === "copy_image_only") opt.selected = true;
               sel.appendChild(opt);
             });
-            sel.onchange = refreshModeHint;
             refreshModeHint();
           }
 
@@ -2008,79 +1187,6 @@ def _dashboard_html() -> str:
               const scope = [row.stage_name, row.agent_name].filter(Boolean).join(" / ");
               return `[${row.severity.toUpperCase()}] ${scope ? scope + ": " : ""}${row.message}`;
             }).join("\\n");
-          }
-
-          async function createRun(event){
-            event.preventDefault();
-            const msg = document.getElementById("create-msg");
-            try {
-              const files = document.getElementById("input_files").files;
-              const mediaFlags = detectInputKinds(files);
-              const creativeSpecs = buildCreativeSpecs();
-              const preflight = await api("/runs/preflight", {
-                method: "POST",
-                body: JSON.stringify({
-                  pipeline_mode: document.getElementById("pipeline_mode").value,
-                  has_image_inputs: mediaFlags.hasImageInputs,
-                  has_video_inputs: mediaFlags.hasVideoInputs,
-                  creative_specs: creativeSpecs,
-                }),
-              });
-              const detailText = preflightDetail(preflight);
-              if (preflight.severity === "error") {
-                window.alert(`Run preflight failed.\\n\\n${detailText}`);
-                throw new Error(detailText);
-              }
-              if (preflight.severity === "warn") {
-                const proceed = window.confirm(`Run preflight has warnings. Continue?\\n\\n${detailText}`);
-                if (!proceed) {
-                  msg.className = "status-msg muted";
-                  msg.textContent = "Create canceled after preflight warning.";
-                  return;
-                }
-              }
-
-              const businessContext = {
-                product_description: document.getElementById("product_description").value,
-                target_audience: document.getElementById("target_audience").value,
-                key_value_props: toList(document.getElementById("key_value_props").value),
-                primary_cta: document.getElementById("primary_cta").value,
-                campaign_objective: document.getElementById("campaign_goal").value,
-                price_range: document.getElementById("price_range").value,
-                ...parseJsonObject(document.getElementById("business_context_extra").value),
-              };
-              const urlReferences = document.getElementById("url_references").value.split("\\n").map(s => s.trim()).filter(Boolean);
-              const payload = new FormData();
-              payload.append("workspace_name", document.getElementById("workspace_name").value);
-              payload.append("project_name", document.getElementById("project_name").value);
-              payload.append("product_name", document.getElementById("product_name").value);
-              payload.append("product_code", document.getElementById("product_code").value);
-              payload.append("industry_code", document.getElementById("industry_code").value);
-              payload.append("campaign_name", document.getElementById("campaign_name").value);
-              payload.append("channel", document.getElementById("channel").value);
-              payload.append("objective", document.getElementById("objective").value);
-              payload.append("creative_preset", document.getElementById("creative_preset").value);
-              payload.append("creative_specs", JSON.stringify(creativeSpecs));
-              payload.append("pipeline_mode", document.getElementById("pipeline_mode").value);
-              payload.append("approval_mode", document.getElementById("approval_mode").value);
-              payload.append("variant_count", String(Number(document.getElementById("variant_count").value || 8)));
-              payload.append("category_tags", JSON.stringify(toList(document.getElementById("category_tags").value)));
-              payload.append("url_references", JSON.stringify(urlReferences));
-              payload.append("enable_research", document.getElementById("research_mode").value === "autonomous_web" ? "true" : "false");
-              payload.append("manual_research_brief", document.getElementById("manual_research_brief").value);
-              payload.append("business_context", JSON.stringify(businessContext));
-              for (let i = 0; i < files.length; i++) payload.append("files", files[i]);
-              const resp = await fetch("/runs/rich", { method: "POST", body: payload });
-              if (!resp.ok) throw new Error(await resp.text());
-              const run = await resp.json();
-              msg.className = "status-msg status-ok";
-              msg.textContent = `Created run ${run.id} (${run.pipeline_mode})`;
-              await refreshRuns();
-              await selectRun(run.id);
-            } catch (err) {
-              msg.className = "status-msg status-error";
-              msg.textContent = `Create failed: ${err.message || err}`;
-            }
           }
 
           async function advanceRun(){
@@ -2139,7 +1245,6 @@ def _dashboard_html() -> str:
           });
 
           refreshResearchHint();
-          refreshPresetHint();
           loadVariantBoardCollapsedState();
           loadPipelineModes();
           loadDataSources().then(async () => {
@@ -2154,9 +1259,14 @@ def _dashboard_html() -> str:
           });
           startRunListPolling();
         </script>
-      </body>
-    </html>
     """
+
+def _dashboard_html() -> str:
+    """Render the dashboard page using the new app/dashboard/ module."""
+    from app.dashboard.create_run import CREATE_RUN_HTML, CREATE_RUN_JS
+    from app.dashboard.layout import render_dashboard
+    return render_dashboard(CREATE_RUN_HTML, CREATE_RUN_JS + _dashboard_shared_js())
+
 
 
 def _personas_dashboard_html() -> str:
@@ -3366,9 +2476,137 @@ def list_pipeline_modes() -> list[PipelineModeView]:
     return _pipeline_mode_views()
 
 
-@router.get("/creative-presets", response_model=dict[str, dict])
-def get_creative_presets() -> dict[str, dict]:
-    return list_creative_presets()
+# ── Creative Preset CRUD ──────────────────────────────────────────
+
+@router.get("/creative-presets", response_model=CreativePresetListResponse)
+def list_presets(
+    workspace_name: str = Query(default="workspace_demo"),
+    db: Session = Depends(get_db),
+) -> dict:
+    system = []
+    for key, spec in list_system_presets().items():
+        system.append({"key": key, **spec})
+    user = list_user_presets(db, workspace_name)
+    return {"system": system, "user": [CreativePresetView.model_validate(p) for p in user]}
+
+
+@router.post("/creative-presets", response_model=CreativePresetView, status_code=201)
+def create_preset(payload: CreativePresetCreate, db: Session = Depends(get_db)) -> CreativePresetView:
+    try:
+        preset = create_creative_preset(
+            db,
+            workspace_name=payload.workspace_name,
+            name=payload.name,
+            image_size=payload.image_size,
+            video_size=payload.video_size,
+            resolution=payload.resolution,
+            video_duration_seconds=payload.video_duration_seconds,
+            platform_targets=payload.platform_targets,
+        )
+        db.commit()
+        db.refresh(preset)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return CreativePresetView.model_validate(preset)
+
+
+@router.put("/creative-presets/{preset_id}", response_model=CreativePresetView)
+def update_preset(preset_id: str, payload: CreativePresetUpdate, db: Session = Depends(get_db)) -> CreativePresetView:
+    try:
+        preset = update_creative_preset(
+            db,
+            preset_id,
+            name=payload.name,
+            image_size=payload.image_size,
+            video_size=payload.video_size,
+            resolution=payload.resolution,
+            video_duration_seconds=payload.video_duration_seconds,
+            platform_targets=payload.platform_targets,
+        )
+        db.commit()
+        db.refresh(preset)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return CreativePresetView.model_validate(preset)
+
+
+@router.delete("/creative-presets/{preset_id}", status_code=204)
+def delete_preset(preset_id: str, db: Session = Depends(get_db)):
+    try:
+        delete_creative_preset(db, preset_id)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ── Run Template CRUD ────────────────────────────────────────────
+
+@router.get("/run-templates", response_model=list[RunTemplateView])
+def list_templates(
+    workspace_name: str = Query(default="workspace_demo"),
+    db: Session = Depends(get_db),
+) -> list[RunTemplateView]:
+    templates = list_run_templates(db, workspace_name)
+    return [RunTemplateView.model_validate(t) for t in templates]
+
+
+@router.post("/run-templates", response_model=RunTemplateView, status_code=201)
+def create_template(payload: RunTemplateCreate, db: Session = Depends(get_db)) -> RunTemplateView:
+    try:
+        template = create_run_template(
+            db,
+            workspace_name=payload.workspace_name,
+            name=payload.name,
+            config_json=payload.config_json,
+            is_shared=payload.is_shared,
+        )
+        db.commit()
+        db.refresh(template)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return RunTemplateView.model_validate(template)
+
+
+@router.put("/run-templates/{template_id}", response_model=RunTemplateView)
+def update_template(template_id: str, payload: RunTemplateUpdate, db: Session = Depends(get_db)) -> RunTemplateView:
+    try:
+        template = update_run_template(
+            db,
+            template_id,
+            name=payload.name,
+            config_json=payload.config_json,
+            is_shared=payload.is_shared,
+        )
+        db.commit()
+        db.refresh(template)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return RunTemplateView.model_validate(template)
+
+
+@router.delete("/run-templates/{template_id}", status_code=204)
+def delete_template(template_id: str, db: Session = Depends(get_db)):
+    try:
+        delete_run_template(db, template_id)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ── Product Config Hint ──────────────────────────────────────────
+
+@router.get("/product-config-hint", response_model=ProductConfigHint | None)
+def product_config_hint(
+    product_code: str = Query(...),
+    db: Session = Depends(get_db),
+) -> dict | None:
+    return get_last_product_config(db, product_code)
 
 
 @router.post("/runs/preflight", response_model=RunPreflightResponse)
@@ -3378,7 +2616,6 @@ def preflight_pipeline_run(payload: RunPreflightRequest, db: Session = Depends(g
         pipeline_mode=payload.pipeline_mode,
         has_image_inputs=payload.has_image_inputs,
         has_video_inputs=payload.has_video_inputs,
-        creative_specs=payload.creative_specs,
     )
     return RunPreflightResponse(**result)
 
@@ -3448,7 +2685,7 @@ def create_pipeline_run(payload: RunCreateRequest, db: Session = Depends(get_db)
     return _serialize_run(db, run)
 
 
-@router.post("/runs/rich", response_model=RunView)
+@router.post("/runs/rich")
 async def create_pipeline_run_rich(
     workspace_name: str = Form(...),
     project_name: str = Form(...),
@@ -3474,7 +2711,7 @@ async def create_pipeline_run_rich(
     url_references: str = Form("[]"),
     files: list[UploadFile] = File(default=[]),
     db: Session = Depends(get_db),
-) -> RunView:
+):
     if pipeline_mode not in PIPELINE_STAGE_PLANS:
         raise HTTPException(status_code=400, detail=f"unsupported pipeline_mode: {pipeline_mode}")
     payload = RunCreateRequest(
@@ -3501,6 +2738,21 @@ async def create_pipeline_run_rich(
         category_tags=_load_json_list(category_tags, "category_tags"),
         context={"url_references": _load_json_list(url_references, "url_references")},
     )
+    # -- inline preflight --
+    has_image = any(
+        (f.content_type or "").startswith("image/") for f in files
+    )
+    has_video = any(
+        (f.content_type or "").startswith("video/") for f in files
+    )
+    preflight_result = preflight_run_capabilities(
+        db,
+        pipeline_mode=pipeline_mode,
+        has_image_inputs=has_image,
+        has_video_inputs=has_video,
+    )
+    # -- end inline preflight --
+
     try:
         run = create_run(db, payload)
     except ValueError as exc:
@@ -3540,7 +2792,9 @@ async def create_pipeline_run_rich(
         )
     db.commit()
     db.refresh(run)
-    return _serialize_run(db, run)
+    result = _serialize_run(db, run).model_dump()
+    result["_preflight"] = preflight_result
+    return result
 
 
 @router.get("/runs/{run_id}", response_model=RunView)

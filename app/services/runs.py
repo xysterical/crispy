@@ -2237,3 +2237,24 @@ def review_variant(
     )
     db.flush()
     return variant
+
+
+def get_last_product_config(db: Session, product_code: str) -> dict | None:
+    """Return the creative config from the most recent run for a given product_code."""
+    last_run = db.scalar(
+        select(PipelineRun)
+        .where(PipelineRun.product_code == product_code)
+        .order_by(desc(PipelineRun.created_at))
+    )
+    if not last_run:
+        return None
+    return {
+        "product_code": product_code,
+        "pipeline_mode": last_run.pipeline_mode,
+        "approval_mode": last_run.approval_mode,
+        "creative_preset": last_run.creative_preset,
+        "creative_specs": last_run.creative_specs,
+        "channel": last_run.campaign.channel if last_run.campaign else "meta",
+        "objective": last_run.campaign.objective if last_run.campaign else "conversions",
+        "last_run_at": last_run.created_at,
+    }

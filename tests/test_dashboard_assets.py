@@ -116,3 +116,18 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "bindTracePayloadToggles" in html
     assert "variant-board-toggle" in html
     assert "variant_board_collapsed" in html
+
+
+def test_dashboard_create_run_has_accordion_sections(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "Product & Assets" in html
+    assert "Platform & Creative" in html
+    assert "Campaign & Targeting" in html
+    assert "Research & Context" in html
+    assert "quick-fill-preset" in html
+    assert "template-selector" in html
+    assert "mode-guided" in html
+    assert "mode-expert" in html
+    assert "file-drop-zone" in html

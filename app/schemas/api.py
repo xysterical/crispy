@@ -428,3 +428,78 @@ class QueueHealthResponse(BaseModel):
     total_failed: int
     video_poller_last_run: str | None = None
     video_poller_ok: bool = True
+
+
+class CreativePresetCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    workspace_name: str = Field(default="workspace_demo")
+    image_size: str | None = None
+    video_size: str | None = None
+    resolution: str | None = None
+    video_duration_seconds: int | None = None
+    platform_targets: dict = Field(default_factory=dict)
+
+
+class CreativePresetUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    image_size: str | None = None
+    video_size: str | None = None
+    resolution: str | None = None
+    video_duration_seconds: int | None = None
+    platform_targets: dict | None = None
+
+
+class CreativePresetView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workspace_name: str
+    name: str
+    image_size: str | None = None
+    video_size: str | None = None
+    resolution: str | None = None
+    video_duration_seconds: int | None = None
+    platform_targets: dict
+    created_at: datetime
+    updated_at: datetime
+
+
+class CreativePresetListResponse(BaseModel):
+    system: list[dict]  # system presets as plain dicts
+    user: list[CreativePresetView]
+
+
+class RunTemplateCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    workspace_name: str = Field(default="workspace_demo")
+    config_json: dict = Field(default_factory=dict)
+    is_shared: bool = False
+
+
+class RunTemplateUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    config_json: dict | None = None
+    is_shared: bool | None = None
+
+
+class RunTemplateView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workspace_name: str
+    name: str
+    config_json: dict
+    is_shared: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProductConfigHint(BaseModel):
+    product_code: str
+    pipeline_mode: str | None = None
+    approval_mode: str | None = None
+    creative_preset: str | None = None
+    creative_specs: dict | None = None
+    channel: str | None = None
+    objective: str | None = None
+    last_run_at: datetime | None = None
