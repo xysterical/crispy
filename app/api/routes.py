@@ -1124,6 +1124,8 @@ def _dashboard_shared_js() -> str:
           async function selectRun(runId){
             currentRunId = runId;
             expandedVariantId = null;
+            document.getElementById('fab-advance').classList.add('visible');
+            document.getElementById('fab-reject').classList.add('visible');
             const [run, deliverables, variants] = await Promise.all([
               api(`/runs/${runId}`),
               api(`/runs/${runId}/deliverables`).catch(() => ({ run_id: runId, deliverables: {}, score: {} })),

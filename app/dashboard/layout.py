@@ -99,8 +99,23 @@ button.primary:hover { background: var(--accent-dark); }
   font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center;
   z-index: 10;
 }
-.fab {
+.fab-group {
   position: fixed; bottom: 28px; right: 28px; z-index: 998;
+  display: flex; align-items: center; gap: 10px;
+}
+.fab-pill {
+  padding: 10px 18px; border-radius: 28px; border: none;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  display: flex; align-items: center; gap: 6px;
+  box-shadow: 0 3px 12px rgba(0,0,0,0.12);
+  transition: transform 0.15s, box-shadow 0.15s, opacity 0.2s;
+  opacity: 0; transform: scale(0.9); pointer-events: none;
+}
+.fab-pill.visible { opacity: 1; transform: scale(1); pointer-events: auto; }
+.fab-pill:hover { transform: translateY(-1px); box-shadow: 0 5px 16px rgba(0,0,0,0.18); }
+.fab-pill.advance { background: var(--accent); color: #fff; }
+.fab-pill.reject { background: #fff; color: var(--danger); border: 1.5px solid var(--danger); }
+.fab-create {
   width: 56px; height: 56px; border-radius: 50%;
   background: var(--accent); color: #fff; border: none;
   font-size: 24px; cursor: pointer;
@@ -108,7 +123,7 @@ button.primary:hover { background: var(--accent-dark); }
   display: flex; align-items: center; justify-content: center;
   transition: transform 0.15s, box-shadow 0.15s;
 }
-.fab:hover { transform: scale(1.06); box-shadow: 0 6px 20px rgba(31, 122, 98, 0.45); }
+.fab-create:hover { transform: scale(1.06); box-shadow: 0 6px 20px rgba(31, 122, 98, 0.45); }
 
 /* accordion / wizard specific */
 .accordion { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
@@ -711,10 +726,6 @@ def render_shell_top() -> str:
                 <tbody id="runs-body"></tbody>
               </table>
             </div>
-            <div class="runs-actions">
-              <button onclick="advanceRun()">Advance</button>
-              <button onclick="rejectRun()">Reject</button>
-            </div>
           </section>
         </div>
         <div style="flex:1 1 480px;min-width:0;">"""
@@ -734,7 +745,11 @@ def render_dashboard(create_run_html: str, shared_js: str) -> str:
 {create_run_html}
     <div id="create-msg" class="status-msg muted"></div>
   </div>
-  <button class="fab" id="fab-create" onclick="openDrawer()" title="Create Run">+</button>"""
+  <div class="fab-group">
+    <button class="fab-pill advance" id="fab-advance" onclick="advanceRun()" title="Advance to next stage">&#9654; Advance</button>
+    <button class="fab-pill reject" id="fab-reject" onclick="rejectRun()" title="Reject current stage">&#10005; Reject</button>
+    <button class="fab-create" id="fab-create" onclick="openDrawer()" title="Create Run">+</button>
+  </div>"""
 
     run_detail_html = """          <section class="card">
             <h2>Run Detail</h2>
