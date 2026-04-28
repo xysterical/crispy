@@ -80,6 +80,36 @@ button.primary:hover { background: var(--accent-dark); }
 .action-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .run-detail-empty { color: var(--muted); text-align: center; padding: 32px 0; }
 
+/* drawer */
+.drawer-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.25); z-index: 999;
+  opacity: 0; pointer-events: none; transition: opacity 0.25s;
+}
+.drawer-overlay.open { opacity: 1; pointer-events: auto; }
+.drawer-panel {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 92vw);
+  background: var(--bg); z-index: 1000; overflow-y: auto;
+  transform: translateX(100%); transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: -4px 0 28px rgba(0,0,0,0.12); padding: 20px 24px 40px;
+}
+.drawer-panel.open { transform: translateX(0); }
+.drawer-close {
+  position: sticky; top: 12px; float: right; width: 36px; height: 36px;
+  border-radius: 50%; border: 1px solid var(--line); background: #fff;
+  font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  z-index: 10;
+}
+.fab {
+  position: fixed; bottom: 28px; right: 28px; z-index: 998;
+  width: 56px; height: 56px; border-radius: 50%;
+  background: var(--accent); color: #fff; border: none;
+  font-size: 24px; cursor: pointer;
+  box-shadow: 0 4px 16px rgba(31, 122, 98, 0.35);
+  display: flex; align-items: center; justify-content: center;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.fab:hover { transform: scale(1.06); box-shadow: 0 6px 20px rgba(31, 122, 98, 0.45); }
+
 /* accordion / wizard specific */
 .accordion { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .accordion-header {
@@ -669,13 +699,8 @@ def render_shell_top() -> str:
         </div>
       </div>
       <div style="display:flex;gap:20px;flex-wrap:wrap;">
-        <div style="flex:1 1 420px;min-width:0;">"""
-
-
-def render_shell_bottom() -> str:
-    return """        </div>
-        <div style="flex:0 0 480px;min-width:0;">
-          <section class="card runs-panel" style="margin-bottom:18px;">
+        <div style="flex:0 0 400px;min-width:0;">
+          <section class="card runs-panel">
             <h2>Runs <span class="refresh-indicator active" id="runs-refresh-indicator" title="Auto-refreshing every 5s"><span class="dot"></span> live</span></h2>
             <div class="action-row">
               <button onclick="refreshRuns()">Refresh</button>
@@ -691,21 +716,37 @@ def render_shell_bottom() -> str:
               <button onclick="rejectRun()">Reject</button>
             </div>
           </section>
-          <section class="card" style="margin-top:18px;">
-            <h2>Run Detail</h2>
-            <div id="run-detail" class="run-detail-empty">Select a run.</div>
-          </section>
         </div>
+        <div style="flex:1 1 480px;min-width:0;">"""
+
+
+def render_shell_bottom() -> str:
+    return """        </div>
       </div>
     </div>"""
 
 
 def render_dashboard(create_run_html: str, shared_js: str) -> str:
+    drawer = f"""  <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+  <div class="drawer-panel" id="drawer-panel">
+    <button class="drawer-close" onclick="closeDrawer()" title="Close">&times;</button>
+    <h2 style="margin-bottom:14px;">Create Run</h2>
+{create_run_html}
+    <div id="create-msg" class="status-msg muted"></div>
+  </div>
+  <button class="fab" id="fab-create" onclick="openDrawer()" title="Create Run">+</button>"""
+
+    run_detail_html = """          <section class="card">
+            <h2>Run Detail</h2>
+            <div id="run-detail" class="run-detail-empty">Select a run.</div>
+          </section>"""
+
     return (
         render_head()
         + render_shell_top()
-        + create_run_html
+        + run_detail_html
         + render_shell_bottom()
+        + drawer
         + shared_js
         + "\n  </body>\n</html>"
     )

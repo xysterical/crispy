@@ -180,12 +180,23 @@ CREATE_RUN_HTML = """
 
               </div>
             </div>
-            <div id="create-msg" class="status-msg muted"></div>
 """
 
 # JavaScript for the Create Run form
 CREATE_RUN_JS = """
 <script>
+  // -- Drawer --
+  function openDrawer() {
+    document.getElementById('drawer-overlay').classList.add('open');
+    document.getElementById('drawer-panel').classList.add('open');
+    document.getElementById('fab-create').style.display = 'none';
+  }
+  function closeDrawer() {
+    document.getElementById('drawer-overlay').classList.remove('open');
+    document.getElementById('drawer-panel').classList.remove('open');
+    document.getElementById('fab-create').style.display = 'flex';
+  }
+
   // -- State --
   let currentMode = localStorage.getItem('crispy_create_mode') || 'guided';
   let currentStep = 1;
@@ -578,6 +589,7 @@ CREATE_RUN_JS = """
           msg.innerHTML = 'Run created! (id: <b>' + result.data.id + '</b>)';
           msg.style.color = 'var(--accent)';
         }
+        setTimeout(closeDrawer, 1400);
         if (typeof refreshRuns === 'function') refreshRuns();
       })
       .catch(function(err) {

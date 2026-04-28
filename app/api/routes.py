@@ -79,6 +79,7 @@ from app.services.agent_api_configs import (
 )
 from app.services.feedback import import_feedback_rows, project_leaderboard
 from app.services.intake_assets import process_uploaded_payloads
+from app.services.marketplace_qa import is_marketplace_main_image
 from app.services.personas import get_persona, list_persona_catalog, persona_info, update_persona
 from app.services.creative_specs import (
     create_creative_preset,
