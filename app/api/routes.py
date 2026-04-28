@@ -610,6 +610,147 @@ def _dashboard_html() -> str:
             gap:10px;
             margin-top:10px;
           }
+          .variant-scoreboard {
+            display: flex;
+            gap: 10px;
+            overflow-x: auto;
+            padding: 8px 2px 12px 2px;
+            scroll-behavior: smooth;
+            scroll-snap-type: x proximity;
+          }
+          .variant-score-card {
+            flex: 0 0 188px;
+            border: 1px solid #dce7e1;
+            border-radius: 14px;
+            padding: 12px;
+            background: #fdfefe;
+            cursor: pointer;
+            scroll-snap-align: start;
+            transition: border-color 150ms ease, box-shadow 150ms ease, transform 120ms ease;
+            position: relative;
+          }
+          .variant-score-card:hover {
+            border-color: #b3cfbf;
+            box-shadow: 0 4px 14px rgba(28, 68, 52, 0.1);
+            transform: translateY(-2px);
+          }
+          .variant-score-card.selected {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(31, 122, 98, 0.18);
+            background: #f6fdf9;
+          }
+          .variant-score-card .rank-badge {
+            position: absolute;
+            top: -8px;
+            left: -6px;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #2d9d79, #1f7a62);
+            color: #fff;
+            font-size: 13px;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(31, 122, 98, 0.28);
+          }
+          .variant-score-card .score-number {
+            font-size: 36px;
+            font-weight: 800;
+            line-height: 1;
+            margin: 6px 0 2px 0;
+          }
+          .variant-score-card .score-number.high { color: #1f7a62; }
+          .variant-score-card .score-number.mid { color: #b8860b; }
+          .variant-score-card .score-number.low { color: #b5453a; }
+          .variant-score-card .thumb {
+            width: 100%;
+            height: 140px;
+            object-fit: cover;
+            border-radius: 8px;
+            border: 1px solid #e8eee8;
+            background: #f3f5f8;
+            margin: 6px 0;
+          }
+          .variant-score-card .quick-actions {
+            display: flex;
+            gap: 5px;
+            margin-top: 6px;
+          }
+          .variant-score-card .quick-actions button {
+            flex: 1;
+            padding: 5px 6px;
+            font-size: 11px;
+            border-radius: 8px;
+          }
+          .variant-detail-panel {
+            border: 2px solid var(--accent);
+            border-radius: 16px;
+            padding: 20px;
+            margin-top: 14px;
+            background: #fafdfb;
+            display: none;
+            animation: detailSlideIn 200ms ease;
+          }
+          .variant-detail-panel.open { display: block; }
+          @keyframes detailSlideIn {
+            from { opacity: 0; transform: translateY(-6px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+          .variant-detail-panel .detail-image {
+            max-width: 100%;
+            max-height: 540px;
+            border-radius: 12px;
+            border: 1px solid #dce7e1;
+            object-fit: contain;
+            background: #f3f5f8;
+            display: block;
+          }
+          .variant-detail-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+            gap: 16px;
+            align-items: start;
+          }
+          .variant-score-breakdown {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+            margin-top: 10px;
+          }
+          .variant-score-breakdown .score-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 10px;
+            border-radius: 8px;
+            background: #f4f8f5;
+            font-size: 13px;
+          }
+          .variant-score-breakdown .score-item .bar {
+            flex: 1;
+            height: 5px;
+            border-radius: 3px;
+            margin: 0 8px;
+            background: #dce7e1;
+          }
+          .variant-score-breakdown .score-item .bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            background: var(--accent);
+          }
+          .variant-detail-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 14px;
+            flex-wrap: wrap;
+          }
+          .variant-detail-actions button {
+            padding: 10px 14px;
+            font-size: 13px;
+            font-weight: 700;
+          }
           .variant-board-header {
             margin-top:14px;
             display:flex;
@@ -867,6 +1008,9 @@ def _dashboard_html() -> str:
             .row { grid-template-columns: 1fr; gap: 0; }
             .deliverables { grid-template-columns: 1fr; }
             .variant-board { grid-template-columns: 1fr; }
+            .variant-score-card { flex: 0 0 156px; }
+            .variant-score-card .thumb { height: 110px; }
+            .variant-detail-grid { grid-template-columns: 1fr; }
             .variant-filter-bar { grid-template-columns: 1fr; }
             .hero { flex-direction: column; align-items: flex-start; }
             .trace-event {
@@ -1026,6 +1170,7 @@ def _dashboard_html() -> str:
           let runListInterval = null;
           const variantBoardCollapsedStorageKey = "variant_board_collapsed";
           let variantBoardCollapsed = false;
+          let expandedVariantId = null;
 
           function esc(v){ return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
           function toList(raw){ return String(raw || "").split(",").map(s => s.trim()).filter(Boolean); }
@@ -1281,7 +1426,120 @@ def _dashboard_html() -> str:
             });
           }
 
+          function scoreColorClass(score) {
+            if (score == null) return "";
+            if (score >= 80) return "high";
+            if (score >= 60) return "mid";
+            return "low";
+          }
+
+          function renderScoreBreakdown(item) {
+            const evaluation = latestScore(item, "evaluation");
+            const subs = evaluation?.sub_scores || {};
+            const bars = [
+              { key: "hook_strength", label: "Hook" },
+              { key: "clarity", label: "Clarity" },
+              { key: "generation_fit", label: "Gen Fit" },
+              { key: "visual_qa", label: "Vis QA" },
+              { key: "compliance", label: "Compliance" },
+              { key: "ai_naturalness", label: "AI Natural" },
+            ];
+            return bars.map((b) => {
+              const val = subs[b.key] != null ? Number(subs[b.key]) : 0;
+              return `
+                <div class="score-item">
+                  <span>${b.label}</span>
+                  <div class="bar"><div class="bar-fill" style="width:${Math.min(100, val)}%"></div></div>
+                  <span style="min-width:36px;text-align:right;font-weight:700;">${Math.round(val)}</span>
+                </div>
+              `;
+            }).join("");
+          }
+
+          function toggleVariantDetail(runId, variantId) {
+            const panel = document.getElementById("variant-detail-panel");
+            const cards = document.querySelectorAll(".variant-score-card");
+            if (expandedVariantId === variantId) {
+              expandedVariantId = null;
+              if (panel) panel.classList.remove("open");
+              cards.forEach((c) => c.classList.remove("selected"));
+              return;
+            }
+            expandedVariantId = variantId;
+            cards.forEach((c) => {
+              c.classList.toggle("selected", c.dataset.variantId === variantId);
+            });
+            if (panel) {
+              panel.innerHTML = renderVariantDetail(runId, variantId);
+              panel.classList.add("open");
+              panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }
+          }
+
+          function renderVariantDetail(runId, variantId) {
+            const allItems = window.__lastVariants?.items || [];
+            const item = allItems.find((v) => v.variant_id === variantId);
+            if (!item) return '<div class="muted">Variant not found.</div>';
+            const copy = assetsByType(item, "copy")[0]?.payload || null;
+            const images = assetsByType(item, "image");
+            const image = images[0] || null;
+            const script = assetsByType(item, "video_script")[0]?.payload || null;
+            const videoAsset = assetsByType(item, "video")[0] || null;
+            const video = videoAsset?.payload || null;
+            const evaluation = latestScore(item, "evaluation");
+            const score = evaluation?.total_score;
+            const qSummary = qualitySummary(item);
+            const flags = qualityFlags(item);
+            const qualityChips = flags.map((flag) => `<span class="quality-chip ${qualityChipClass(flag)}">${esc(flag)}</span>`).join("");
+            return `
+              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                <div>
+                  <b style="font-size:18px;">${esc(item.variant_id)}</b>
+                  <span class="muted"> · ${esc(item.angle || "-")}</span>
+                  ${item.is_winner ? '<span class="quality-chip good">Winner</span>' : ''}
+                  ${item.shortlisted ? '<span class="quality-chip good">Shortlisted</span>' : ''}
+                </div>
+                <button onclick="expandedVariantId=null;document.getElementById('variant-detail-panel').classList.remove('open');document.querySelectorAll('.variant-score-card').forEach(c=>c.classList.remove('selected'));" style="font-size:12px;">Close</button>
+              </div>
+              <div class="variant-detail-grid" style="margin-top:14px;">
+                <div>
+                  ${image ? `<a href="${mediaViewUrl(image.uri)}" target="_blank"><img class="detail-image" src="${mediaUrl(image.uri)}" alt="variant image" /></a>` : '<div class="muted">No image asset.</div>'}
+                  ${video?.video_uri ? `
+                    <div style="margin-top:10px;">
+                      <video controls playsinline class="media-preview video" src="${mediaUrl(video.video_uri)}" style="max-height:400px;"></video>
+                    </div>
+                  ` : ''}
+                </div>
+                <div>
+                  <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:10px;">
+                    <span class="score-number ${scoreColorClass(score)}" style="font-size:42px;">${score != null ? Math.round(score) : "-"}</span>
+                    <span class="muted">/ 100</span>
+                    <span class="quality-chip ${qualityChipClass(qSummary.quality_status)}">${esc(qSummary.quality_status || "-")}</span>
+                  </div>
+                  <div class="variant-score-breakdown">${renderScoreBreakdown(item)}</div>
+                  <div class="quality-row" style="margin-top:10px;">${qualityChips}</div>
+                </div>
+              </div>
+              <div style="margin-top:14px;">
+                <div><b>Hook</b>: ${esc(item.hook || "-")}</div>
+                <div style="margin-top:6px;"><b>Message</b>: ${esc(item.message || "-")}</div>
+                <div style="margin-top:6px;"><b>Headline</b>: ${esc(copy?.headline || "-")}</div>
+                <div class="muted">${esc(copy?.primary_text || "-")}</div>
+                ${script ? `<div style="margin-top:8px;"><b>Script</b>: ${esc(script.hook || "-")}<div class="muted">${esc(script.script || "-")}</div></div>` : ''}
+                <div class="muted" style="margin-top:6px;">CTA: ${esc(copy?.call_to_action || "-")} | action: ${esc(evaluation?.recommended_action || "-")}</div>
+              </div>
+              <div class="variant-detail-actions">
+                <button onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/review', {action:'approve_variant', comment:'approved from dashboard'})">Approve</button>
+                <button onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/review', {action:'reject_variant', comment:'rejected from dashboard'})">Reject</button>
+                <button onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/select', {shortlist:true, comment:'shortlisted from dashboard'})">Shortlist</button>
+                <button class="primary" onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/select', {winner:true, comment:'winner chosen from dashboard'})">Set Winner</button>
+                <button onclick="requestVariantRegeneration('${runId}', '${variantId}')">Regenerate</button>
+              </div>
+            `;
+          }
+
           function renderVariantBoard(runId, variants){
+            window.__lastVariants = variants;
             const allItems = variants?.items || [];
             const items = allItems.filter(variantMatchesOperationalFilters);
             const summary = variants?.summary || {};
@@ -1290,57 +1548,51 @@ def _dashboard_html() -> str:
             const filters = `
               <div class="variant-filter-bar">
                 <div>
-                  <label>Quality Filter</label>
+                  <label>Quality</label>
                   <select onchange="updateVariantFilter('quality', this.value)">
-                    <option value="" ${variantBoardFilters.quality === "" ? "selected" : ""}>All variants</option>
-                    <option value="ready_to_review" ${variantBoardFilters.quality === "ready_to_review" ? "selected" : ""}>Ready to review</option>
+                    <option value="" ${variantBoardFilters.quality === "" ? "selected" : ""}>All</option>
+                    <option value="ready_to_review" ${variantBoardFilters.quality === "ready_to_review" ? "selected" : ""}>Ready</option>
                     <option value="winner" ${variantBoardFilters.quality === "winner" ? "selected" : ""}>Winner</option>
                     <option value="shortlisted" ${variantBoardFilters.quality === "shortlisted" ? "selected" : ""}>Shortlisted</option>
-                    <option value="pending_review" ${variantBoardFilters.quality === "pending_review" ? "selected" : ""}>Pending review</option>
-                    <option value="processing_assets" ${variantBoardFilters.quality === "processing_assets" ? "selected" : ""}>Processing assets</option>
-                    <option value="failed_assets" ${variantBoardFilters.quality === "failed_assets" ? "selected" : ""}>Failed assets</option>
-                    <option value="media_issue" ${variantBoardFilters.quality === "media_issue" ? "selected" : ""}>Media issue</option>
-                    <option value="visual_qa_attention" ${variantBoardFilters.quality === "visual_qa_attention" ? "selected" : ""}>Visual QA attention</option>
-                    <option value="visual_qa_failed" ${variantBoardFilters.quality === "visual_qa_failed" ? "selected" : ""}>Visual QA failed</option>
-                    <option value="operator_quality_issue" ${variantBoardFilters.quality === "operator_quality_issue" ? "selected" : ""}>Operator quality issue</option>
-                    <option value="missing_assets" ${variantBoardFilters.quality === "missing_assets" ? "selected" : ""}>Missing assets</option>
-                    <option value="compliance_attention" ${variantBoardFilters.quality === "compliance_attention" ? "selected" : ""}>Compliance attention</option>
-                    <option value="needs_regeneration" ${variantBoardFilters.quality === "needs_regeneration" ? "selected" : ""}>Needs regeneration</option>
+                    <option value="pending_review" ${variantBoardFilters.quality === "pending_review" ? "selected" : ""}>Pending</option>
+                    <option value="processing_assets" ${variantBoardFilters.quality === "processing_assets" ? "selected" : ""}>Processing</option>
+                    <option value="failed_assets" ${variantBoardFilters.quality === "failed_assets" ? "selected" : ""}>Failed</option>
+                    <option value="visual_qa_attention" ${variantBoardFilters.quality === "visual_qa_attention" ? "selected" : ""}>QA Attn</option>
+                    <option value="visual_qa_failed" ${variantBoardFilters.quality === "visual_qa_failed" ? "selected" : ""}>QA Fail</option>
+                    <option value="needs_regeneration" ${variantBoardFilters.quality === "needs_regeneration" ? "selected" : ""}>Regen</option>
                     <option value="rejected" ${variantBoardFilters.quality === "rejected" ? "selected" : ""}>Rejected</option>
                   </select>
                 </div>
                 <div>
-                  <label>Asset Type</label>
+                  <label>Asset</label>
                   <select onchange="updateVariantFilter('assetType', this.value)">
-                    <option value="" ${variantBoardFilters.assetType === "" ? "selected" : ""}>Any asset</option>
+                    <option value="" ${variantBoardFilters.assetType === "" ? "selected" : ""}>Any</option>
                     <option value="copy" ${variantBoardFilters.assetType === "copy" ? "selected" : ""}>Copy</option>
                     <option value="image" ${variantBoardFilters.assetType === "image" ? "selected" : ""}>Image</option>
                     <option value="video_script" ${variantBoardFilters.assetType === "video_script" ? "selected" : ""}>Script</option>
-                    <option value="storyboard_frame" ${variantBoardFilters.assetType === "storyboard_frame" ? "selected" : ""}>Storyboard</option>
                     <option value="video" ${variantBoardFilters.assetType === "video" ? "selected" : ""}>Video</option>
                   </select>
                 </div>
                 <div>
-                  <label>Review Status</label>
+                  <label>Review</label>
                   <select onchange="updateVariantFilter('reviewStatus', this.value)">
-                    <option value="" ${variantBoardFilters.reviewStatus === "" ? "selected" : ""}>Any status</option>
+                    <option value="" ${variantBoardFilters.reviewStatus === "" ? "selected" : ""}>Any</option>
                     <option value="approved" ${variantBoardFilters.reviewStatus === "approved" ? "selected" : ""}>Approved</option>
                     <option value="shortlisted" ${variantBoardFilters.reviewStatus === "shortlisted" ? "selected" : ""}>Shortlisted</option>
                     <option value="winner" ${variantBoardFilters.reviewStatus === "winner" ? "selected" : ""}>Winner</option>
                     <option value="rejected" ${variantBoardFilters.reviewStatus === "rejected" ? "selected" : ""}>Rejected</option>
-                    <option value="request_regeneration" ${variantBoardFilters.reviewStatus === "request_regeneration" ? "selected" : ""}>Regen requested</option>
                   </select>
                 </div>
                 <div>
                   <label>Min Score</label>
-                  <input type="number" min="0" max="100" value="${esc(variantBoardFilters.minScore)}" onchange="updateVariantFilter('minScore', this.value)" placeholder="e.g. 80" />
+                  <input type="number" min="0" max="100" value="${esc(variantBoardFilters.minScore)}" onchange="updateVariantFilter('minScore', this.value)" placeholder="e.g. 80" style="width:72px;" />
                 </div>
                 <div>
                   <label>Search</label>
-                  <input value="${esc(variantBoardFilters.q)}" onchange="updateVariantFilter('q', this.value)" placeholder="angle, hook, message" />
+                  <input value="${esc(variantBoardFilters.q)}" onchange="updateVariantFilter('q', this.value)" placeholder="angle, hook" style="width:110px;" />
                 </div>
                 <div>
-                  <button onclick="resetVariantFilters()">Reset filters</button>
+                  <button onclick="resetVariantFilters()">Reset</button>
                 </div>
               </div>
             `;
@@ -1369,92 +1621,34 @@ def _dashboard_html() -> str:
                 </div>
               `;
             }
-            const cards = items.map((item) => {
-              const copy = assetsByType(item, "copy")[0]?.payload || null;
+            const scoreCards = items.map((item, idx) => {
               const images = assetsByType(item, "image");
               const image = images[0] || null;
-              const script = assetsByType(item, "video_script")[0]?.payload || null;
-              const storyboardCount = assetsByType(item, "storyboard_frame").length;
-              const videoAsset = assetsByType(item, "video")[0] || null;
-              const video = videoAsset?.payload || null;
               const evaluation = latestScore(item, "evaluation");
-              const compliance = latestScore(item, "compliance");
-              const videoStatus = video?.generation_status || videoAsset?.failure_category || "none";
-              const videoTask = video?.external_task_id || "-";
-              const videoProvider = video?.video_provider || videoAsset?.provider_name || "-";
-              const videoModel = video?.video_model || videoAsset?.model_name || "-";
+              const score = evaluation?.total_score;
               const qSummary = qualitySummary(item);
-              const flags = qualityFlags(item);
-              const missingAssets = qSummary.missing_required_assets || [];
-              const mediaIssues = qSummary.media_issues || [];
-              const operatorTags = qSummary.operator_tags || [];
-              const qualityChips = flags.map((flag) => `<span class="quality-chip ${qualityChipClass(flag)}">${esc(flag)}</span>`).join("");
               return `
-                <article class="variant-card">
-                  <div class="variant-head">
-                    <div>
-                      <div class="stage-title">${esc(item.variant_id)} · ${esc(item.angle || "-")}</div>
-                      <div class="muted">${esc(item.hook || "-")}</div>
-                    </div>
-                    <div style="text-align:right;">
-                      <span class="pill">status: ${esc(item.status)}</span>
-                      ${item.is_winner ? '<span class="pill">winner</span>' : ''}
-                      ${item.shortlisted ? '<span class="pill">shortlisted</span>' : ''}
-                    </div>
+                <article class="variant-score-card" data-variant-id="${esc(item.variant_id)}" onclick="toggleVariantDetail('${runId}', '${item.variant_id}')">
+                  <div class="rank-badge">${idx + 1}</div>
+                  <div class="stage-title">${esc(item.variant_id)}</div>
+                  <div class="muted" style="font-size:11px;">${esc(item.angle || "-")}</div>
+                  <div class="score-number ${scoreColorClass(score)}">${score != null ? Math.round(score) : "-"}</div>
+                  ${image ? `<img class="thumb" src="${mediaUrl(image.uri)}" alt="variant thumbnail" />` : '<div class="thumb muted" style="display:flex;align-items:center;justify-content:center;font-size:11px;">No image</div>'}
+                  <div class="quality-row" style="justify-content:center;">
+                    ${item.is_winner ? '<span class="quality-chip good">Winner</span>' : ''}
+                    ${item.shortlisted && !item.is_winner ? '<span class="quality-chip good">Shortlisted</span>' : ''}
+                    <span class="quality-chip ${qualityChipClass(qSummary.quality_status)}">${esc(qSummary.quality_status || "-")}</span>
                   </div>
-                  <div class="quality-row">
-                    <span class="quality-chip ${qualityChipClass(qSummary.quality_status)}">quality: ${esc(qSummary.quality_status || "-")}</span>
-                    ${qualityChips}
-                  </div>
-                  ${(missingAssets.length || mediaIssues.length || operatorTags.length) ? `
-                    <div class="muted" style="margin-top:4px;">
-                      ${missingAssets.length ? `missing: ${esc(missingAssets.join(", "))}` : ""}
-                      ${mediaIssues.length ? ` media issues: ${esc(mediaIssues.map((x) => `${x.asset_type}:${x.issue}`).join(", "))}` : ""}
-                      ${operatorTags.length ? ` operator tags: ${esc(operatorTags.join(", "))}` : ""}
-                    </div>
-                  ` : ""}
-                  <div><b>Message</b>: ${esc(item.message || "-")}</div>
-                  <div class="muted" style="margin-top:4px;">strategy: ${esc(item.strategy_brief?.rationale || "-")}</div>
-                  <div style="margin-top:8px;"><b>Copy</b>: ${esc(copy?.headline || "-")}</div>
-                  <div class="muted">${esc(copy?.primary_text || "-")}</div>
-                  <div style="margin-top:8px;"><b>Image</b></div>
-                  ${image ? `
-                    <a href="${mediaViewUrl(image.uri)}" target="_blank">
-                      <img class="media-preview image" src="${mediaUrl(image.uri)}" alt="variant image" />
-                    </a>
-                  ` : '<div class="muted">No image asset.</div>'}
-                  <div style="margin-top:8px;"><b>Script</b>: ${esc(script?.hook || "-")}</div>
-                  <div class="muted">${esc(script?.script || "-")}</div>
-                  <div class="muted" style="margin-top:4px;">storyboard frames: ${esc(storyboardCount)} | video: ${video ? esc(video.video_uri || "-") : "none"}</div>
-                  ${video ? `
-                    <div class="muted" style="margin-top:4px;">
-                      video status: ${esc(videoStatus)} | task: ${esc(videoTask)} | provider/model: ${esc(videoProvider)} / ${esc(videoModel)}
-                      ${videoAsset?.failure_category ? ` | failure: ${esc(videoAsset.failure_category)}` : ''}
-                      ${videoAsset?.error_message ? ` | error: ${esc(videoAsset.error_message)}` : ''}
-                    </div>
-                  ` : ''}
-                  ${video?.video_uri ? `
-                    <div style="margin-top:8px;">
-                      <a href="${mediaViewUrl(video.video_uri)}" target="_blank" class="muted">Open video</a>
-                      <video controls playsinline class="media-preview video" src="${mediaUrl(video.video_uri)}"></video>
-                    </div>
-                  ` : ''}
-                  <div style="margin-top:8px;">
-                    <span class="pill">score: ${esc(evaluation?.total_score ?? "-")}</span>
-                    <span class="pill">action: ${esc(evaluation?.recommended_action || "-")}</span>
-                    <span class="pill">compliance: ${esc(compliance?.compliance_level || evaluation?.compliance_level || "-")}</span>
-                  </div>
-                  <div class="muted" style="margin-top:4px;">${esc((compliance?.reasons || evaluation?.reasons || []).join(" | ") || "-")}</div>
-                  <div class="variant-actions">
-                    <button onclick="variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/review', {action:'approve_variant', comment:'approved from dashboard'})">Approve</button>
-                    <button onclick="variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/review', {action:'reject_variant', comment:'rejected from dashboard'})">Reject</button>
-                    <button onclick="variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/select', {shortlist:true, comment:'shortlisted from dashboard'})">Shortlist</button>
-                    <button class="primary" onclick="variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/select', {winner:true, comment:'winner chosen from dashboard'})">Set Winner</button>
-                    <button onclick="requestVariantRegeneration('${runId}', '${item.variant_id}')">Regenerate</button>
+                  <div class="quick-actions">
+                    <button class="primary" onclick="event.stopPropagation();variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/select', {winner:true, comment:'winner chosen from dashboard'})">Set Winner</button>
+                    <button onclick="event.stopPropagation();variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/select', {shortlist:true, comment:'shortlisted from dashboard'})">Shortlist</button>
                   </div>
                 </article>
               `;
             }).join("");
+            const detailPanel = expandedVariantId
+              ? `<div id="variant-detail-panel" class="variant-detail-panel open">${renderVariantDetail(runId, expandedVariantId)}</div>`
+              : `<div id="variant-detail-panel" class="variant-detail-panel"></div>`;
             return `
               <div class="variant-board-header">
                 <h3>Variant Board</h3>
@@ -1463,7 +1657,8 @@ def _dashboard_html() -> str:
               <div id="variant-board-body" class="variant-board-body ${variantBoardCollapsed ? "is-collapsed" : ""}">
                 ${header}
                 ${filters}
-                <div class="variant-board">${cards}</div>
+                <div class="variant-scoreboard">${scoreCards}</div>
+                ${detailPanel}
               </div>
             `;
           }
@@ -1610,6 +1805,7 @@ def _dashboard_html() -> str:
 
           async function silentRefreshRunDetail(run) {
             const wasCollapsed = variantBoardCollapsed;
+            const wasExpandedVariantId = expandedVariantId;
             const traceBoard = document.getElementById("agent-trace-board");
             const traceScrollLeft = traceBoard ? traceBoard.scrollLeft : 0;
 
@@ -1624,6 +1820,7 @@ def _dashboard_html() -> str:
             currentTraceEvents = [...sseOnly, ...(run.trace_events || [])];
             run.trace_events = currentTraceEvents;
 
+            expandedVariantId = wasExpandedVariantId;
             document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables, variants);
 
             if (wasCollapsed) {
@@ -1631,6 +1828,13 @@ def _dashboard_html() -> str:
               if (body) body.classList.add("is-collapsed");
               const btn = document.getElementById("variant-board-toggle");
               if (btn) btn.textContent = variantBoardToggleLabel();
+            }
+            if (wasExpandedVariantId) {
+              const panel = document.getElementById("variant-detail-panel");
+              if (panel && !panel.classList.contains("open")) {
+                panel.innerHTML = renderVariantDetail(run.id, wasExpandedVariantId);
+                panel.classList.add("open");
+              }
             }
             const newTraceBoard = document.getElementById("agent-trace-board");
             if (newTraceBoard && traceScrollLeft > 0) {
@@ -1664,6 +1868,7 @@ def _dashboard_html() -> str:
 
           async function selectRun(runId){
             currentRunId = runId;
+            expandedVariantId = null;
             const [run, deliverables, variants] = await Promise.all([
               api(`/runs/${runId}`),
               api(`/runs/${runId}/deliverables`).catch(() => ({ run_id: runId, deliverables: {}, score: {} })),

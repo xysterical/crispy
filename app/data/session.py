@@ -14,37 +14,6 @@ settings = get_settings()
 _state_lock = RLock()
 
 
-def _sqlite_connect_args(url: str) -> dict:
-    if url.startswith("sqlite"):
-        return {"check_same_thread": False}
-    return {}
-
-
-def _build_engine(database_url: str):
-    engine = create_engine(
-        database_url,
-        echo=settings.debug,
-        future=True,
-        connect_args=_sqlite_connect_args(database_url),
-    )
-    if database_url.startswith("sqlite"):
-        from sqlalchemy import event
-
-        @event.listens_for(engine, "connect")
-        def _set_sqlite_pragma(dbapi_connection, _connection_record):
-            cursor = dbapi_connection.cursor()
-            cursor.execute("PRAGMA journal_mode=WAL;")
-            cursor.execute("PRAGMA busy_timeout=5000;")
-            cursor.close()
-
-    return engine
-
-
-_active_database_url = settings.database_url
-engine = _build_engine(_active_database_url)
-_session_factory = sessionmaker(autocommit=False, autoflush=False, bind=engine, class_=Session)
-
-
 def _sqlite_url_to_path(database_url: str) -> Path | None:
     if not database_url.startswith("sqlite:///"):
         return None
@@ -55,6 +24,42 @@ def _sqlite_url_to_path(database_url: str) -> Path | None:
     if not path.is_absolute():
         path = (Path.cwd() / path).resolve()
     return path
+
+
+def _sqlite_connect_args(url: str) -> dict:
+    if url.startswith("sqlite"):
+        return {"check_same_thread": False, "timeout": 15}
+    return {}
+
+
+def _build_engine(database_url: str):
+    connect_args = _sqlite_connect_args(database_url)
+    kwargs: dict = {}
+    if database_url.startswith("sqlite"):
+        from sqlalchemy.pool import NullPool
+
+        kwargs["poolclass"] = NullPool
+        # Enable WAL mode once at engine creation so it sticks
+        import sqlite3 as _sqlite3
+
+        path = _sqlite_url_to_path(database_url)
+        if path and path.exists():
+            raw = _sqlite3.connect(str(path), timeout=15)
+            raw.execute("PRAGMA journal_mode=WAL")
+            raw.close()
+    engine = create_engine(
+        database_url,
+        echo=settings.debug,
+        future=True,
+        connect_args=connect_args,
+        **kwargs,
+    )
+    return engine
+
+
+_active_database_url = settings.database_url
+engine = _build_engine(_active_database_url)
+_session_factory = sessionmaker(autocommit=False, autoflush=False, bind=engine, class_=Session)
 
 
 def _path_to_sqlite_url(path: Path) -> str:
