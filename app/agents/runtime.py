@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -1728,3 +1729,66 @@ class AgentsRuntime:
             scorecard=scorecard,
             forecast=forecast,
         )
+
+    def run_shop_profile_analysis(
+        self,
+        store_url: str,
+        description: str,
+        *,
+        provider: str,
+        model: str,
+        runtime_config: dict | None = None,
+    ) -> dict:
+        """Phase 1: Analyze a store's own positioning, SEO, and product catalog."""
+        prompt = (
+            f"{self._business_strategy_system_prompt('Shop Analyst')} "
+            f"You are researching a store. Visit and analyze: {store_url}. "
+            f"Operator notes: {description or 'None provided'}. "
+            "Produce a STRUCTURED JSON profile with these keys: "
+            "positioning (one-line), target_audience (string), price_tier (budget/mid/premium), "
+            "product_categories (list of strings), unique_selling_points (list of strings), "
+            "seo_keywords (list of top 5-10 inferred search terms), "
+            "content_gaps (list of observations about missing content or weak areas), "
+            "brand_voice (brief description of tone and style). "
+            "Return ONLY valid JSON, no markdown wrapping."
+        )
+        summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        try:
+            profile = json.loads(summary)
+        except json.JSONDecodeError:
+            match = re.search(r'\{[\s\S]*\}', summary)
+            profile = json.loads(match.group(0)) if match else {"raw_response": summary}
+        return {
+            "profile": profile,
+            "model_used": model_used,
+            "estimated_cost": estimated_cost,
+        }
+
+    def run_competitor_analysis(
+        self,
+        store_url: str,
+        description: str,
+        store_profile: dict,
+        *,
+        provider: str,
+        model: str,
+        runtime_config: dict | None = None,
+    ) -> dict:
+        """Phase 2: Analyze competitors based on store profile."""
+        prompt = (
+            f"{self._business_strategy_system_prompt('Shop Analyst')} "
+            f"Based on this store profile: {json.dumps(store_profile)} "
+            f"for store at {store_url} (operator notes: {description or 'None provided'}), "
+            "Identify 3-5 comparable competitor stores. For each competitor, note: "
+            "their positioning, creative/ad style patterns, pricing approach, "
+            "and differentiation opportunities for our store. "
+            "Return a Markdown report with sections: "
+            "## Competitive Landscape Overview, ## Competitor 1..N (name, URL if known, analysis), "
+            "## Differentiation Opportunities, ## Recommended Creative Angles."
+        )
+        summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        return {
+            "report": summary,
+            "model_used": model_used,
+            "estimated_cost": estimated_cost,
+        }
