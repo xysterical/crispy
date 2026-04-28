@@ -3371,7 +3371,7 @@ def create_pipeline_run(payload: RunCreateRequest, db: Session = Depends(get_db)
     return _serialize_run(db, run)
 
 
-@router.post("/runs/rich", response_model=RunView)
+@router.post("/runs/rich")
 async def create_pipeline_run_rich(
     workspace_name: str = Form(...),
     project_name: str = Form(...),
@@ -3397,7 +3397,7 @@ async def create_pipeline_run_rich(
     url_references: str = Form("[]"),
     files: list[UploadFile] = File(default=[]),
     db: Session = Depends(get_db),
-) -> RunView:
+):
     if pipeline_mode not in PIPELINE_STAGE_PLANS:
         raise HTTPException(status_code=400, detail=f"unsupported pipeline_mode: {pipeline_mode}")
     payload = RunCreateRequest(
@@ -3424,6 +3424,21 @@ async def create_pipeline_run_rich(
         category_tags=_load_json_list(category_tags, "category_tags"),
         context={"url_references": _load_json_list(url_references, "url_references")},
     )
+    # -- inline preflight --
+    has_image = any(
+        (f.content_type or "").startswith("image/") for f in files
+    )
+    has_video = any(
+        (f.content_type or "").startswith("video/") for f in files
+    )
+    preflight_result = preflight_run_capabilities(
+        db,
+        pipeline_mode=pipeline_mode,
+        has_image_inputs=has_image,
+        has_video_inputs=has_video,
+    )
+    # -- end inline preflight --
+
     try:
         run = create_run(db, payload)
     except ValueError as exc:
@@ -3458,7 +3473,9 @@ async def create_pipeline_run_rich(
         )
     db.commit()
     db.refresh(run)
-    return _serialize_run(db, run)
+    result = _serialize_run(db, run).model_dump()
+    result["_preflight"] = preflight_result
+    return result
 
 
 @router.get("/runs/{run_id}", response_model=RunView)
