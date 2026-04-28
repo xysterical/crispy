@@ -699,11 +699,11 @@ def render_shell_top() -> str:
         </div>
       </div>
       <div style="display:flex;gap:20px;flex-wrap:wrap;">
-        <div style="flex:0 0 400px;min-width:0;">
-          <section class="card runs-panel">
-            <h2>Runs <span class="refresh-indicator active" id="runs-refresh-indicator" title="Auto-refreshing every 5s"><span class="dot"></span> live</span></h2>
-            <div class="action-row">
-              <button onclick="refreshRuns()">Refresh</button>
+        <div style="flex:0 0 480px;min-width:0;">
+          <section class="card runs-panel" style="position:sticky;top:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <h2 style="margin-bottom:0;">Runs <span class="refresh-indicator active" id="runs-refresh-indicator" title="Auto-refreshing every 5s"><span class="dot"></span> live</span></h2>
+              <button onclick="refreshRuns()" style="font-size:12px;padding:6px 10px;">Refresh</button>
             </div>
             <div class="table-wrap">
               <table>
