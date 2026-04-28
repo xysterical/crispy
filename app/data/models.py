@@ -436,3 +436,32 @@ class AgentApiConfig(Base):
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class CreativePreset(Base):
+    __tablename__ = "creative_preset"
+    __table_args__ = (UniqueConstraint("workspace_name", "name", name="uq_preset_workspace_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    workspace_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    image_size: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    video_size: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    resolution: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    video_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    platform_targets: Mapped[dict] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class RunTemplate(Base):
+    __tablename__ = "run_template"
+    __table_args__ = (UniqueConstraint("workspace_name", "name", name="uq_template_workspace_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    workspace_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    config_json: Mapped[dict] = mapped_column(json_type(), default=dict)
+    is_shared: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
