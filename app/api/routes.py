@@ -919,32 +919,40 @@ def _dashboard_shared_js() -> str:
           }
 
           function renderTimeline(run) {
-            const stageHtml = (run.stage_tasks || []).map((task) => {
-              const agent = task.metadata_json?.agent_name || "-";
-              const isAutoApproved = task.status === "approved" && String(task.review_notes || "").includes("auto_approved");
-              const statusLabel = isAutoApproved ? "AUTO-APPROVED" : esc(task.status);
-              const reviewDisplay = isAutoApproved
-                ? '<span class="quality-chip good">AUTO-APPROVED</span>'
-                : esc(task.review_notes || "-");
-              return `
-                <article class="stage-card${isAutoApproved ? " auto-approved" : ""}">
-                  <div class="stage-title">${esc(task.stage_name)}</div>
-                  <div>
-                    <span class="pill">status: ${statusLabel}</span>
-                    <span class="pill">attempt: ${esc(task.attempt)}</span>
-                    <span class="pill">agent: ${esc(agent)}</span>
+            const stages = run.stage_tasks || [];
+            if (!stages.length) return '<div class="run-detail-empty">No stage logs yet.</div>';
+            return `
+              <div id="timeline-board" class="agent-trace">
+                ${stages.map((task, index) => {
+                  const agent = task.metadata_json?.agent_name || "-";
+                  const isAutoApproved = task.status === "approved" && String(task.review_notes || "").includes("auto_approved");
+                  const statusLabel = isAutoApproved ? "AUTO-APPROVED" : esc(task.status);
+                  return `
+                <article class="trace-event">
+                  <div class="trace-head">
+                    <div class="trace-head-main">
+                      <span class="trace-index">${stages.length - index}</span>
+                      <span class="pill">${esc(task.stage_name)}</span>
+                    </div>
+                    <div class="muted">${esc(task.started_at || "-")}</div>
+                  </div>
+                  <div style="display:flex;gap:4px;flex-wrap:wrap;margin:4px 0;">
+                    <span class="pill">${statusLabel}</span>
+                    <span class="pill">attempt ${esc(task.attempt)}</span>
+                    <span class="pill">${esc(agent)}</span>
                     ${isAutoApproved ? '<span class="quality-chip good">auto</span>' : ""}
                   </div>
-                  <div>${esc(task.summary || "No summary")}</div>
-                  <div class="muted">started: ${esc(task.started_at || "-")} | completed: ${esc(task.completed_at || "-")} | review: ${reviewDisplay}</div>
-                  <details>
-                    <summary>Raw JSON</summary>
+                  <div class="trace-message">${esc(task.summary || "No summary")}</div>
+                  <div class="muted" style="margin-top:4px;">review: ${isAutoApproved ? '<span class="quality-chip good">AUTO-APPROVED</span>' : esc(task.review_notes || "-")}</div>
+                  <details class="trace-payload">
+                    <summary>Stage payload</summary>
                     <pre>${esc(JSON.stringify(task.output_payload || {}, null, 2))}</pre>
                   </details>
                 </article>
-              `;
-            }).join("");
-            return stageHtml || '<span class="muted">No stage logs.</span>';
+                  `;
+                }).join("")}
+              </div>
+            `;
           }
 
           function renderAgentTrace(run) {
@@ -989,21 +997,23 @@ def _dashboard_shared_js() -> str:
             container.scrollTo({ left: 0, behavior });
           }
           function bindTracePayloadToggles(){
-            const container = document.getElementById("agent-trace-board");
-            if (!container) return;
-            container.querySelectorAll(".trace-payload").forEach((details) => {
-              if (details.dataset.bound === "1") return;
-              details.dataset.bound = "1";
-              details.addEventListener("toggle", () => {
-                const card = details.closest(".trace-event");
-                if (!card) return;
-                card.classList.toggle("trace-event-expanded", details.open);
+            ["agent-trace-board", "timeline-board"].forEach((id) => {
+              const container = document.getElementById(id);
+              if (!container) return;
+              container.querySelectorAll(".trace-payload").forEach((details) => {
+                if (details.dataset.bound === "1") return;
+                details.dataset.bound = "1";
+                details.addEventListener("toggle", () => {
+                  const card = details.closest(".trace-event");
+                  if (!card) return;
+                  card.classList.toggle("trace-event-expanded", details.open);
                 if (details.open) {
                   requestAnimationFrame(() => {
                     card.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
                   });
                 }
               });
+            });
             });
           }
 
@@ -1115,7 +1125,7 @@ def _dashboard_shared_js() -> str:
               <h3 style="margin-top:14px;">Agent Trace</h3>
               <div id="agent-trace-container">${renderAgentTrace(run)}</div>
               <h3 style="margin-top:14px;">Stage Timeline</h3>
-              <div class="timeline">${renderTimeline(run)}</div>
+              ${renderTimeline(run)}
               <h3 style="margin-top:14px;">Latest Scorecard</h3>
               ${score}
             `;
