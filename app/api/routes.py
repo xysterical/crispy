@@ -379,6 +379,7 @@ def _pipeline_mode_views() -> list[PipelineModeView]:
         PipelineMode.VIDEO_ONLY.value: "Copy + Video",
         PipelineMode.FULL_MULTIMODAL.value: "Full Multimodal",
         PipelineMode.MARKETPLACE_MAIN_IMAGE.value: "Studio Main Image",
+        PipelineMode.TIKTOK_SHOP_VIDEO.value: "TikTok Shop Video",
     }
     views: list[PipelineModeView] = []
     for mode, stages in PIPELINE_STAGE_PLANS.items():

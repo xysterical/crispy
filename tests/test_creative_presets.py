@@ -14,6 +14,19 @@ def test_list_presets_includes_system(client):
     assert "meta_vertical_5s" in system_keys
 
 
+def test_tiktok_shop_conversion_preset_is_available(client):
+    resp = client.get("/creative-presets?workspace_name=test_ws")
+    assert resp.status_code == 200
+    system = {p["key"]: p for p in resp.json()["system"]}
+
+    preset = system["tiktok_shop_conversion_12s"]
+    assert preset["image_size"] == "9:16"
+    assert preset["video_size"] == "9:16"
+    assert preset["resolution"] == "720p"
+    assert preset["video_duration_seconds"] == 12
+    assert preset["platform_targets"] == ["tiktok", "tiktok_shop"]
+
+
 def test_create_and_list_user_preset(client):
     resp = client.post(
         "/creative-presets",

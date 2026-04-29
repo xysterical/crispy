@@ -6,6 +6,10 @@ from sqlalchemy import select
 
 from app.data.models import CreativePreset
 
+TIKTOK_SHOP_VIDEO_STYLES = {"ugc_demo", "direct_response_ad", "shop_account_content"}
+TIKTOK_SHOP_VIDEO_DEFAULT_STYLE = "ugc_demo"
+TIKTOK_SHOP_VIDEO_PRESET = "tiktok_shop_conversion_12s"
+
 CREATIVE_PRESETS: dict[str, dict] = {
     "meta_square_5s": {
         "image_size": "1:1",
@@ -34,6 +38,16 @@ CREATIVE_PRESETS: dict[str, dict] = {
         "platform_targets": ["tiktok_shop", "shopify", "alibaba", "amazon"],
         "export_size_px": 2000,
         "background_policy": "pure_white",
+    },
+    TIKTOK_SHOP_VIDEO_PRESET: {
+        "image_size": "9:16",
+        "video_size": "9:16",
+        "resolution": "720p",
+        "video_duration_seconds": 12,
+        "platform": "tiktok",
+        "creative_goal": "shop_conversion_video",
+        "tiktok_video_style": TIKTOK_SHOP_VIDEO_DEFAULT_STYLE,
+        "platform_targets": ["tiktok", "tiktok_shop"],
     },
 }
 

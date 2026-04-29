@@ -298,9 +298,12 @@ def test_pipeline_modes_endpoint(client):
     assert "video_only" in modes
     assert "full_multimodal" in modes
     assert "marketplace_main_image" in modes
+    assert "tiktok_shop_video" in modes
     assert modes["copy_image_only"]["agent_count"] >= 1
     assert modes["marketplace_main_image"]["display_name"] == "Studio Main Image"
     assert modes["marketplace_main_image"]["stages"] == modes["copy_image_only"]["stages"]
+    assert modes["tiktok_shop_video"]["display_name"] == "TikTok Shop Video"
+    assert modes["tiktok_shop_video"]["stages"] == stage_plan_for("video_only")
 
 
 def test_create_run_requires_product_and_industry_and_preset(client):

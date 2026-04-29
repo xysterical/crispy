@@ -10,6 +10,7 @@ class PipelineMode(StrEnum):
     VIDEO_ONLY = "video_only"
     FULL_MULTIMODAL = "full_multimodal"
     MARKETPLACE_MAIN_IMAGE = "marketplace_main_image"
+    TIKTOK_SHOP_VIDEO = "tiktok_shop_video"
 
 
 PIPELINE_STAGE_PLANS: dict[str, list[str]] = {
@@ -30,6 +31,16 @@ PIPELINE_STAGE_PLANS: dict[str, list[str]] = {
         StageName.EVALUATION_SELECTION.value,
     ],
     PipelineMode.VIDEO_ONLY.value: [
+        StageName.INTAKE.value,
+        StageName.PLANNING.value,
+        StageName.DIVERGENCE.value,
+        StageName.VIDEO_SCRIPTING.value,
+        StageName.STORYBOARD_IMAGE_GENERATION.value,
+        StageName.VIDEO_GENERATION.value,
+        StageName.VISUAL_QUALITY_ASSESSMENT.value,
+        StageName.EVALUATION_SELECTION.value,
+    ],
+    PipelineMode.TIKTOK_SHOP_VIDEO.value: [
         StageName.INTAKE.value,
         StageName.PLANNING.value,
         StageName.DIVERGENCE.value,
