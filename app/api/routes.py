@@ -2268,7 +2268,9 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             if (shopAnalysisAgents.has(r.agent_name)) {{
               return [
                 {{ row_key: "__divider_shop__", agent_name: "__divider__", mode: "text", title: "divider", source: "divider", isDivider: true }},
-                {{ row_key: `shop_analyst__text`, agent_name: "shop_analyst", mode: "text", title: "Shop Analyst - Text", source: "shop_analyst" }},
+                {{ row_key: "shop_analyst__text", agent_name: "shop_analyst", mode: "text", title: "Shop Analyst - LLM", source: "shop_analyst" }},
+                {{ row_key: "shop_analyst__tavily", agent_name: "shop_analyst", mode: "tavily", title: "Shop Analyst - Tavily", source: "shop_analyst" }},
+                {{ row_key: "shop_analyst__firecrawl", agent_name: "shop_analyst", mode: "firecrawl", title: "Shop Analyst - Firecrawl", source: "shop_analyst" }},
               ];
             }}
             if (r.agent_name === "copy_image_agent") {{
@@ -2330,10 +2332,15 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
                 return;
               }}
               const cfg = byAgent[r.agent_name] || {{}};
+              const isSearchTool = (r.mode === "tavily" || r.mode === "firecrawl");
               const provider = r.mode === "text" ? (cfg.provider_name || "") : (r.mode === "image" ? (cfg.image_provider_name || "") : (cfg.video_provider_name || ""));
               const model = r.mode === "text" ? (cfg.model_name || "") : (r.mode === "image" ? (cfg.image_model_name || "") : (cfg.video_model_name || ""));
               const baseUrl = r.mode === "text" ? (cfg.api_base_url || "") : (r.mode === "image" ? (cfg.image_api_base_url || "") : (cfg.video_api_base_url || ""));
-              const keyEnv = r.mode === "text" ? (cfg.api_key_env || "") : (r.mode === "image" ? (cfg.image_api_key_env || "") : (cfg.video_api_key_env || ""));
+              const keyEnv = r.mode === "tavily" ? (cfg.extra?.tavily_config?.api_key_env || "")
+                : r.mode === "firecrawl" ? (cfg.extra?.firecrawl_config?.api_key_env || "")
+                : r.mode === "text" ? (cfg.api_key_env || "")
+                : r.mode === "image" ? (cfg.image_api_key_env || "")
+                : (cfg.video_api_key_env || "");
               const keyFound = r.mode === "text" ? cfg.api_key_available : (r.mode === "image" ? cfg.image_api_key_available : cfg.video_api_key_available);
               const thinkingMode = r.mode === "text" ? (cfg.thinking_mode || "auto") : "";
               const thinkingBudget = r.mode === "text" ? (cfg.thinking_budget_tokens || "") : "";
@@ -2344,17 +2351,33 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
               const envStatus = keyEnv
                 ? (keyFound ? '<span class="badge">found</span>' : '<span class="badge badge-missing">missing</span>')
                 : '<span class="muted">-</span>';
+              const providerCell = isSearchTool ? '<td class="muted">-</td>'
+                : `<td><input id="p-${{r.row_key}}" value="${{provider}}" /></td>`;
+              const modelCell = isSearchTool ? '<td class="muted">-</td>'
+                : `<td><input id="m-${{r.row_key}}" value="${{model}}" /></td>`;
+              const baseUrlCell = isSearchTool ? '<td class="muted">-</td>'
+                : `<td><input id="b-${{r.row_key}}" value="${{baseUrl}}" /></td>`;
+              const thinkingCell = (r.mode === "text") ? `<td><select id="t-${{r.row_key}}"><option value="auto"${{thinkingMode==="auto"?" selected":""}}>auto</option><option value="enabled"${{thinkingMode==="enabled"?" selected":""}}>enabled</option><option value="disabled"${{thinkingMode==="disabled"?" selected":""}}>disabled</option></select></td>`
+                : '<td class="muted">-</td>';
+              const streamCell = (r.mode === "text") ? `<td class="advanced-col"><input id="s-${{r.row_key}}" type="checkbox"${{streamingEnabled ? " checked" : ""}} /></td>`
+                : '<td class="advanced-col muted">-</td>';
+              const budgetCell = (r.mode === "text") ? `<td class="advanced-col"><input id="g-${{r.row_key}}" value="${{thinkingBudget}}" placeholder="optional" /></td>`
+                : '<td class="advanced-col muted">-</td>';
+              const maxTokensCell = (r.mode === "text") ? `<td class="advanced-col"><input id="o-${{r.row_key}}" value="${{maxTokens}}" placeholder="1200" /></td>`
+                : '<td class="advanced-col muted">-</td>';
+              const timeoutCell = (r.mode === "text") ? `<td class="advanced-col"><input id="x-${{r.row_key}}" value="${{requestTimeout}}" placeholder="90" /></td>`
+                : '<td class="advanced-col muted">-</td>';
               tr.innerHTML = `
                 <td>${{r.title}}<div class="muted">${{r.source}}</div></td>
-                <td><input id="p-${{r.row_key}}" value="${{provider}}" /></td>
-                <td><input id="m-${{r.row_key}}" value="${{model}}" /></td>
-                <td><input id="b-${{r.row_key}}" value="${{baseUrl}}" /></td>
+                ${{providerCell}}
+                ${{modelCell}}
+                ${{baseUrlCell}}
                 <td><select id="k-${{r.row_key}}">${{envOptions(keyEnv)}}</select></td>
-                <td>${{r.mode === "text" ? `<select id="t-${{r.row_key}}"><option value="auto"${{thinkingMode==="auto"?" selected":""}}>auto</option><option value="enabled"${{thinkingMode==="enabled"?" selected":""}}>enabled</option><option value="disabled"${{thinkingMode==="disabled"?" selected":""}}>disabled</option></select>` : '<span class="muted">-</span>'}}</td>
-                <td class="advanced-col">${{r.mode === "text" ? `<input id="s-${{r.row_key}}" type="checkbox"${{streamingEnabled ? " checked" : ""}} />` : '<span class="muted">-</span>'}}</td>
-                <td class="advanced-col">${{r.mode === "text" ? `<input id="g-${{r.row_key}}" value="${{thinkingBudget}}" placeholder="optional" />` : '<span class="muted">-</span>'}}</td>
-                <td class="advanced-col">${{r.mode === "text" ? `<input id="o-${{r.row_key}}" value="${{maxTokens}}" placeholder="1200" />` : '<span class="muted">-</span>'}}</td>
-                <td class="advanced-col">${{r.mode === "text" ? `<input id="x-${{r.row_key}}" value="${{requestTimeout}}" placeholder="90" />` : '<span class="muted">-</span>'}}</td>
+                ${{thinkingCell}}
+                ${{streamCell}}
+                ${{budgetCell}}
+                ${{maxTokensCell}}
+                ${{timeoutCell}}
                 <td>${{envStatus}}</td>
                 <td><button onclick="save('${{r.row_key}}')">Save</button></td>`;
               body.appendChild(tr);
@@ -2364,12 +2387,19 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           async function save(rowKey) {{
             const row = rows.find((r) => r.row_key === rowKey);
             if (!row) return;
-            const provider_name = document.getElementById(`p-${{rowKey}}`).value || null;
-            const model_name = document.getElementById(`m-${{rowKey}}`).value || null;
-            const api_base_url = document.getElementById(`b-${{rowKey}}`).value || null;
             const api_key_env = document.getElementById(`k-${{rowKey}}`).value || null;
+            // Build extra config based on row mode
+            let mergedExtra = {{ ...(byAgent[row.agent_name]?.extra || {{}}) }};
+            if (row.mode === "tavily") {{
+              mergedExtra.tavily_config = {{ api_key_env }};
+            }} else if (row.mode === "firecrawl") {{
+              mergedExtra.firecrawl_config = {{ api_key_env }};
+            }}
             let payload = {{}};
             if (row.mode === "text") {{
+              const provider_name = document.getElementById(`p-${{rowKey}}`).value || null;
+              const model_name = document.getElementById(`m-${{rowKey}}`).value || null;
+              const api_base_url = document.getElementById(`b-${{rowKey}}`).value || null;
               const max_output_tokens = document.getElementById(`o-${{rowKey}}`).value;
               const thinking_budget_tokens = document.getElementById(`g-${{rowKey}}`).value;
               const request_timeout_seconds = document.getElementById(`x-${{rowKey}}`).value;
@@ -2382,9 +2412,13 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
                 thinking_budget_tokens: thinking_budget_tokens ? Number(thinking_budget_tokens) : null,
                 max_output_tokens: max_output_tokens ? Number(max_output_tokens) : null,
                 request_timeout_seconds: request_timeout_seconds ? Number(request_timeout_seconds) : null,
-                streaming_enabled: document.getElementById(`s-${{rowKey}}`).checked
+                streaming_enabled: document.getElementById(`s-${{rowKey}}`).checked,
+                extra: mergedExtra
               }};
             }} else if (row.mode === "image") {{
+              const provider_name = document.getElementById(`p-${{rowKey}}`).value || null;
+              const model_name = document.getElementById(`m-${{rowKey}}`).value || null;
+              const api_base_url = document.getElementById(`b-${{rowKey}}`).value || null;
               payload = {{
                 image_provider_name: provider_name,
                 image_model_name: model_name,
@@ -2392,12 +2426,17 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
                 image_api_key_env: api_key_env
               }};
             }} else if (row.mode === "video") {{
+              const provider_name = document.getElementById(`p-${{rowKey}}`).value || null;
+              const model_name = document.getElementById(`m-${{rowKey}}`).value || null;
+              const api_base_url = document.getElementById(`b-${{rowKey}}`).value || null;
               payload = {{
                 video_provider_name: provider_name,
                 video_model_name: model_name,
                 video_api_base_url: api_base_url,
                 video_api_key_env: api_key_env
               }};
+            }} else if (row.mode === "tavily" || row.mode === "firecrawl") {{
+              payload = {{ extra: mergedExtra }};
             }}
             byAgent[row.agent_name] = await api(`/agent-configs/${{row.agent_name}}`, {{ method: "PATCH", body: JSON.stringify(payload) }});
             render();
