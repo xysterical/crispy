@@ -167,6 +167,10 @@ def apply_runtime_migrations(target_engine) -> None:
     _add_column_if_missing(target_engine, "stage_task", "retry_at", "ALTER TABLE stage_task ADD COLUMN retry_at DATETIME")
     _add_column_if_missing(target_engine, "pipeline_run", "approval_mode", "ALTER TABLE pipeline_run ADD COLUMN approval_mode VARCHAR(16) DEFAULT 'manual'")
     _add_column_if_missing(target_engine, "workspace", "industry_code", "ALTER TABLE workspace ADD COLUMN industry_code VARCHAR(128) DEFAULT 'general'")
+    _add_column_if_missing(target_engine, "workspace", "store_url", "ALTER TABLE workspace ADD COLUMN store_url VARCHAR(512)")
+    _add_column_if_missing(target_engine, "workspace", "description", "ALTER TABLE workspace ADD COLUMN description TEXT")
+    _add_column_if_missing(target_engine, "workspace", "archived_at", "ALTER TABLE workspace ADD COLUMN archived_at DATETIME")
+    _add_column_if_missing(target_engine, "workspace", "last_analyzed_at", "ALTER TABLE workspace ADD COLUMN last_analyzed_at DATETIME")
 
     with target_engine.begin() as conn:
         conn.execute(
@@ -212,6 +216,8 @@ def apply_runtime_migrations(target_engine) -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pipeline_run_industry_code ON pipeline_run(industry_code)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_gm_memory_scope_product ON gm_memory(memory_scope, product_code)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_gm_memory_scope_industry ON gm_memory(memory_scope, industry_code)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_gm_memory_scope_source ON gm_memory(memory_scope, source_type)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_workspace_archived_at ON workspace(archived_at)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stage_task_failure_category ON stage_task(failure_category)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_run_variant_run_id ON run_variant(run_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_run_variant_status ON run_variant(status)"))

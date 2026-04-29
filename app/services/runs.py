@@ -512,10 +512,23 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
         .order_by(desc(GmMemory.score_hint), desc(GmMemory.created_at))
         .limit(10)
     ).all()
+    shop_candidates = db.scalars(
+        select(GmMemory)
+        .where(
+            GmMemory.memory_scope == "shop",
+            GmMemory.source_type.in_(["shop_profile", "competitor_analysis"]),
+        )
+        .order_by(desc(GmMemory.score_hint), desc(GmMemory.created_at))
+        .limit(50)
+    ).all()
+    shop_rows = [
+        row for row in shop_candidates
+        if (row.content or {}).get("shop_id") == run.workspace_id
+    ][:5]
 
     merged: list[dict] = []
     seen_fingerprints: set[str] = set()
-    for row in [*product_rows[:5], *industry_rows[:3]]:
+    for row in [*product_rows[:3], *shop_rows[:3], *industry_rows[:2]]:
         payload = {
             "memory_scope": row.memory_scope,
             "product_code": row.product_code,

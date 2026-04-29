@@ -28,8 +28,8 @@ def test_shop_analysis_page_has_shop_selector(client):
     resp = client.get("/dashboard/shop-analysis")
     assert resp.status_code == 200
     html = resp.text
-    assert "shop-name" in html
-    assert "shop-analysis-list" in html
+    assert '<select id="shop-name"' in html
+    assert "renderShopSelect" in html
     assert "Shop" in html
 
 
@@ -60,6 +60,40 @@ def test_shop_crud_lifecycle(client):
     assert resp.status_code in (204, 409)
 
 
+def test_create_shop_returns_stable_id_and_metadata(client):
+    resp = client.post(
+        "/shops",
+        json={
+            "name": "analysis-shop",
+            "industry_code": "pet_accessories",
+            "store_url": "https://example-shop.test",
+            "description": "Urban pet accessories store.",
+        },
+    )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["id"]
+    assert body["name"] == "analysis-shop"
+    assert body["industry_code"] == "pet_accessories"
+    assert body["store_url"] == "https://example-shop.test"
+    assert body["description"] == "Urban pet accessories store."
+    assert body["archived_at"] is None
+
+
+def test_archive_shop_hides_it_from_default_list(client):
+    created = client.post("/shops", json={"name": "archive-me"}).json()
+
+    resp = client.patch(f"/shops/{created['id']}", json={"archived": True})
+
+    assert resp.status_code == 200
+    assert resp.json()["archived_at"]
+    listed = client.get("/shops").json()["shops"]
+    assert all(item["id"] != created["id"] for item in listed)
+    listed_with_archived = client.get("/shops?include_archived=true").json()["shops"]
+    assert any(item["id"] == created["id"] for item in listed_with_archived)
+
+
 def test_cannot_delete_last_shop(client):
     """Verify the last remaining shop cannot be deleted."""
     resp = client.get("/shops")
@@ -75,6 +109,10 @@ def test_shop_management_panel_on_page(client):
     resp = client.get("/dashboard/shop-analysis")
     assert resp.status_code == 200
     html = resp.text
-    assert "Shop Management" in html
+    assert "Shops" in html
     assert "shop-list-mgmt" in html
     assert "addShop" in html
+    assert "shop-sort-key" in html
+    assert "toggleShopSortDirection" in html
+    assert "data-action=\"select-shop\"" in html
+    assert 'Archive shop ""' not in html

@@ -86,6 +86,10 @@ class Workspace(Base):
     name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     config: Mapped[dict] = mapped_column(json_type(), default=dict)
     industry_code: Mapped[str] = mapped_column(String(128), default="general")
+    store_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     projects: Mapped[list["Project"]] = relationship(back_populates="workspace")

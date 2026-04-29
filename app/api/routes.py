@@ -75,6 +75,7 @@ from app.schemas.api import (
     ShopAnalysisHistoryResponse,
     ShopItem,
     ShopListResponse,
+    ShopPatchRequest,
     CategoryItem,
     CategoryListResponse,
 )
@@ -1427,6 +1428,88 @@ def _shop_analysis_page_html() -> str:
             font-size: 13px;
           }
           .history-item:last-child { border-bottom: none; }
+          #shop-mgmt-card {
+            padding: 16px 18px;
+            background: #f7fbf9;
+            box-shadow: 0 3px 12px rgba(30, 62, 50, 0.045);
+          }
+          .shop-manager-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 10px;
+          }
+          .shop-manager-title {
+            margin: 0 0 2px;
+            font-size: 18px;
+            line-height: 1.2;
+            font-weight: 650;
+          }
+          .shop-manager-copy { color: var(--muted); font-size: 12px; line-height: 1.35; }
+          .shop-list {
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            overflow: hidden;
+            background: #fff;
+          }
+          .shop-toolbar {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 8px;
+          }
+          .shop-toolbar label {
+            margin: 0;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 600;
+          }
+          .shop-toolbar select {
+            width: auto;
+            min-width: 128px;
+            padding: 6px 8px;
+            border-radius: 8px;
+            font-size: 12px;
+          }
+          .shop-toolbar button {
+            padding: 6px 9px;
+            border-radius: 8px;
+            font-size: 12px;
+          }
+          .shop-row {
+            display: grid;
+            grid-template-columns: minmax(180px, 1fr) minmax(120px, 0.6fr) auto;
+            gap: 10px;
+            align-items: center;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--line);
+          }
+          .shop-row:last-child { border-bottom: none; }
+          .shop-name { font-size: 13px; font-weight: 650; line-height: 1.2; }
+          .shop-meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+          .shop-actions { display: flex; gap: 6px; justify-content: flex-end; }
+          .shop-actions button { font-size: 11px; padding: 5px 8px; border-radius: 8px; }
+          .shop-actions .danger { color: var(--danger); }
+          .shop-create-row {
+            display: grid;
+            grid-template-columns: 1fr minmax(150px, 0.35fr) auto;
+            gap: 10px;
+            align-items: end;
+            margin-top: 10px;
+          }
+          .shop-create-row label { font-size: 12px; }
+          .shop-create-row input { padding: 8px 10px; font-size: 13px; border-radius: 8px; }
+          .shop-create-row button { padding: 8px 14px; font-size: 13px; border-radius: 8px; }
+          .shop-status {
+            min-height: 16px;
+            margin-top: 6px;
+            font-size: 11px;
+            color: var(--muted);
+          }
+          .shop-status.error { color: var(--danger); }
+          .shop-status.ok { color: var(--accent); }
           .status-badge {
             display: inline-block;
             padding: 2px 8px;
@@ -1450,6 +1533,9 @@ def _shop_analysis_page_html() -> str:
           @media (max-width: 860px) {
             .result-grid { grid-template-columns: 1fr; }
             .form-row > div { min-width: 100%; }
+            .shop-toolbar { justify-content: flex-start; flex-wrap: wrap; }
+            .shop-row, .shop-create-row { grid-template-columns: 1fr; }
+            .shop-actions { justify-content: flex-start; }
           }
         </style>
       </head>
@@ -1464,20 +1550,39 @@ def _shop_analysis_page_html() -> str:
           </header>
 
           <section class="card" id="shop-mgmt-card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-              <h2 style="margin-bottom:0;">Shop Management</h2>
+            <div class="shop-manager-head">
+              <div>
+                <h2 class="shop-manager-title">Shops</h2>
+                <div class="shop-manager-copy">Create a shop, run analysis for it, then choose that shop in Create Run so GM can reuse the shop context.</div>
+              </div>
               <button onclick="toggleShopMgmt()" style="font-size:12px;padding:4px 10px;" id="btn-toggle-shops">-</button>
             </div>
             <div id="shop-mgmt-body">
-              <div id="shop-list-mgmt"></div>
-              <div class="form-row" style="margin-top:8px;">
+              <div class="shop-toolbar">
+                <label for="shop-sort-key">Sort</label>
+                <select id="shop-sort-key" onchange="renderShopMgmt()">
+                  <option value="name">Name</option>
+                  <option value="run_count">Runs</option>
+                  <option value="analysis_count">Analyses</option>
+                  <option value="category_count">Categories</option>
+                </select>
+                <button type="button" id="shop-sort-dir" onclick="toggleShopSortDirection()">A-Z</button>
+              </div>
+              <div id="shop-list-mgmt" class="shop-list"></div>
+              <div class="shop-create-row">
                 <div>
-                  <input id="new-shop-name" placeholder="New shop name" style="font-size:13px;padding:6px 10px;" />
+                  <label>New Shop</label>
+                  <input id="new-shop-name" placeholder="Shop name" />
                 </div>
-                <div style="flex:0 0 auto;">
-                  <button onclick="addShop()" style="font-size:13px;padding:6px 14px;">Add Shop</button>
+                <div>
+                  <label>Industry</label>
+                  <input id="new-shop-industry" placeholder="general" />
+                </div>
+                <div>
+                  <button id="btn-add-shop" onclick="addShop()">Add Shop</button>
                 </div>
               </div>
+              <div id="shop-mgmt-status" class="shop-status"></div>
             </div>
           </section>
 
@@ -1486,8 +1591,10 @@ def _shop_analysis_page_html() -> str:
             <div class="form-row" style="margin-bottom:10px;">
               <div>
                 <label>Shop</label>
-                <input id="shop-name" list="shop-analysis-list" placeholder="Select or type shop name" onchange="onShopAnalysisShopChange()" />
-                <datalist id="shop-analysis-list"></datalist>
+                <select id="shop-name" onchange="onShopAnalysisShopChange()">
+                  <option value="">Loading shops...</option>
+                </select>
+                <input id="shop-id" type="hidden" />
               </div>
               <div>
                 <label>Industry Code</label>
@@ -1545,56 +1652,167 @@ def _shop_analysis_page_html() -> str:
             return res.json();
           }
 
+          let analysisShops = [];
+          let shopSortDirection = "asc";
+          function escHtml(v) {
+            return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          }
+          function escAttr(v) {
+            return escHtml(v).replace(/"/g, "&quot;");
+          }
+          function setShopStatus(message, kind = "") {
+            const el = document.getElementById("shop-mgmt-status");
+            el.textContent = message || "";
+            el.className = "shop-status" + (kind ? " " + kind : "");
+          }
+
           // ── Shop Management ──
           async function loadShopMgmt() {
             try {
               const data = await api("/shops");
-              const shops = data.shops || [];
-              renderShopMgmt(shops);
-              // Also refresh the analysis form datalist
-              const datalist = document.getElementById("shop-analysis-list");
-              datalist.innerHTML = shops.map(s =>
-                '<option value="' + s.name.replace(/"/g, '&quot;') + '" data-industry="' + (s.industry_code || 'general') + '">'
-              ).join("");
-            } catch (err) {}
+              analysisShops = data.shops || [];
+              renderShopMgmt();
+              renderShopSelect();
+              if (!document.getElementById("shop-name").value && analysisShops.length) {
+                document.getElementById("shop-name").value = analysisShops[0].id;
+              }
+              onShopAnalysisShopChange();
+            } catch (err) {
+              setShopStatus("Failed to load shops: " + err.message, "error");
+            }
           }
 
-          function renderShopMgmt(shops) {
-            const list = document.getElementById("shop-list-mgmt");
-            list.innerHTML = shops.map(s =>
-              '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);font-size:13px;">'
-              + '<span id="shop-label-' + s.name.replace(/[^a-zA-Z0-9_-]/g, '_') + '"><b>' + s.name.replace(/</g, '&lt;') + '</b> <span class="muted">' + (s.industry_code || '').replace(/</g, '&lt;') + '</span></span>'
-              + '<span style="display:flex;gap:4px;">'
-              + '<button onclick="renameShopPrompt(\'' + s.name.replace(/'/g, "\\'") + '\')" title="Rename" style="font-size:11px;padding:3px 8px;">&#9998;</button>'
-              + '<button onclick="deleteShopConfirm(\'' + s.name.replace(/'/g, "\\'") + '\')" title="Delete" style="font-size:11px;padding:3px 8px;color:var(--danger);">&#10005;</button>'
-              + '</span></div>'
+          function sortedShops() {
+            const key = document.getElementById("shop-sort-key")?.value || "name";
+            const direction = shopSortDirection === "desc" ? -1 : 1;
+            return [...analysisShops].sort((a, b) => {
+              if (key === "name") {
+                return direction * String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
+              }
+              const av = Number(a[key] || 0);
+              const bv = Number(b[key] || 0);
+              if (av === bv) return String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
+              return direction * (av - bv);
+            });
+          }
+
+          function toggleShopSortDirection() {
+            shopSortDirection = shopSortDirection === "asc" ? "desc" : "asc";
+            updateShopSortLabel();
+            renderShopMgmt();
+          }
+
+          function updateShopSortLabel() {
+            const key = document.getElementById("shop-sort-key")?.value || "name";
+            document.getElementById("shop-sort-dir").textContent = key === "name"
+              ? (shopSortDirection === "asc" ? "A-Z" : "Z-A")
+              : (shopSortDirection === "asc" ? "Low-High" : "High-Low");
+          }
+
+          function renderShopSelect() {
+            const sel = document.getElementById("shop-name");
+            const current = sel.value || document.getElementById("shop-id").value;
+            sel.innerHTML = analysisShops.map(s =>
+              '<option value="' + escAttr(s.id) + '">' + escHtml(s.name) + '</option>'
             ).join("");
+            if (current && analysisShops.some(s => s.id === current)) {
+              sel.value = current;
+            }
+          }
+
+          function renderShopMgmt() {
+            const list = document.getElementById("shop-list-mgmt");
+            updateShopSortLabel();
+            const shops = sortedShops();
+            if (!shops.length) {
+              list.innerHTML = '<div class="shop-row"><div><div class="shop-name">No shops yet</div><div class="shop-meta">Create one below, then run analysis for it.</div></div></div>';
+              return;
+            }
+            list.innerHTML = shops.map(s => {
+              const details = [
+                (s.category_count || 0) + " categories",
+                (s.run_count || 0) + " runs",
+                (s.analysis_count || 0) + " analyses"
+              ].join(" · ");
+              return '<div class="shop-row" data-shop-id="' + escAttr(s.id) + '">'
+                + '<div><div class="shop-name">' + escHtml(s.name) + '</div><div class="shop-meta">' + escHtml(s.store_url || "No store URL saved") + '</div></div>'
+                + '<div><div class="shop-name">' + escHtml(s.industry_code || "general") + '</div><div class="shop-meta">' + escHtml(details) + '</div></div>'
+                + '<div class="shop-actions">'
+                + '<button type="button" data-action="select-shop" data-shop-id="' + escAttr(s.id) + '">Use</button>'
+                + '<button type="button" data-action="rename-shop" data-shop-id="' + escAttr(s.id) + '">Rename</button>'
+                + '<button type="button" class="danger" data-action="archive-shop" data-shop-id="' + escAttr(s.id) + '">Archive</button>'
+                + '</div></div>';
+            }).join("");
+            list.querySelectorAll("button[data-action]").forEach(btn => {
+              btn.addEventListener("click", () => {
+                const action = btn.dataset.action;
+                const shopId = btn.dataset.shopId;
+                if (action === "select-shop") selectShop(shopId);
+                if (action === "rename-shop") renameShopPrompt(shopId);
+                if (action === "archive-shop") archiveShopConfirm(shopId);
+              });
+            });
           }
 
           async function addShop() {
             const input = document.getElementById("new-shop-name");
             const name = input.value.trim();
-            if (!name) { alert("Please enter a shop name."); return; }
+            if (!name) { setShopStatus("Enter a shop name first.", "error"); return; }
+            const btn = document.getElementById("btn-add-shop");
+            btn.disabled = true;
+            setShopStatus("Creating shop...");
             try {
-              await api("/shops", { method: "POST", body: JSON.stringify({ name: name }) });
+              const created = await api("/shops", { method: "POST", body: JSON.stringify({
+                name: name,
+                industry_code: document.getElementById("new-shop-industry").value.trim() || document.getElementById("industry-code").value.trim() || "general",
+                store_url: document.getElementById("store-url").value.trim() || null,
+                description: document.getElementById("store-description").value.trim() || null
+              }) });
               input.value = "";
-              loadShopMgmt();
-            } catch (err) { alert("Error: " + err.message); }
+              document.getElementById("new-shop-industry").value = "";
+              await loadShopMgmt();
+              selectShop(created.id);
+              setShopStatus("Created shop: " + created.name, "ok");
+            } catch (err) {
+              setShopStatus("Could not create shop: " + err.message, "error");
+            } finally {
+              btn.disabled = false;
+            }
           }
 
-          function renameShopPrompt(oldName) {
-            const newName = prompt("Rename shop:", oldName);
-            if (!newName || newName === oldName) return;
-            api("/shops/" + encodeURIComponent(oldName), { method: "PUT", body: JSON.stringify({ name: newName }) })
-              .then(() => loadShopMgmt())
-              .catch(err => alert("Error: " + err.message));
+          function selectShop(shopId) {
+            const shop = analysisShops.find(s => s.id === shopId);
+            if (!shop) return;
+            document.getElementById("shop-name").value = shop.id;
+            onShopAnalysisShopChange();
+            setShopStatus("Selected shop: " + shop.name, "ok");
           }
 
-          function deleteShopConfirm(name) {
-            if (!confirm("Delete shop \"" + name + "\"?")) return;
-            api("/shops/" + encodeURIComponent(name), { method: "DELETE" })
+          function renameShopPrompt(shopId) {
+            const shop = analysisShops.find(s => s.id === shopId);
+            if (!shop) return;
+            const newName = prompt("Rename shop:", shop.name);
+            if (!newName || newName === shop.name) return;
+            api("/shops/" + encodeURIComponent(shopId), { method: "PATCH", body: JSON.stringify({ name: newName }) })
               .then(() => loadShopMgmt())
-              .catch(err => alert("Error: " + err.message));
+              .then(() => setShopStatus("Renamed shop.", "ok"))
+              .catch(err => setShopStatus("Could not rename shop: " + err.message, "error"));
+          }
+
+          function archiveShopConfirm(shopId) {
+            const shop = analysisShops.find(s => s.id === shopId);
+            if (!shop) return;
+            if (!confirm('Archive shop "' + shop.name + '"? Historical runs and GM memory will remain available.')) return;
+            api("/shops/" + encodeURIComponent(shopId), { method: "PATCH", body: JSON.stringify({ archived: true }) })
+              .then(() => {
+                if (document.getElementById("shop-id").value === shopId) {
+                  document.getElementById("shop-name").value = "";
+                  document.getElementById("shop-id").value = "";
+                }
+                return loadShopMgmt();
+              })
+              .then(() => setShopStatus("Archived shop: " + shop.name, "ok"))
+              .catch(err => setShopStatus("Could not archive shop: " + err.message, "error"));
           }
 
           function toggleShopMgmt() {
@@ -1607,27 +1825,37 @@ def _shop_analysis_page_html() -> str:
           async function loadShopAnalysisShops() {
             try {
               const data = await api("/shops");
-              const shops = data.shops || [];
-              const datalist = document.getElementById("shop-analysis-list");
-              datalist.innerHTML = shops.map(s =>
-                '<option value="' + s.name.replace(/"/g, '&quot;') + '" data-industry="' + (s.industry_code || 'general') + '">'
-              ).join("");
+              analysisShops = data.shops || [];
+              renderShopMgmt();
+              renderShopSelect();
+              if (!document.getElementById("shop-name").value && analysisShops.length) {
+                document.getElementById("shop-name").value = analysisShops[0].id;
+              }
+              onShopAnalysisShopChange();
             } catch (err) {}
           }
 
           function onShopAnalysisShopChange() {
-            const shopName = document.getElementById("shop-name").value;
-            fetch("/shops").then(r => r.json()).then(data => {
-              const shop = (data.shops || []).find(s => s.name === shopName);
-              if (shop) {
-                document.getElementById("industry-code").value = shop.industry_code || "general";
-              }
-            }).catch(() => {});
+            const shopId = document.getElementById("shop-name").value;
+            const shop = analysisShops.find(s => s.id === shopId);
+            document.getElementById("shop-id").value = shop ? shop.id : "";
+            if (shop) {
+              document.getElementById("industry-code").value = shop.industry_code || "general";
+              if (shop.store_url && !document.getElementById("store-url").value) document.getElementById("store-url").value = shop.store_url;
+              if (shop.description && !document.getElementById("store-description").value) document.getElementById("store-description").value = shop.description;
+            }
+            loadHistory();
+          }
+
+          function selectedShop() {
+            const shopId = document.getElementById("shop-id").value || document.getElementById("shop-name").value;
+            return analysisShops.find(s => s.id === shopId) || null;
           }
 
           async function runAnalysis() {
             const storeUrl = document.getElementById("store-url").value.trim();
             if (!storeUrl) { alert("Please enter a store URL."); return; }
+            const shop = selectedShop();
 
             const btn = document.getElementById("btn-run");
             const status = document.getElementById("run-status");
@@ -1649,11 +1877,12 @@ def _shop_analysis_page_html() -> str:
               const data = await api("/shop-analysis/run", {
                 method: "POST",
                 body: JSON.stringify({
+                  shop_id: document.getElementById("shop-id").value || null,
                   store_url: storeUrl,
                   description: document.getElementById("store-description").value.trim(),
                   industry_code: document.getElementById("industry-code").value.trim() || "general",
-                  workspace_name: document.getElementById("shop-name").value.trim() || "workspace_demo",
-                  project_name: document.getElementById("shop-name").value.trim() || "workspace_demo",
+                  workspace_name: shop ? shop.name : "workspace_demo",
+                  project_name: "shop_analysis",
                 }),
               });
 
@@ -1694,8 +1923,13 @@ def _shop_analysis_page_html() -> str:
 
           async function loadHistory() {
             try {
-              const shopName = document.getElementById("shop-name").value.trim() || "workspace_demo";
-              const data = await api("/shop-analysis/history?workspace_name=" + encodeURIComponent(shopName) + "&project_name=" + encodeURIComponent(shopName));
+              const shopId = document.getElementById("shop-id").value;
+              const shop = selectedShop();
+              const shopName = shop ? shop.name : "workspace_demo";
+              const historyUrl = shopId
+                ? "/shop-analysis/history?shop_id=" + encodeURIComponent(shopId)
+                : "/shop-analysis/history?workspace_name=" + encodeURIComponent(shopName) + "&project_name=shop_analysis";
+              const data = await api(historyUrl);
               const list = document.getElementById("history-list");
               if (!data.items.length) {
                 list.innerHTML = '<div class="muted">No analyses yet.</div>';
@@ -3000,10 +3234,54 @@ def list_pipeline_modes() -> list[PipelineModeView]:
 
 # ── Shops & Categories ────────────────────────────────────────────
 
-@router.get("/shops", response_model=ShopListResponse)
-def list_shops(db: Session = Depends(get_db)) -> dict:
+def _serialize_shop(db: Session, workspace) -> dict:
+    from app.data.models import GmMemory, PipelineRun, Project
+
+    category_count = db.scalar(
+        select(func.count(Project.id)).where(Project.workspace_id == workspace.id)
+    ) or 0
+    run_count = db.scalar(
+        select(func.count(PipelineRun.id)).where(PipelineRun.workspace_id == workspace.id)
+    ) or 0
+    analysis_rows = db.scalars(
+        select(GmMemory).where(
+            GmMemory.memory_scope == "shop",
+            GmMemory.source_type.in_(["shop_profile", "competitor_analysis"]),
+        )
+    ).all()
+    analysis_count = sum(
+        1 for row in analysis_rows
+        if (row.content or {}).get("shop_id") == workspace.id
+    )
+    return ShopItem(
+        id=workspace.id,
+        name=workspace.name,
+        industry_code=workspace.industry_code or "general",
+        store_url=workspace.store_url,
+        description=workspace.description,
+        category_count=category_count,
+        run_count=run_count,
+        analysis_count=analysis_count,
+        archived_at=workspace.archived_at,
+        last_analyzed_at=workspace.last_analyzed_at,
+    ).model_dump()
+
+
+def _get_shop_by_id_or_name(db: Session, shop_ref: str):
     from app.data.models import Workspace
-    # Ensure at least one default shop exists
+
+    return db.scalar(
+        select(Workspace).where(or_(Workspace.id == shop_ref, Workspace.name == shop_ref))
+    )
+
+
+@router.get("/shops", response_model=ShopListResponse)
+def list_shops(
+    include_archived: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.data.models import Workspace
+
     rows = db.scalars(select(Workspace).order_by(Workspace.name)).all()
     if not rows:
         ws = Workspace(name="workspace_demo", industry_code="general")
@@ -3011,18 +3289,18 @@ def list_shops(db: Session = Depends(get_db)) -> dict:
         db.commit()
         db.refresh(ws)
         rows = [ws]
+    if not include_archived:
+        rows = [row for row in rows if not row.archived_at]
     return {
-        "shops": [
-            ShopItem(name=r.name, industry_code=r.industry_code or "general").model_dump()
-            for r in rows
-        ]
+        "shops": [_serialize_shop(db, row) for row in rows]
     }
 
 
 @router.get("/shops/{shop_name}/categories", response_model=CategoryListResponse)
 def list_shop_categories(shop_name: str, db: Session = Depends(get_db)) -> dict:
-    from app.data.models import Project, Workspace
-    workspace = db.scalar(select(Workspace).where(Workspace.name == shop_name))
+    from app.data.models import Project
+
+    workspace = _get_shop_by_id_or_name(db, shop_name)
     if not workspace:
         return {"categories": []}
     rows = db.scalars(
@@ -3037,17 +3315,53 @@ def create_shop(payload: ShopItem, db: Session = Depends(get_db)) -> dict:
     existing = db.scalar(select(Workspace).where(Workspace.name == payload.name))
     if existing:
         raise HTTPException(status_code=409, detail=f"shop already exists: {payload.name}")
-    ws = Workspace(name=payload.name, industry_code=payload.industry_code or "general")
+    ws = Workspace(
+        name=payload.name,
+        industry_code=payload.industry_code or "general",
+        store_url=payload.store_url,
+        description=payload.description,
+    )
     db.add(ws)
     db.commit()
     db.refresh(ws)
-    return ShopItem(name=ws.name, industry_code=ws.industry_code or "general").model_dump()
+    return _serialize_shop(db, ws)
+
+
+@router.patch("/shops/{shop_id}", response_model=ShopItem)
+def update_shop(shop_id: str, payload: ShopPatchRequest, db: Session = Depends(get_db)) -> dict:
+    from app.data.models import Workspace
+
+    ws = db.get(Workspace, shop_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+    if payload.name is not None:
+        new_name = payload.name.strip()
+        if not new_name:
+            raise HTTPException(status_code=400, detail="shop name cannot be empty")
+        if new_name != ws.name:
+            conflict = db.scalar(select(Workspace).where(Workspace.name == new_name))
+            if conflict:
+                raise HTTPException(status_code=409, detail=f"shop already exists: {new_name}")
+            ws.name = new_name
+    if payload.industry_code is not None:
+        ws.industry_code = payload.industry_code.strip() or "general"
+    if payload.store_url is not None:
+        ws.store_url = payload.store_url.strip() or None
+    if payload.description is not None:
+        ws.description = payload.description.strip() or None
+    if payload.archived is True and not ws.archived_at:
+        ws.archived_at = datetime.now(UTC)
+    if payload.archived is False:
+        ws.archived_at = None
+    db.commit()
+    db.refresh(ws)
+    return _serialize_shop(db, ws)
 
 
 @router.put("/shops/{shop_name}", response_model=ShopItem)
 def rename_shop(shop_name: str, payload: ShopItem, db: Session = Depends(get_db)) -> dict:
     from app.data.models import Workspace
-    ws = db.scalar(select(Workspace).where(Workspace.name == shop_name))
+    ws = _get_shop_by_id_or_name(db, shop_name)
     if not ws:
         raise HTTPException(status_code=404, detail=f"shop not found: {shop_name}")
     if payload.name and payload.name != shop_name:
@@ -3057,15 +3371,20 @@ def rename_shop(shop_name: str, payload: ShopItem, db: Session = Depends(get_db)
         ws.name = payload.name
     if payload.industry_code:
         ws.industry_code = payload.industry_code
+    if payload.store_url is not None:
+        ws.store_url = payload.store_url.strip() or None
+    if payload.description is not None:
+        ws.description = payload.description.strip() or None
     db.commit()
     db.refresh(ws)
-    return ShopItem(name=ws.name, industry_code=ws.industry_code or "general").model_dump()
+    return _serialize_shop(db, ws)
 
 
 @router.delete("/shops/{shop_name}", status_code=204)
 def delete_shop(shop_name: str, db: Session = Depends(get_db)):
     from app.data.models import PipelineRun, Workspace
-    ws = db.scalar(select(Workspace).where(Workspace.name == shop_name))
+
+    ws = _get_shop_by_id_or_name(db, shop_name)
     if not ws:
         raise HTTPException(status_code=404, detail=f"shop not found: {shop_name}")
     run_count = db.scalar(
@@ -3077,6 +3396,10 @@ def delete_shop(shop_name: str, db: Session = Depends(get_db)):
     total = db.scalar(select(func.count(Workspace.id)))
     if total and total <= 1:
         raise HTTPException(status_code=409, detail="Cannot delete the last shop")
+    if run_count and run_count > 0:
+        ws.archived_at = datetime.now(UTC)
+        db.commit()
+        return None
     db.delete(ws)
     db.commit()
 
@@ -3095,10 +3418,26 @@ def run_shop_analysis(
         save_shop_profile,
         save_competitor_analysis,
     )
+    from app.data.models import Workspace
 
-    workspace, project = _get_or_create_workspace_project(
-        db, payload.workspace_name, payload.project_name
-    )
+    shop = db.get(Workspace, payload.shop_id) if payload.shop_id else None
+    if payload.shop_id and not shop:
+        raise HTTPException(status_code=404, detail=f"shop not found: {payload.shop_id}")
+    if shop:
+        workspace, project = _get_or_create_workspace_project(
+            db, shop.name, payload.project_name if payload.project_name != "project_demo" else "shop_analysis"
+        )
+        if payload.industry_code:
+            workspace.industry_code = payload.industry_code
+        if payload.store_url:
+            workspace.store_url = payload.store_url
+        if payload.description:
+            workspace.description = payload.description
+    else:
+        workspace, project = _get_or_create_workspace_project(
+            db, payload.workspace_name, payload.project_name
+        )
+        shop = workspace
     runtime = AgentsRuntime()
     config = resolve_agent_config(db, agent_name="shop_analyst", run_provider="", run_model="")
     provider = config["provider_name"]
@@ -3134,6 +3473,8 @@ def run_shop_analysis(
             industry_code=payload.industry_code,
             store_url=payload.store_url,
             profile_data=result["profile"],
+            shop_id=shop.id if shop else None,
+            shop_name=shop.name if shop else None,
         )
         profile_result = {
             "source_type": "shop_profile",
@@ -3163,6 +3504,8 @@ def run_shop_analysis(
                 industry_code=payload.industry_code,
                 store_url=payload.store_url,
                 analysis_markdown=result["report"],
+                shop_id=shop.id if shop else None,
+                shop_name=shop.name if shop else None,
             )
             competitor_result = {
                 "source_type": "competitor_analysis",
@@ -3172,11 +3515,15 @@ def run_shop_analysis(
         except Exception as exc:
             errors.append(f"competitor_analysis: {exc}")
 
+    if shop and (profile_result or competitor_result):
+        shop.last_analyzed_at = datetime.now(UTC)
     db.commit()
 
     status = "failed" if not profile_result and not competitor_result else "completed"
     return ShopAnalysisResponse(
         id=analysis_id,
+        shop_id=shop.id if shop else None,
+        shop_name=shop.name if shop else None,
         store_url=payload.store_url,
         industry_code=payload.industry_code,
         profile=profile_result,
@@ -3189,14 +3536,22 @@ def run_shop_analysis(
 
 @router.get("/shop-analysis/history", response_model=ShopAnalysisHistoryResponse)
 def shop_analysis_history(
+    shop_id: str | None = Query(default=None),
     workspace_name: str = Query(default="workspace_demo"),
     project_name: str = Query(default="project_demo"),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> dict:
     from app.services.shop_analysis import _get_or_create_workspace_project
-    _, project = _get_or_create_workspace_project(db, workspace_name, project_name)
-    items = list_shop_analyses(db, project.id, limit=limit)
+    if shop_id:
+        shop = _get_shop_by_id_or_name(db, shop_id)
+        if not shop:
+            raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+        _, project = _get_or_create_workspace_project(db, shop.name, "shop_analysis")
+        items = list_shop_analyses(db, project.id, limit=limit, shop_id=shop.id)
+    else:
+        _, project = _get_or_create_workspace_project(db, workspace_name, project_name)
+        items = list_shop_analyses(db, project.id, limit=limit)
     return {"items": items}
 
 
@@ -3340,6 +3695,7 @@ def preflight_pipeline_run(payload: RunPreflightRequest, db: Session = Depends(g
         pipeline_mode=payload.pipeline_mode,
         has_image_inputs=payload.has_image_inputs,
         has_video_inputs=payload.has_video_inputs,
+        creative_specs=payload.creative_specs,
     )
     return RunPreflightResponse(**result)
 

@@ -51,6 +51,111 @@ def test_shop_analysis_run_stores_gm_memory(client):
     assert isinstance(memories, list)
 
 
+def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monkeypatch):
+    from app.agents.runtime import AgentsRuntime
+    from app.data.models import GmMemory
+    from sqlalchemy import select
+
+    def fake_profile(self, **kwargs):
+        return {
+            "profile": {
+                "positioning": "Premium urban pet utility",
+                "target_audience": "Urban dog owners",
+            }
+        }
+
+    def fake_competitors(self, **kwargs):
+        return {"report": "## Competitive Landscape Overview\nComparable pet accessory stores."}
+
+    monkeypatch.setattr(AgentsRuntime, "run_shop_profile_analysis", fake_profile)
+    monkeypatch.setattr(AgentsRuntime, "run_competitor_analysis", fake_competitors)
+
+    shop = client.post(
+        "/shops",
+        json={
+            "name": "shop-memory-test",
+            "industry_code": "pet_accessories",
+            "store_url": "https://shop-memory.example",
+        },
+    ).json()
+    resp = client.post(
+        "/shop-analysis/run",
+        json={
+            "shop_id": shop["id"],
+            "store_url": "https://shop-memory.example",
+            "description": "Pet accessories shop.",
+            "industry_code": "pet_accessories",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["shop_id"] == shop["id"]
+    rows = db_session.scalars(
+        select(GmMemory).where(GmMemory.memory_scope == "shop")
+    ).all()
+    assert {row.source_type for row in rows} >= {"shop_profile", "competitor_analysis"}
+    assert all((row.content or {}).get("shop_id") == shop["id"] for row in rows)
+
+
+def test_create_run_planning_input_includes_shop_memory(client, db_session):
+    from app.data.models import GmMemory, Workspace
+    from app.services.runs import _build_task_input, create_run
+    from app.schemas.api import RunCreateRequest
+
+    shop = Workspace(
+        name="planning-shop",
+        industry_code="pet_accessories",
+        store_url="https://planning-shop.example",
+        description="Premium dog walking accessories.",
+    )
+    db_session.add(shop)
+    db_session.flush()
+    db_session.add(
+        GmMemory(
+            project_id="shop-memory-placeholder",
+            memory_scope="shop",
+            industry_code="pet_accessories",
+            source_type="shop_profile",
+            memory_type="store_intelligence",
+            content={
+                "shop_id": shop.id,
+                "shop_name": shop.name,
+                "profile": {"positioning": "Premium hands-free dog walking"},
+            },
+        )
+    )
+    db_session.flush()
+
+    run = create_run(
+        db_session,
+        RunCreateRequest(
+            workspace_name="planning-shop",
+            project_name="dog-walking",
+            product_name="hands-free leash",
+            product_code="SHOP-MEM-001",
+            industry_code="pet_accessories",
+            campaign_name="spring-launch",
+            creative_preset="custom",
+            creative_specs={
+                "image_size": "1:1",
+                "video_size": "1:1",
+                "resolution": "720p",
+                "video_duration_seconds": 5,
+            },
+        ),
+    )
+    planning_task = next(task for task in run.stage_tasks if task.stage_name == "planning")
+    task_input = _build_task_input(db_session, run, planning_task)
+
+    shop_lessons = [
+        item for item in task_input["gm_lessons"]
+        if item["memory_scope"] == "shop"
+    ]
+    assert shop_lessons
+    assert shop_lessons[0]["content"]["profile"]["positioning"] == "Premium hands-free dog walking"
+
+
 def test_shop_analysis_history_after_run(client):
     # Run an analysis first
     client.post(

@@ -40,14 +40,18 @@ def save_shop_profile(
     industry_code: str,
     store_url: str,
     profile_data: dict,
+    shop_id: str | None = None,
+    shop_name: str | None = None,
 ) -> GmMemory:
     entry = GmMemory(
         project_id=project_id,
-        memory_scope="industry",
+        memory_scope="shop" if shop_id else "industry",
         industry_code=industry_code,
         source_type="shop_profile",
         memory_type="store_intelligence",
         content={
+            "shop_id": shop_id,
+            "shop_name": shop_name,
             "store_url": store_url,
             "profile": profile_data,
             "generated_at": utcnow().isoformat(),
@@ -65,14 +69,18 @@ def save_competitor_analysis(
     industry_code: str,
     store_url: str,
     analysis_markdown: str,
+    shop_id: str | None = None,
+    shop_name: str | None = None,
 ) -> GmMemory:
     entry = GmMemory(
         project_id=project_id,
-        memory_scope="industry",
+        memory_scope="shop" if shop_id else "industry",
         industry_code=industry_code,
         source_type="competitor_analysis",
         memory_type="store_intelligence",
         content={
+            "shop_id": shop_id,
+            "shop_name": shop_name,
             "store_url": store_url,
             "report": analysis_markdown,
             "generated_at": utcnow().isoformat(),
@@ -87,20 +95,25 @@ def list_shop_analyses(
     db: Session,
     project_id: str,
     limit: int = 20,
+    shop_id: str | None = None,
 ) -> list[dict]:
-    rows = db.scalars(
+    stmt = (
         select(GmMemory)
-        .where(
-            GmMemory.project_id == project_id,
-            GmMemory.source_type.in_(["shop_profile", "competitor_analysis"]),
-        )
+        .where(GmMemory.source_type.in_(["shop_profile", "competitor_analysis"]))
         .order_by(desc(GmMemory.created_at))
-        .limit(limit)
-    ).all()
+        .limit(limit * 3 if shop_id else limit)
+    )
+    if shop_id:
+        stmt = stmt.where(GmMemory.memory_scope == "shop")
+    else:
+        stmt = stmt.where(GmMemory.project_id == project_id)
+    rows = db.scalars(stmt).all()
 
     result: list[dict] = []
     seen: set[str] = set()
     for row in rows:
+        if shop_id and (row.content or {}).get("shop_id") != shop_id:
+            continue
         store_url = (row.content or {}).get("store_url", "")
         batch_key = f"{store_url}|{row.source_type}"
         if batch_key in seen:
@@ -122,6 +135,8 @@ def list_shop_analyses(
             "summary": summary,
             "created_at": row.created_at,
         })
+        if len(result) >= limit:
+            break
     return result
 
 

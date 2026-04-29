@@ -510,6 +510,7 @@ class ProductConfigHint(BaseModel):
 
 
 class ShopAnalysisRequest(BaseModel):
+    shop_id: str | None = None
     store_url: str = Field(..., min_length=1, description="Store URL to research")
     description: str = Field(default="", description="Operator-provided store description")
     industry_code: str = Field(default="general", description="Industry code for GmMemory association")
@@ -525,6 +526,8 @@ class ShopAnalysisResult(BaseModel):
 
 class ShopAnalysisResponse(BaseModel):
     id: str
+    shop_id: str | None = None
+    shop_name: str | None = None
     store_url: str
     industry_code: str
     profile: ShopAnalysisResult | None = None
@@ -549,8 +552,24 @@ class ShopAnalysisHistoryResponse(BaseModel):
 
 
 class ShopItem(BaseModel):
+    id: str | None = None
     name: str
     industry_code: str = "general"
+    store_url: str | None = None
+    description: str | None = None
+    category_count: int = 0
+    run_count: int = 0
+    analysis_count: int = 0
+    archived_at: datetime | None = None
+    last_analyzed_at: datetime | None = None
+
+
+class ShopPatchRequest(BaseModel):
+    name: str | None = None
+    industry_code: str | None = None
+    store_url: str | None = None
+    description: str | None = None
+    archived: bool | None = None
 
 
 class ShopListResponse(BaseModel):
