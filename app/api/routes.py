@@ -398,6 +398,12 @@ def _serialize_agent_config(row) -> AgentApiConfigView:
     image_key_env = image_cfg.get("api_key_env")
     video_cfg = ((row.extra or {}).get("video_config") or {}) if isinstance(row.extra, dict) else {}
     video_key_env = video_cfg.get("api_key_env")
+    # Search tool configs for shop_analyst
+    extra_dict = row.extra if isinstance(row.extra, dict) else {}
+    tavily_cfg = extra_dict.get("tavily_config") or {}
+    firecrawl_cfg = extra_dict.get("firecrawl_config") or {}
+    tavily_key_env = tavily_cfg.get("api_key_env")
+    firecrawl_key_env = firecrawl_cfg.get("api_key_env")
     thinking_mode = row.thinking_mode or "auto"
     thinking_applied = bool(row.provider_name == "kimi" and row.model_name.startswith("kimi-k") and thinking_mode != "disabled")
     return AgentApiConfigView(
@@ -417,6 +423,10 @@ def _serialize_agent_config(row) -> AgentApiConfigView:
         video_api_base_url=video_cfg.get("api_base_url"),
         video_api_key_env=video_key_env,
         video_api_key_available=api_key_available(video_key_env),
+        tavily_api_key_env=tavily_key_env,
+        tavily_api_key_available=api_key_available(tavily_key_env),
+        firecrawl_api_key_env=firecrawl_key_env,
+        firecrawl_api_key_available=api_key_available(firecrawl_key_env),
         thinking_mode=row.thinking_mode or "auto",
         thinking_budget_tokens=row.thinking_budget_tokens,
         max_output_tokens=row.max_output_tokens,

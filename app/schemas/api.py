@@ -216,6 +216,10 @@ class AgentApiConfigView(BaseModel):
     video_api_base_url: str | None = None
     video_api_key_env: str | None = None
     video_api_key_available: bool = False
+    tavily_api_key_env: str | None = None
+    tavily_api_key_available: bool = False
+    firecrawl_api_key_env: str | None = None
+    firecrawl_api_key_available: bool = False
     thinking_mode: Literal["auto", "enabled", "disabled"] = "auto"
     thinking_budget_tokens: int | None = None
     max_output_tokens: int | None = None
