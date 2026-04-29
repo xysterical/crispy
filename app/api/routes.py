@@ -1465,14 +1465,21 @@ def _shop_analysis_page_html() -> str:
 
           <section class="card">
             <h2>New Analysis</h2>
+            <div class="form-row" style="margin-bottom:10px;">
+              <div>
+                <label>Shop</label>
+                <input id="shop-name" list="shop-analysis-list" placeholder="Select or type shop name" onchange="onShopAnalysisShopChange()" />
+                <datalist id="shop-analysis-list"></datalist>
+              </div>
+              <div>
+                <label>Industry Code</label>
+                <input id="industry-code" value="general" placeholder="Auto-filled from shop" />
+              </div>
+            </div>
             <div class="form-row">
               <div>
                 <label>Store URL (required)</label>
                 <input id="store-url" type="url" placeholder="https://example.com" />
-              </div>
-              <div>
-                <label>Industry Code</label>
-                <input id="industry-code" value="general" placeholder="e.g. pet_accessories" />
               </div>
             </div>
             <div style="margin-top:10px;">
@@ -1520,6 +1527,27 @@ def _shop_analysis_page_html() -> str:
             return res.json();
           }
 
+          async function loadShopAnalysisShops() {
+            try {
+              const data = await api("/shops");
+              const shops = data.shops || [];
+              const datalist = document.getElementById("shop-analysis-list");
+              datalist.innerHTML = shops.map(s =>
+                '<option value="' + s.name.replace(/"/g, '&quot;') + '" data-industry="' + (s.industry_code || 'general') + '">'
+              ).join("");
+            } catch (err) {}
+          }
+
+          function onShopAnalysisShopChange() {
+            const shopName = document.getElementById("shop-name").value;
+            fetch("/shops").then(r => r.json()).then(data => {
+              const shop = (data.shops || []).find(s => s.name === shopName);
+              if (shop) {
+                document.getElementById("industry-code").value = shop.industry_code || "general";
+              }
+            }).catch(() => {});
+          }
+
           async function runAnalysis() {
             const storeUrl = document.getElementById("store-url").value.trim();
             if (!storeUrl) { alert("Please enter a store URL."); return; }
@@ -1547,6 +1575,8 @@ def _shop_analysis_page_html() -> str:
                   store_url: storeUrl,
                   description: document.getElementById("store-description").value.trim(),
                   industry_code: document.getElementById("industry-code").value.trim() || "general",
+                  workspace_name: document.getElementById("shop-name").value.trim() || "workspace_demo",
+                  project_name: document.getElementById("shop-name").value.trim() || "workspace_demo",
                 }),
               });
 
@@ -1587,7 +1617,8 @@ def _shop_analysis_page_html() -> str:
 
           async function loadHistory() {
             try {
-              const data = await api("/shop-analysis/history");
+              const shopName = document.getElementById("shop-name").value.trim() || "workspace_demo";
+              const data = await api("/shop-analysis/history?workspace_name=" + encodeURIComponent(shopName) + "&project_name=" + encodeURIComponent(shopName));
               const list = document.getElementById("history-list");
               if (!data.items.length) {
                 list.innerHTML = '<div class="muted">No analyses yet.</div>';
@@ -1612,7 +1643,7 @@ def _shop_analysis_page_html() -> str:
             }
           }
 
-          document.addEventListener("DOMContentLoaded", loadHistory);
+          document.addEventListener("DOMContentLoaded", () => { loadHistory(); loadShopAnalysisShops(); });
         </script>
       </body>
     </html>
