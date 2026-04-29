@@ -376,8 +376,9 @@ def _sse_event(event_name: str, payload: dict, event_id: str | None = None) -> s
 def _pipeline_mode_views() -> list[PipelineModeView]:
     labels = {
         PipelineMode.COPY_IMAGE_ONLY.value: "Copy + Image",
-        PipelineMode.VIDEO_ONLY.value: "Video",
+        PipelineMode.VIDEO_ONLY.value: "Copy + Video",
         PipelineMode.FULL_MULTIMODAL.value: "Full Multimodal",
+        PipelineMode.MARKETPLACE_MAIN_IMAGE.value: "Studio Main Image",
     }
     views: list[PipelineModeView] = []
     for mode, stages in PIPELINE_STAGE_PLANS.items():
@@ -567,8 +568,9 @@ def _dashboard_shared_js() -> str:
           function modeLabel(mode) {
             const m = String(mode || "");
             if (m === "full_multimodal") return "Full";
-            if (m === "video_only") return "Video";
+            if (m === "video_only") return "Copy + Video";
             if (m === "copy_image_only") return "Image";
+            if (m === "marketplace_main_image") return "Studio Main Image";
             return m;
           }
 
@@ -1203,7 +1205,8 @@ def _dashboard_shared_js() -> str:
               if (m.mode === "copy_image_only") opt.selected = true;
               sel.appendChild(opt);
             });
-            refreshModeHint();
+            if (typeof refreshPipelineFields === "function") refreshPipelineFields();
+            else refreshModeHint();
           }
 
           function refreshModeHint(){
@@ -3794,6 +3797,7 @@ async def create_pipeline_run_rich(
 ):
     if pipeline_mode not in PIPELINE_STAGE_PLANS:
         raise HTTPException(status_code=400, detail=f"unsupported pipeline_mode: {pipeline_mode}")
+    creative_specs_payload = _load_json_dict(creative_specs, "creative_specs")
     payload = RunCreateRequest(
         workspace_name=workspace_name,
         project_name=project_name,
@@ -3806,7 +3810,7 @@ async def create_pipeline_run_rich(
         market=market,
         locale=locale,
         creative_preset=creative_preset,
-        creative_specs=_load_json_dict(creative_specs, "creative_specs"),
+        creative_specs=creative_specs_payload,
         variant_count=variant_count,
         model_provider=model_provider,
         model_name=model_name,
@@ -3830,6 +3834,7 @@ async def create_pipeline_run_rich(
         pipeline_mode=pipeline_mode,
         has_image_inputs=has_image,
         has_video_inputs=has_video,
+        creative_specs=creative_specs_payload,
     )
     # -- end inline preflight --
 

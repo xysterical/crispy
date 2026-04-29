@@ -183,6 +183,46 @@ def test_marketplace_preflight_blocks_missing_media_and_explicit_no_reference_ed
     assert resp.json()["severity"] == "error"
 
 
+def test_marketplace_pipeline_mode_defaults_to_main_image_specs(client):
+    resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-market-mode",
+            "project_name": "p-market-mode",
+            "product_name": "ceramic mug",
+            "product_code": "MUG-MODE-001",
+            "industry_code": "home_goods",
+            "campaign_name": "market-main-image-mode",
+            "creative_preset": "custom",
+            "creative_specs": {"image_size": "1:1", "video_size": "1:1", "resolution": "2000px", "video_duration_seconds": 5},
+            "pipeline_mode": "marketplace_main_image",
+            "approval_mode": "semi_auto",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pipeline_mode"] == "marketplace_main_image"
+    assert body["creative_preset"] == "marketplace_main_image_pack"
+    assert body["creative_specs"]["asset_goal"] == "marketplace_main_image"
+    assert body["creative_specs"]["export_size_px"] == 2000
+
+
+def test_marketplace_pipeline_mode_preflight_requires_reference_media(client):
+    resp = client.post(
+        "/runs/preflight",
+        json={
+            "pipeline_mode": "marketplace_main_image",
+            "has_image_inputs": False,
+            "has_video_inputs": False,
+            "creative_specs": {},
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["severity"] == "error"
+    assert "marketplace_main_image.reference_media" in [item["key"] for item in payload["checks"]]
+
+
 def test_marketplace_run_generates_qa_and_export_zip(client, monkeypatch):
     fake_provider = FakeMarketplaceProvider()
     monkeypatch.setitem(runtime.providers._providers, "openai", fake_provider)

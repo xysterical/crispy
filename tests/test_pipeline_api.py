@@ -6,13 +6,38 @@ from app.data.models import VariantAsset
 from app.data.session import SessionLocal
 from app.providers.llm import GeneratedVideo, VideoGenResult
 from app.orchestrator.state_machine import STAGE_ORDER, stage_plan_for
-from app.services.runs import execute_next_queued_stage
+from app.services.runs import _build_task_input, execute_next_queued_stage
 
 
 def _run_worker_once() -> None:
     with SessionLocal() as db:
         execute_next_queued_stage(db)
         db.commit()
+
+
+def test_channel_is_included_in_agent_task_input(client):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "channel_w",
+            "project_name": "channel_p",
+            "product_name": "pet wipes",
+            "product_code": "CH-001",
+            "industry_code": "pet_care",
+            "campaign_name": "tiktok-launch",
+            "channel": "tiktok",
+            "creative_preset": "meta_square_5s",
+        },
+    )
+    assert create_resp.status_code == 200
+    run_id = create_resp.json()["id"]
+
+    with SessionLocal() as db:
+        from app.data.models import PipelineRun, StageTask
+
+        run = db.get(PipelineRun, run_id)
+        task = db.query(StageTask).filter_by(run_id=run_id, stage_name="planning").one()
+        assert _build_task_input(db, run, task)["channel"] == "tiktok"
 
 
 def test_pipeline_run_can_progress_with_human_gates(client):
@@ -272,7 +297,10 @@ def test_pipeline_modes_endpoint(client):
     assert "copy_image_only" in modes
     assert "video_only" in modes
     assert "full_multimodal" in modes
+    assert "marketplace_main_image" in modes
     assert modes["copy_image_only"]["agent_count"] >= 1
+    assert modes["marketplace_main_image"]["display_name"] == "Studio Main Image"
+    assert modes["marketplace_main_image"]["stages"] == modes["copy_image_only"]["stages"]
 
 
 def test_create_run_requires_product_and_industry_and_preset(client):

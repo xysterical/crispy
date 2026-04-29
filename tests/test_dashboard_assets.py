@@ -131,3 +131,26 @@ def test_dashboard_create_run_has_accordion_sections(client):
     assert "mode-guided" in html
     assert "mode-expert" in html
     assert "file-drop-zone" in html
+
+
+def test_dashboard_create_run_labels_pipeline_and_specs_clearly(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    html = resp.text
+
+    assert "Run Template:" in html
+    assert "Creative Template:" not in html
+    assert "Creative Specs Preset" in html
+    assert "'copy_image_only': ['field-image-size']" in html
+    assert "'marketplace_main_image': ['field-image-size']" in html
+    assert "Studio Main Image" in html
+    assert "marketplace_main_image_pack" in html
+    assert 'if (m === "marketplace_main_image") return "Studio Main Image";' in html
+    assert 'if (typeof refreshPipelineFields === "function") refreshPipelineFields();' in html
+    assert '<select id="channel"' in html
+    assert "Meta Ads" in html
+
+    modes = {item["mode"]: item for item in client.get("/pipeline-modes").json()}
+    assert modes["video_only"]["display_name"] == "Copy + Video"
+    assert modes["full_multimodal"]["display_name"] == "Full Multimodal"
+    assert modes["marketplace_main_image"]["display_name"] == "Studio Main Image"

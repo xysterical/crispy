@@ -9,10 +9,19 @@ class PipelineMode(StrEnum):
     COPY_IMAGE_ONLY = "copy_image_only"
     VIDEO_ONLY = "video_only"
     FULL_MULTIMODAL = "full_multimodal"
+    MARKETPLACE_MAIN_IMAGE = "marketplace_main_image"
 
 
 PIPELINE_STAGE_PLANS: dict[str, list[str]] = {
     PipelineMode.COPY_IMAGE_ONLY.value: [
+        StageName.INTAKE.value,
+        StageName.PLANNING.value,
+        StageName.DIVERGENCE.value,
+        StageName.COPY_IMAGE_GENERATION.value,
+        StageName.VISUAL_QUALITY_ASSESSMENT.value,
+        StageName.EVALUATION_SELECTION.value,
+    ],
+    PipelineMode.MARKETPLACE_MAIN_IMAGE.value: [
         StageName.INTAKE.value,
         StageName.PLANNING.value,
         StageName.DIVERGENCE.value,

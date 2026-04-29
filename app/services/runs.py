@@ -276,7 +276,17 @@ def create_run(db: Session, payload: RunCreateRequest) -> PipelineRun:
         channel=payload.channel,
         objective=payload.objective,
     )
-    creative_specs = resolve_creative_specs(payload.creative_preset, payload.creative_specs)
+    creative_preset = payload.creative_preset
+    creative_specs = resolve_creative_specs(creative_preset, payload.creative_specs)
+    if payload.pipeline_mode == "marketplace_main_image" and not is_marketplace_main_image(creative_specs):
+        creative_preset = "marketplace_main_image_pack"
+        defaults = resolve_creative_specs(creative_preset)
+        defaults.update(creative_specs)
+        defaults["asset_goal"] = "marketplace_main_image"
+        defaults.setdefault("platform_targets", ["tiktok_shop", "shopify", "alibaba", "amazon"])
+        defaults.setdefault("export_size_px", 2000)
+        defaults.setdefault("background_policy", "pure_white")
+        creative_specs = defaults
     model_snapshot = _model_snapshot_for_run(
         db,
         run_provider=payload.model_provider,
@@ -300,7 +310,7 @@ def create_run(db: Session, payload: RunCreateRequest) -> PipelineRun:
         approval_mode=payload.approval_mode or "manual",
         product_code=product.product_code,
         industry_code=payload.industry_code,
-        creative_preset=payload.creative_preset,
+        creative_preset=creative_preset,
         creative_specs=creative_specs,
         model_provider=payload.model_provider or "openai",
         model_name=payload.model_name or "gpt-4.1",
@@ -549,9 +559,11 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
 
 def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
     product = db.get(Product, run.product_id)
+    campaign = db.get(Campaign, run.campaign_id)
     base = {
         "run_id": run.id,
         "product_name": product.name if product else "unknown_product",
+        "channel": campaign.channel if campaign else "",
         "context": run.context_json or {},
         "market": run.market,
         "locale": run.locale,

@@ -6,7 +6,7 @@ from __future__ import annotations
 CREATE_RUN_HTML = """
             <!-- Template Bar -->
             <div class="template-bar" id="template-bar">
-              <span style="font-weight:600;font-size:12px;">Creative Template:</span>
+              <span style="font-weight:600;font-size:12px;">Run Template:</span>
               <select id="template-selector" onchange="loadTemplate()" style="font-size:12px;padding:6px 8px;">
                 <option value="">-- choose --</option>
               </select>
@@ -90,16 +90,27 @@ CREATE_RUN_HTML = """
                     </div>
                     <div class="row">
                       <div><label>Variant Count</label><input id="variant_count" type="number" min="1" max="16" value="8" /></div>
-                      <div><label>Channel</label><input id="channel" value="meta" /></div>
+                      <div>
+                        <label>Channel</label>
+                        <select id="channel">
+                          <option value="meta" selected>Meta Ads</option>
+                          <option value="tiktok">TikTok</option>
+                          <option value="youtube">YouTube</option>
+                          <option value="amazon">Amazon</option>
+                          <option value="shopify">Shopify</option>
+                          <option value="other">Other</option>
+                        </select>
+                      </div>
                     </div>
+                    <div class="hint muted">Channel is passed to campaign context for agent strategy and creative recommendations.</div>
                     <div id="mode-summary" class="hint muted">Loading pipeline modes...</div>
 
                     <!-- Creative Specs -->
                     <div style="margin-top:8px;">
                       <div class="quick-fill-bar">
-                        <span style="font-weight:600;font-size:13px;">Creative Specs</span>
+                        <span style="font-weight:600;font-size:13px;">Creative Specs Preset</span>
                         <select id="quick-fill-preset" onchange="applyQuickFill()" style="width:auto;min-width:200px;">
-                          <option value="">Quick Fill...</option>
+                          <option value="">Choose specs preset...</option>
                         </select>
                         <button onclick="saveCurrentAsCreativePreset()" title="Save as preset">+ Save</button>
                         <button onclick="manageCreativePresets()" title="Manage presets">&#9881;</button>
@@ -264,7 +275,16 @@ CREATE_RUN_JS = """
   const PIPELINE_FIELD_MAP = {
     'full_multimodal': ['field-image-size', 'field-video-size', 'field-video-duration'],
     'video_only': ['field-video-size', 'field-video-duration'],
-    'copy_image_only': [],
+    'copy_image_only': ['field-image-size'],
+    'marketplace_main_image': ['field-image-size'],
+  };
+
+  const MARKETPLACE_MAIN_IMAGE_SPEC = {
+    image_size: '1:1',
+    video_size: '1:1',
+    resolution: '2000px',
+    video_duration_seconds: 5,
+    marketplace: true,
   };
 
   function refreshPipelineFields() {
@@ -273,6 +293,15 @@ CREATE_RUN_JS = """
     ['field-image-size', 'field-video-size', 'field-video-duration'].forEach(id => {
       document.getElementById(id).style.display = visible.includes(id) ? 'block' : 'none';
     });
+    if (mode === 'marketplace_main_image') {
+      applySpecs(MARKETPLACE_MAIN_IMAGE_SPEC);
+      const quickFill = document.getElementById('quick-fill-preset');
+      if (quickFill) quickFill.value = 'sys_marketplace_main_image_pack';
+    } else {
+      const quickFill = document.getElementById('quick-fill-preset');
+      if (quickFill?.value === 'sys_marketplace_main_image_pack') quickFill.value = '';
+      document.getElementById('marketplace-fields').style.display = 'none';
+    }
     // also call shared refreshModeHint to update the mode summary text
     if (typeof refreshModeHint === 'function') refreshModeHint();
   }
@@ -280,7 +309,7 @@ CREATE_RUN_JS = """
   // -- Quick Fill Creative Specs --
   function buildQuickFillOptions() {
     const sel = document.getElementById('quick-fill-preset');
-    sel.innerHTML = '<option value="">Quick Fill...</option>';
+    sel.innerHTML = '<option value="">Choose specs preset...</option>';
     // Recent (auto) -- stored in localStorage
     const recent = JSON.parse(localStorage.getItem('crispy_recent_specs') || '[]');
     if (recent.length) {
@@ -307,7 +336,7 @@ CREATE_RUN_JS = """
       { value: 'sys_meta_square_5s', label: '1:1 Square 720p 5s', spec: { image_size: '1:1', video_size: '1:1', resolution: '720p', video_duration_seconds: 5 } },
       { value: 'sys_meta_vertical_5s', label: '9:16 Vertical 720p 5s', spec: { image_size: '9:16', video_size: '9:16', resolution: '720p', video_duration_seconds: 5 } },
       { value: 'sys_youtube_landscape_6s', label: '16:9 Landscape 1080p 6s', spec: { image_size: '16:9', video_size: '16:9', resolution: '1080p', video_duration_seconds: 6 } },
-      { value: 'sys_marketplace_main_image_pack', label: '1:1 Marketplace 2000px', spec: { image_size: '1:1', video_size: '1:1', resolution: '2000px', video_duration_seconds: 5, marketplace: true } },
+      { value: 'sys_marketplace_main_image_pack', label: 'Studio Main Image · 1:1 Marketplace 2000px', spec: MARKETPLACE_MAIN_IMAGE_SPEC },
     ]));
   }
 
@@ -328,7 +357,14 @@ CREATE_RUN_JS = """
     const sel = document.getElementById('quick-fill-preset');
     const opt = sel.selectedOptions[0];
     if (!opt || !opt._spec) return;
-    const s = opt._spec;
+    applySpecs(opt._spec);
+    if (opt._spec.marketplace) {
+      document.getElementById('pipeline_mode').value = 'marketplace_main_image';
+      refreshPipelineFields();
+    }
+  }
+
+  function applySpecs(s) {
     document.getElementById('image_size').value = s.image_size || '';
     document.getElementById('video_size').value = s.video_size || '';
     document.getElementById('resolution').value = s.resolution || '';
@@ -525,7 +561,8 @@ CREATE_RUN_JS = """
     const resolution = document.getElementById('resolution').value.trim();
     const duration = parseInt(document.getElementById('video_duration_seconds').value) || 5;
     const spec = { image_size: imageSize, video_size: videoSize, resolution, video_duration_seconds: duration };
-    const isMarketplace = document.getElementById('marketplace-fields').style.display === 'block';
+    const isMarketplace = document.getElementById('pipeline_mode').value === 'marketplace_main_image'
+      || document.getElementById('marketplace-fields').style.display === 'block';
     if (isMarketplace) {
       spec.asset_goal = 'marketplace_main_image';
       spec.platform_targets = ['tiktok_shop', 'shopify', 'alibaba', 'amazon'].filter(p => document.getElementById('platform_' + p)?.checked);
@@ -560,7 +597,7 @@ CREATE_RUN_JS = """
     fd.set('pipeline_mode', document.getElementById('pipeline_mode').value);
     fd.set('approval_mode', document.getElementById('approval_mode').value);
     fd.set('variant_count', document.getElementById('variant_count').value);
-    fd.set('creative_preset', 'custom');
+    fd.set('creative_preset', document.getElementById('pipeline_mode').value === 'marketplace_main_image' ? 'marketplace_main_image_pack' : 'custom');
     fd.set('creative_specs', JSON.stringify(creativeSpecs));
     fd.set('manual_research_brief', document.getElementById('manual_research_brief').value);
     fd.set('url_references', JSON.stringify(

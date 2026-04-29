@@ -166,7 +166,7 @@ def preflight_run_capabilities(
 ) -> dict:
     stage_plan = stage_plan_for(pipeline_mode)
     creative_specs = creative_specs or {}
-    marketplace_goal = is_marketplace_main_image(creative_specs)
+    marketplace_goal = pipeline_mode == "marketplace_main_image" or is_marketplace_main_image(creative_specs)
     checks: list[dict] = []
     overall: Severity = "ok"
 

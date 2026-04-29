@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.contracts import ConversionForecast, FeedbackRow, ScoreCard, StageName
 
-PipelineMode = Literal["copy_image_only", "video_only", "full_multimodal"]
+PipelineMode = Literal["copy_image_only", "video_only", "full_multimodal", "marketplace_main_image"]
 ApprovalMode = Literal["manual", "semi_auto", "full_auto"]
 
 
