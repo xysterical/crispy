@@ -382,6 +382,40 @@ def test_creative_preset_is_materialized_into_run(client):
         client.post(f"/runs/{run['id']}/advance", json={"notes": "ok"})
 
 
+def test_pipeline_mode_tiktok_shop_video_materializes_defaults(client):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-tiktok",
+            "project_name": "p-tiktok",
+            "product_name": "pet grooming glove",
+            "product_code": "TT-001",
+            "industry_code": "pet_care",
+            "campaign_name": "tiktok-shop-video",
+            "pipeline_mode": "tiktok_shop_video",
+            "creative_preset": "custom",
+            "creative_specs": {
+                "image_size": "9:16",
+                "video_size": "9:16",
+                "resolution": "720p",
+                "video_duration_seconds": 12,
+                "tiktok_video_style": "direct_response_ad",
+            },
+            "enable_research": True,
+        },
+    )
+    assert create_resp.status_code == 200
+    run = create_resp.json()
+    assert run["pipeline_mode"] == "tiktok_shop_video"
+    assert run["creative_preset"] == "tiktok_shop_conversion_12s"
+    assert run["creative_specs"]["platform"] == "tiktok"
+    assert run["creative_specs"]["creative_goal"] == "shop_conversion_video"
+    assert run["creative_specs"]["tiktok_video_style"] == "direct_response_ad"
+    assert run["creative_specs"]["platform_targets"] == ["tiktok", "tiktok_shop"]
+    assert run["enable_research"] is False
+    assert [task["stage_name"] for task in run["stage_tasks"]] == stage_plan_for("tiktok_shop_video")
+
+
 def test_runs_preflight_reports_video_generation_incompatibility(client):
     patch_resp = client.patch(
         "/agent-configs/video_generation_agent",
@@ -407,6 +441,109 @@ def test_runs_preflight_reports_video_generation_incompatibility(client):
     assert payload["severity"] == "error"
     keys = [row["key"] for row in payload["checks"]]
     assert "video_generation.video_generation" in keys
+
+
+def test_tiktok_shop_preflight_rejects_invalid_style(client):
+    resp = client.post(
+        "/runs/preflight",
+        json={
+            "pipeline_mode": "tiktok_shop_video",
+            "has_image_inputs": True,
+            "has_video_inputs": False,
+            "creative_specs": {
+                "video_size": "9:16",
+                "video_duration_seconds": 12,
+                "tiktok_video_style": "viral_dance",
+            },
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["ok"] is False
+    assert payload["severity"] == "error"
+    assert "tiktok_shop_video.style" in [row["key"] for row in payload["checks"]]
+
+
+def test_tiktok_shop_video_scripting_outputs_tiktok_payload(client):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-tiktok-script",
+            "project_name": "p-tiktok-script",
+            "product_name": "travel toiletry bag",
+            "product_code": "TT-SCRIPT-001",
+            "industry_code": "travel",
+            "campaign_name": "tiktok-script",
+            "pipeline_mode": "tiktok_shop_video",
+            "creative_preset": "tiktok_shop_conversion_12s",
+            "creative_specs": {"tiktok_video_style": "ugc_demo"},
+            "business_context": {
+                "target_audience": "frequent travelers",
+                "key_value_props": ["keeps bottles upright", "clear compartments"],
+                "primary_cta": "Shop on TikTok",
+            },
+            "manual_research_brief": "Show a creator packing for a weekend trip.",
+        },
+    )
+    assert create_resp.status_code == 200
+    run_id = create_resp.json()["id"]
+
+    for stage in ["intake", "planning", "divergence", "video_scripting"]:
+        _run_worker_once()
+        run = client.get(f"/runs/{run_id}").json()
+        if stage != "video_scripting":
+            client.post(f"/runs/{run_id}/advance", json={"notes": "ok"})
+
+    script_task = next(task for task in run["stage_tasks"] if task["stage_name"] == "video_scripting")
+    first_script = script_task["output_payload"]["scripts"][0]
+    assert first_script["tiktok"]["style"] == "ugc_demo"
+    assert first_script["tiktok"]["opening_hook"]
+    assert first_script["tiktok"]["on_screen_text"]
+    assert first_script["tiktok"]["voiceover_lines"]
+    assert first_script["tiktok"]["shot_timing"][0]["intent"] == "thumb_stop"
+    assert first_script["tiktok"]["cta"] == "Shop on TikTok"
+
+
+def test_tiktok_shop_evaluation_includes_tiktok_scores(client):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-tiktok-eval",
+            "project_name": "p-tiktok-eval",
+            "product_name": "desk cable clips",
+            "product_code": "TT-EVAL-001",
+            "industry_code": "office",
+            "campaign_name": "tiktok-eval",
+            "pipeline_mode": "tiktok_shop_video",
+            "creative_preset": "tiktok_shop_conversion_12s",
+            "creative_specs": {"tiktok_video_style": "direct_response_ad"},
+            "business_context": {
+                "target_audience": "home office workers",
+                "key_value_props": ["clean desk setup"],
+                "primary_cta": "Shop Now",
+            },
+        },
+    )
+    assert create_resp.status_code == 200
+    run_id = create_resp.json()["id"]
+    for stage in stage_plan_for("tiktok_shop_video"):
+        _run_worker_once()
+        run = client.get(f"/runs/{run_id}").json()
+        if stage != "evaluation_selection":
+            client.post(f"/runs/{run_id}/advance", json={"notes": "ok"})
+
+    evaluation_task = next(task for task in run["stage_tasks"] if task["stage_name"] == "evaluation_selection")
+    ranked = evaluation_task["output_payload"]["evaluation_result"]["ranked_variants"][0]
+    for key in [
+        "thumb_stop_power",
+        "product_clarity",
+        "purchase_intent",
+        "native_tiktok_feel",
+        "watch_through_potential",
+        "claim_safety",
+        "generation_feasibility",
+    ]:
+        assert key in ranked["sub_scores"]
 
 
 def test_runs_preflight_reports_intake_video_understanding_incompatibility(client):

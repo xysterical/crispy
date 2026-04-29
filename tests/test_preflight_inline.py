@@ -58,3 +58,25 @@ def test_rich_run_includes_preflight_warnings(client):
     body = resp.json()
     assert "_preflight" in body
     assert "severity" in body["_preflight"]
+
+
+def test_tiktok_shop_preflight_reports_reference_ratio_and_duration_warnings(client):
+    resp = client.post(
+        "/runs/preflight",
+        json={
+            "pipeline_mode": "tiktok_shop_video",
+            "has_image_inputs": False,
+            "has_video_inputs": False,
+            "creative_specs": {
+                "video_size": "1:1",
+                "video_duration_seconds": 30,
+                "tiktok_video_style": "ugc_demo",
+            },
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    keys = {row["key"]: row for row in payload["checks"]}
+    assert keys["tiktok_shop_video.reference_media"]["severity"] == "warn"
+    assert keys["tiktok_shop_video.video_size"]["severity"] == "warn"
+    assert keys["tiktok_shop_video.duration"]["severity"] == "warn"

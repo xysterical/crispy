@@ -204,11 +204,31 @@ class CopyImageBundle(BaseModel):
     image_assets: list[ImageAssetRef] = Field(default_factory=list)
 
 
+class TikTokShotTiming(BaseModel):
+    start: float = 0.0
+    end: float = 0.0
+    visual: str = ""
+    text_overlay: str = ""
+    intent: str = "product_demo"
+
+
+class TikTokScriptDetails(BaseModel):
+    style: str = "ugc_demo"
+    opening_hook: str = ""
+    on_screen_text: list[str] = Field(default_factory=list)
+    voiceover_lines: list[str] = Field(default_factory=list)
+    shot_timing: list[TikTokShotTiming] = Field(default_factory=list)
+    product_proof_points: list[str] = Field(default_factory=list)
+    cta: str = ""
+    compliance_notes: list[str] = Field(default_factory=list)
+
+
 class VideoScriptItem(BaseModel):
     variant_id: str
     hook: str
     script: str
     shot_list: list[str] = Field(default_factory=list)
+    tiktok: TikTokScriptDetails | None = None
 
 
 class VideoScriptPack(BaseModel):

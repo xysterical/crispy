@@ -63,3 +63,27 @@ def test_runs_rich_rejects_too_many_files(client):
     resp = client.post("/runs/rich", data=data, files=files)
     assert resp.status_code == 400
     assert "too many files" in resp.text
+
+
+def test_rich_run_accepts_tiktok_shop_video_style(client):
+    resp = client.post(
+        "/runs/rich",
+        data={
+            "workspace_name": "tiktok_rich_ws",
+            "project_name": "tiktok_rich_project",
+            "product_name": "portable blender",
+            "product_code": "TT-RICH-001",
+            "industry_code": "kitchen",
+            "campaign_name": "tiktok-rich",
+            "pipeline_mode": "tiktok_shop_video",
+            "creative_preset": "tiktok_shop_conversion_12s",
+            "creative_specs": '{"video_size":"9:16","video_duration_seconds":12,"tiktok_video_style":"shop_account_content"}',
+            "manual_research_brief": "Show daily smoothie prep for busy buyers.",
+            "enable_research": "true",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pipeline_mode"] == "tiktok_shop_video"
+    assert body["creative_specs"]["tiktok_video_style"] == "shop_account_content"
+    assert body["enable_research"] is False

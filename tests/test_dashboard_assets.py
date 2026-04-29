@@ -133,6 +133,17 @@ def test_dashboard_create_run_has_accordion_sections(client):
     assert "file-drop-zone" in html
 
 
+def test_create_run_dashboard_has_tiktok_video_style_control(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    html = resp.text
+    assert 'id="tiktok_video_style"' in html
+    assert "TikTok Video Style" in html
+    assert "direct_response_ad" in html
+    assert "shop_account_content" in html
+    assert "spec.tiktok_video_style" in html
+
+
 def test_dashboard_create_run_labels_pipeline_and_specs_clearly(client):
     resp = client.get("/dashboard")
     assert resp.status_code == 200

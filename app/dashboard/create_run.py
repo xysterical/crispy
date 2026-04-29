@@ -120,6 +120,14 @@ CREATE_RUN_HTML = """
                         <div class="spec-field" id="field-video-size"><label>Video Size</label><input id="video_size" value="1:1" placeholder="1:1" /></div>
                         <div class="spec-field"><label>Resolution</label><input id="resolution" value="720p" placeholder="720p" /></div>
                         <div class="spec-field" id="field-video-duration"><label>Duration (s)</label><input id="video_duration_seconds" type="number" min="1" max="60" value="5" /></div>
+                        <div class="spec-field" id="field-tiktok-video-style" style="display:none;">
+                          <label>TikTok Video Style</label>
+                          <select id="tiktok_video_style">
+                            <option value="ugc_demo" selected>UGC Demo</option>
+                            <option value="direct_response_ad">Direct Response Ad</option>
+                            <option value="shop_account_content">Shop Account Content</option>
+                          </select>
+                        </div>
                       </div>
                       <div id="marketplace-fields" style="display:none;margin-top:6px;">
                         <label>Marketplace Targets</label>
@@ -277,6 +285,7 @@ CREATE_RUN_JS = """
     'video_only': ['field-video-size', 'field-video-duration'],
     'copy_image_only': ['field-image-size'],
     'marketplace_main_image': ['field-image-size'],
+    'tiktok_shop_video': ['field-video-size', 'field-video-duration', 'field-tiktok-video-style'],
   };
 
   const MARKETPLACE_MAIN_IMAGE_SPEC = {
@@ -290,16 +299,26 @@ CREATE_RUN_JS = """
   function refreshPipelineFields() {
     const mode = document.getElementById('pipeline_mode').value;
     const visible = PIPELINE_FIELD_MAP[mode] || [];
-    ['field-image-size', 'field-video-size', 'field-video-duration'].forEach(id => {
+    ['field-image-size', 'field-video-size', 'field-video-duration', 'field-tiktok-video-style'].forEach(id => {
       document.getElementById(id).style.display = visible.includes(id) ? 'block' : 'none';
     });
     if (mode === 'marketplace_main_image') {
       applySpecs(MARKETPLACE_MAIN_IMAGE_SPEC);
       const quickFill = document.getElementById('quick-fill-preset');
       if (quickFill) quickFill.value = 'sys_marketplace_main_image_pack';
+    } else if (mode === 'tiktok_shop_video') {
+      document.getElementById('channel').value = 'tiktok';
+      document.getElementById('image_size').value = '9:16';
+      document.getElementById('video_size').value = '9:16';
+      document.getElementById('resolution').value = document.getElementById('resolution').value || '720p';
+      document.getElementById('video_duration_seconds').value = '12';
+      const quickFill = document.getElementById('quick-fill-preset');
+      if (quickFill) quickFill.value = 'sys_tiktok_shop_conversion_12s';
+      document.getElementById('marketplace-fields').style.display = 'none';
     } else {
       const quickFill = document.getElementById('quick-fill-preset');
       if (quickFill?.value === 'sys_marketplace_main_image_pack') quickFill.value = '';
+      if (quickFill?.value === 'sys_tiktok_shop_conversion_12s') quickFill.value = '';
       document.getElementById('marketplace-fields').style.display = 'none';
     }
     // also call shared refreshModeHint to update the mode summary text
@@ -337,6 +356,7 @@ CREATE_RUN_JS = """
       { value: 'sys_meta_vertical_5s', label: '9:16 Vertical 720p 5s', spec: { image_size: '9:16', video_size: '9:16', resolution: '720p', video_duration_seconds: 5 } },
       { value: 'sys_youtube_landscape_6s', label: '16:9 Landscape 1080p 6s', spec: { image_size: '16:9', video_size: '16:9', resolution: '1080p', video_duration_seconds: 6 } },
       { value: 'sys_marketplace_main_image_pack', label: 'Studio Main Image · 1:1 Marketplace 2000px', spec: MARKETPLACE_MAIN_IMAGE_SPEC },
+      { value: 'sys_tiktok_shop_conversion_12s', label: 'TikTok Shop · 9:16 720p 12s', spec: { image_size: '9:16', video_size: '9:16', resolution: '720p', video_duration_seconds: 12, platform: 'tiktok', creative_goal: 'shop_conversion_video', tiktok_video_style: 'ugc_demo', platform_targets: ['tiktok', 'tiktok_shop'] } },
     ]));
   }
 
@@ -423,6 +443,9 @@ CREATE_RUN_JS = """
       document.getElementById('video_size').value = lastProductConfig.creative_specs.video_size || '';
       document.getElementById('resolution').value = lastProductConfig.creative_specs.resolution || '';
       document.getElementById('video_duration_seconds').value = lastProductConfig.creative_specs.video_duration_seconds || '';
+      if (lastProductConfig.creative_specs.tiktok_video_style) {
+        document.getElementById('tiktok_video_style').value = lastProductConfig.creative_specs.tiktok_video_style;
+      }
     }
     refreshPipelineFields();
     document.getElementById('product-hint').style.display = 'none';
@@ -513,7 +536,7 @@ CREATE_RUN_JS = """
     const fields = [
       'workspace_name', 'project_name', 'product_name', 'product_code', 'industry_code',
       'campaign_name', 'channel', 'objective', 'pipeline_mode', 'approval_mode',
-      'variant_count', 'image_size', 'video_size', 'resolution', 'video_duration_seconds',
+      'variant_count', 'image_size', 'video_size', 'resolution', 'video_duration_seconds', 'tiktok_video_style',
       'target_audience', 'price_range', 'key_value_props', 'primary_cta', 'campaign_goal',
       'category_tags', 'research_mode', 'manual_research_brief', 'url_references', 'business_context_extra',
     ];
@@ -569,6 +592,12 @@ CREATE_RUN_JS = """
       spec.export_size_px = 2000;
       spec.background_policy = 'pure_white';
     }
+    if (document.getElementById('pipeline_mode').value === 'tiktok_shop_video') {
+      spec.platform = 'tiktok';
+      spec.creative_goal = 'shop_conversion_video';
+      spec.tiktok_video_style = document.getElementById('tiktok_video_style').value || 'ugc_demo';
+      spec.platform_targets = ['tiktok', 'tiktok_shop'];
+    }
     return spec;
   }
 
@@ -597,7 +626,14 @@ CREATE_RUN_JS = """
     fd.set('pipeline_mode', document.getElementById('pipeline_mode').value);
     fd.set('approval_mode', document.getElementById('approval_mode').value);
     fd.set('variant_count', document.getElementById('variant_count').value);
-    fd.set('creative_preset', document.getElementById('pipeline_mode').value === 'marketplace_main_image' ? 'marketplace_main_image_pack' : 'custom');
+    const pipelineMode = document.getElementById('pipeline_mode').value;
+    fd.set('creative_preset',
+      pipelineMode === 'marketplace_main_image'
+        ? 'marketplace_main_image_pack'
+        : pipelineMode === 'tiktok_shop_video'
+          ? 'tiktok_shop_conversion_12s'
+          : 'custom'
+    );
     fd.set('creative_specs', JSON.stringify(creativeSpecs));
     fd.set('manual_research_brief', document.getElementById('manual_research_brief').value);
     fd.set('url_references', JSON.stringify(

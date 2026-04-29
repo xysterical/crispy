@@ -977,9 +977,14 @@ class AgentsRuntime:
         business_context: dict | None = None,
         provider: str,
         model: str,
+        creative_specs: dict | None = None,
+        pipeline_mode: str | None = None,
         runtime_config: dict | None = None,
     ) -> StageOutput:
         business_context = business_context or {}
+        creative_specs = creative_specs or {}
+        is_tiktok_shop = pipeline_mode == "tiktok_shop_video"
+        tiktok_style = str(creative_specs.get("tiktok_video_style") or "ugc_demo")
         media_summary = ""
         if intake and intake.asset_media_summary:
             media_summary = intake.asset_media_summary
@@ -1011,6 +1016,61 @@ class AgentsRuntime:
         for item in variant_set.variants:
             primary_value = value_props[(len(scripts)) % len(value_props)]
             hook_base = item.hook or item.angle or primary_value
+            tiktok_payload = None
+            if is_tiktok_shop:
+                opening_hook = f"POV: your {product_name} solves this in seconds"
+                proof_points = [primary_value, item.message][:2]
+                if tiktok_style == "direct_response_ad":
+                    opening_hook = f"Stop scrolling if you need {primary_value}"
+                    cta_intensity = "strong"
+                elif tiktok_style == "shop_account_content":
+                    opening_hook = f"Packing one small upgrade from our shop: {product_name}"
+                    cta_intensity = "soft"
+                else:
+                    cta_intensity = "medium"
+                tiktok_payload = {
+                    "style": tiktok_style,
+                    "opening_hook": opening_hook,
+                    "on_screen_text": [
+                        opening_hook,
+                        f"Proof: {primary_value}",
+                        cta,
+                    ],
+                    "voiceover_lines": [
+                        opening_hook,
+                        f"Here is how {product_name} helps with {primary_value}.",
+                        f"If this fits your routine, {cta}.",
+                    ],
+                    "shot_timing": [
+                        {
+                            "start": 0,
+                            "end": 2,
+                            "visual": "fast vertical product reveal in a realistic use scene",
+                            "text_overlay": opening_hook,
+                            "intent": "thumb_stop",
+                        },
+                        {
+                            "start": 2,
+                            "end": 8,
+                            "visual": "close product demo with the key proof point visible",
+                            "text_overlay": f"Proof: {primary_value}",
+                            "intent": "proof",
+                        },
+                        {
+                            "start": 8,
+                            "end": float(creative_specs.get("video_duration_seconds") or 12),
+                            "visual": "product-forward end frame with clear next step",
+                            "text_overlay": cta,
+                            "intent": "cta",
+                        },
+                    ],
+                    "product_proof_points": proof_points,
+                    "cta": cta,
+                    "compliance_notes": [
+                        "Do not invent certifications, discounts, platform trends, or unsupported performance claims.",
+                        f"CTA intensity: {cta_intensity}.",
+                    ],
+                }
             scripts.append(
                 VideoScriptItem(
                     variant_id=item.variant_id,
@@ -1027,6 +1087,7 @@ class AgentsRuntime:
                         "outdoor walking demo showing calm control and reflective detail without safety guarantees",
                         f"product-forward CTA end frame: {cta}",
                     ],
+                    tiktok=tiktok_payload,
                 )
             )
         pack = VideoScriptPack(scripts=scripts)
@@ -1076,9 +1137,17 @@ class AgentsRuntime:
         for script in script_pack.scripts:
             for idx in range(3):
                 shot = script.shot_list[idx] if idx < len(script.shot_list) else script.hook
+                tiktok_details = script.tiktok.model_dump() if script.tiktok else {}
+                style_line = (
+                    f"TikTok style: {tiktok_details.get('style')}. "
+                    f"Opening hook: {tiktok_details.get('opening_hook')}. "
+                    if tiktok_details
+                    else ""
+                )
                 frame_prompt = (
                     f"Create a realistic vertical storyboard frame for a TikTok dog leash ad. "
                     f"Variant {script.variant_id}. Shot: {shot}. Hook: {script.hook}. "
+                    f"{style_line}"
                     "Use a clean previsualization style suitable for human review before video generation. "
                     "No text overlay. Product-forward composition. "
                     f"{self._leash_physical_constraints()}"
@@ -1176,9 +1245,19 @@ class AgentsRuntime:
         artifacts: list[dict] = []
         video_models_used: set[str] = set()
         for script in script_pack.scripts:
+            tiktok_details = script.tiktok.model_dump() if script.tiktok else {}
+            tiktok_line = ""
+            if tiktok_details:
+                tiktok_line = (
+                    f"TikTok Shop style={tiktok_details.get('style')}; "
+                    f"opening_hook={tiktok_details.get('opening_hook')}; "
+                    f"on_screen_text={tiktok_details.get('on_screen_text')}; "
+                    f"cta={tiktok_details.get('cta')}. "
+                )
             video_prompt = (
                 "Generate a short social ad video clip based on script. "
                 f"Hook: {script.hook}. Script: {script.script}. Shots: {script.shot_list}. "
+                f"{tiktok_line}"
                 f"Output should be brand-safe and product-forward, aspect ratio {video_size}, "
                 f"target resolution {resolution}, duration {duration_seconds} seconds. "
                 f"{self._leash_physical_constraints()} Reject any frame where the leash is visually broken, "
@@ -1567,8 +1646,13 @@ class AgentsRuntime:
         *,
         provider: str,
         model: str,
+        creative_specs: dict | None = None,
+        pipeline_mode: str | None = None,
         runtime_config: dict | None = None,
     ) -> StageOutput:
+        creative_specs = creative_specs or {}
+        is_tiktok_shop = pipeline_mode == "tiktok_shop_video"
+        tiktok_style = str(creative_specs.get("tiktok_video_style") or "ugc_demo")
         prompt = f"Evaluate and select best variants: {variant_set.model_dump()}"
         _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         copy_by_variant = {item.variant_id: item for item in copy_bundle.copy_variants}
@@ -1651,6 +1735,63 @@ class AgentsRuntime:
             )
             if recommended_action == "request_regeneration":
                 total = min(total, 49.0)
+            tiktok_scores: dict[str, float] = {}
+            if is_tiktok_shop:
+                script_details = script.tiktok if script else None
+                has_tiktok_script = script_details is not None
+                on_screen_text_count = len(script_details.on_screen_text) if script_details else 0
+                shot_count = len(script_details.shot_timing) if script_details else 0
+                thumb_stop_power = min(100.0, hook_strength + (8 if has_tiktok_script else 0))
+                product_clarity = min(100.0, generation_fit + (6 if shot_count >= 2 else 0))
+                purchase_intent = min(100.0, clarity + (10 if tiktok_style == "direct_response_ad" else 4))
+                native_tiktok_feel = min(100.0, ai_naturalness + (8 if tiktok_style in {"ugc_demo", "shop_account_content"} else 2))
+                watch_through_potential = min(100.0, 62.0 + shot_count * 6 + on_screen_text_count * 2)
+                claim_safety = compliance
+                generation_feasibility = generation_fit
+                tiktok_scores = {
+                    "thumb_stop_power": round(thumb_stop_power, 2),
+                    "product_clarity": round(product_clarity, 2),
+                    "purchase_intent": round(purchase_intent, 2),
+                    "native_tiktok_feel": round(native_tiktok_feel, 2),
+                    "watch_through_potential": round(watch_through_potential, 2),
+                    "claim_safety": round(claim_safety, 2),
+                    "generation_feasibility": round(generation_feasibility, 2),
+                }
+                if tiktok_style == "direct_response_ad":
+                    total = round(
+                        thumb_stop_power * 0.18
+                        + product_clarity * 0.18
+                        + purchase_intent * 0.22
+                        + native_tiktok_feel * 0.10
+                        + watch_through_potential * 0.10
+                        + claim_safety * 0.12
+                        + generation_feasibility * 0.10,
+                        2,
+                    )
+                elif tiktok_style == "shop_account_content":
+                    total = round(
+                        thumb_stop_power * 0.14
+                        + product_clarity * 0.14
+                        + purchase_intent * 0.12
+                        + native_tiktok_feel * 0.20
+                        + watch_through_potential * 0.18
+                        + claim_safety * 0.12
+                        + generation_feasibility * 0.10,
+                        2,
+                    )
+                else:
+                    total = round(
+                        thumb_stop_power * 0.15
+                        + product_clarity * 0.20
+                        + purchase_intent * 0.15
+                        + native_tiktok_feel * 0.18
+                        + watch_through_potential * 0.10
+                        + claim_safety * 0.12
+                        + generation_feasibility * 0.10,
+                        2,
+                    )
+                if recommended_action == "request_regeneration":
+                    total = min(total, 49.0)
             ranked.append(
                 RankedVariant(
                     variant_id=item.variant_id,
@@ -1662,6 +1803,7 @@ class AgentsRuntime:
                         "visual_qa": round(visual_qa_score, 2),
                         "compliance": round(compliance, 2),
                         "ai_naturalness": round(ai_naturalness, 2),
+                        **tiktok_scores,
                     },
                     compliance_level=level,
                     reasons=[

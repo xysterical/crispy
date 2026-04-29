@@ -8,6 +8,7 @@ from app.agents.registry import stage_agent
 from app.orchestrator.state_machine import stage_plan_for
 from app.services.marketplace_qa import is_marketplace_main_image
 from app.services.agent_api_configs import resolve_agent_config
+from app.services.creative_specs import TIKTOK_SHOP_VIDEO_DEFAULT_STYLE, TIKTOK_SHOP_VIDEO_STYLES
 
 Severity = Literal["ok", "warn", "error"]
 
@@ -194,6 +195,48 @@ def preflight_run_capabilities(
         agent_name = stage_agent(stage_name)
         cfg = resolve_agent_config(db, agent_name=agent_name, run_provider="openai", run_model="gpt-4.1")
         return agent_name, cfg
+
+    if pipeline_mode == "tiktok_shop_video":
+        style = str(creative_specs.get("tiktok_video_style") or TIKTOK_SHOP_VIDEO_DEFAULT_STYLE)
+        if style not in TIKTOK_SHOP_VIDEO_STYLES:
+            add_check(
+                key="tiktok_shop_video.style",
+                severity="error",
+                message=(
+                    "TikTok Video Style must be one of: "
+                    + ", ".join(sorted(TIKTOK_SHOP_VIDEO_STYLES))
+                ),
+                stage_name="video_scripting",
+                agent_name="video_script_agent",
+            )
+        if not (has_image_inputs or has_video_inputs):
+            add_check(
+                key="tiktok_shop_video.reference_media",
+                severity="warn",
+                message="TikTok Shop video works best with uploaded product image or video references.",
+                stage_name="intake",
+                agent_name="gm_orchestrator",
+            )
+        if str(creative_specs.get("video_size") or "9:16") != "9:16":
+            add_check(
+                key="tiktok_shop_video.video_size",
+                severity="warn",
+                message="TikTok Shop video is recommended in 9:16 vertical format.",
+                stage_name="video_generation",
+                agent_name="video_generation_agent",
+            )
+        try:
+            duration_seconds = int(creative_specs.get("video_duration_seconds") or 12)
+        except (TypeError, ValueError):
+            duration_seconds = 0
+        if duration_seconds < 6 or duration_seconds > 20:
+            add_check(
+                key="tiktok_shop_video.duration",
+                severity="warn",
+                message="TikTok Shop conversion videos are recommended between 6 and 20 seconds.",
+                stage_name="video_scripting",
+                agent_name="video_script_agent",
+            )
 
     if "intake" in stage_plan and (has_image_inputs or has_video_inputs):
         agent_name, cfg = resolved("intake")

@@ -43,7 +43,11 @@ from app.schemas.contracts import (
     VideoScriptPack,
 )
 from app.services.agent_api_configs import resolve_agent_config, resolve_agent_runtime
-from app.services.creative_specs import resolve_creative_specs
+from app.services.creative_specs import (
+    TIKTOK_SHOP_VIDEO_DEFAULT_STYLE,
+    TIKTOK_SHOP_VIDEO_PRESET,
+    resolve_creative_specs,
+)
 from app.services.marketplace_qa import MARKETPLACE_REVIEW_TAGS, is_marketplace_main_image
 from app.services.personas import get_persona
 from app.services.visual_qa import inspect_visual_asset
@@ -287,6 +291,16 @@ def create_run(db: Session, payload: RunCreateRequest) -> PipelineRun:
         defaults.setdefault("export_size_px", 2000)
         defaults.setdefault("background_policy", "pure_white")
         creative_specs = defaults
+    if payload.pipeline_mode == "tiktok_shop_video":
+        creative_preset = TIKTOK_SHOP_VIDEO_PRESET
+        defaults = resolve_creative_specs(creative_preset)
+        defaults.update(creative_specs)
+        defaults["platform"] = "tiktok"
+        defaults["creative_goal"] = "shop_conversion_video"
+        defaults.setdefault("tiktok_video_style", TIKTOK_SHOP_VIDEO_DEFAULT_STYLE)
+        defaults.setdefault("platform_targets", ["tiktok", "tiktok_shop"])
+        creative_specs = defaults
+    enable_research = False if payload.pipeline_mode == "tiktok_shop_video" else payload.enable_research
     model_snapshot = _model_snapshot_for_run(
         db,
         run_provider=payload.model_provider,
@@ -315,7 +329,7 @@ def create_run(db: Session, payload: RunCreateRequest) -> PipelineRun:
         model_provider=payload.model_provider or "openai",
         model_name=payload.model_name or "gpt-4.1",
         variant_count=payload.variant_count,
-        enable_research=payload.enable_research,
+        enable_research=enable_research,
         manual_research_brief=payload.manual_research_brief,
         business_context=payload.business_context or {},
         category_tags=payload.category_tags or [],
@@ -1258,6 +1272,8 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 business_context=task.input_payload.get("business_context", {}),
                 provider=provider_name,
                 model=model_name,
+                creative_specs=task.input_payload.get("creative_specs", {}),
+                pipeline_mode=run.pipeline_mode,
                 runtime_config=runtime_config,
             )
         elif task.stage_name == "storyboard_image_generation":
@@ -1363,6 +1379,8 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 task.input_payload.get("visual_quality", {}),
                 provider=provider_name,
                 model=model_name,
+                creative_specs=task.input_payload.get("creative_specs", {}),
+                pipeline_mode=run.pipeline_mode,
                 runtime_config=runtime_config,
             )
         else:
@@ -2100,6 +2118,8 @@ def regenerate_variant_assets(
             business_context=task.input_payload.get("business_context", {}),
             provider=provider_name,
             model=model_name,
+            creative_specs=task.input_payload.get("creative_specs", {}),
+            pipeline_mode=run.pipeline_mode,
             runtime_config=runtime_config,
         )
     elif stage_name == "storyboard_image_generation":
