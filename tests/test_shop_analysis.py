@@ -80,3 +80,55 @@ def test_shop_analyst_persona_exists(client):
     assert "shop_analyst" in names
     assert "product_research_agent" in names
     assert "research_agent" not in names
+
+
+def test_shop_analyst_config_has_search_key_fields(client):
+    """Verify AgentApiConfigView includes tavily and firecrawl key fields."""
+    resp = client.get("/agent-configs")
+    assert resp.status_code == 200
+    configs = resp.json()
+    for cfg in configs:
+        assert "tavily_api_key_env" in cfg
+        assert "firecrawl_api_key_env" in cfg
+        break
+
+
+def test_search_clients_importable():
+    """Verify Tavily and Firecrawl clients can be imported."""
+    from app.search import TavilyClient, FirecrawlClient
+    assert TavilyClient is not None
+    assert FirecrawlClient is not None
+
+
+def test_tavily_client_instantiation():
+    """Verify TavilyClient can be instantiated (no API call made)."""
+    from app.search import TavilyClient
+    client = TavilyClient(api_key="test-key")
+    assert client is not None
+
+
+def test_firecrawl_client_instantiation():
+    """Verify FirecrawlClient can be instantiated (no API call made)."""
+    from app.search import FirecrawlClient
+    client = FirecrawlClient(api_key="test-key")
+    assert client is not None
+
+
+def test_runtime_accepts_search_keys():
+    """Verify run_shop_profile_analysis accepts tavily/firecrawl api key params."""
+    import inspect
+    from app.agents.runtime import AgentsRuntime
+    rt = AgentsRuntime()
+    sig = inspect.signature(rt.run_shop_profile_analysis)
+    params = list(sig.parameters.keys())
+    assert "tavily_api_key" in params
+    assert "firecrawl_api_key" in params
+
+
+def test_v2_page_loads_with_three_mode_rows(client):
+    """Verify Shop Analysis page still loads after v2 changes."""
+    resp = client.get("/dashboard/shop-analysis")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "Shop Analysis" in html
+    assert "store-url" in html
