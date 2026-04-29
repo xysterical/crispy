@@ -85,6 +85,7 @@ class Workspace(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     config: Mapped[dict] = mapped_column(json_type(), default=dict)
+    industry_code: Mapped[str] = mapped_column(String(128), default="general")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     projects: Mapped[list["Project"]] = relationship(back_populates="workspace")

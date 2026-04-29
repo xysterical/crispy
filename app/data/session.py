@@ -166,6 +166,7 @@ def apply_runtime_migrations(target_engine) -> None:
     _add_column_if_missing(target_engine, "stage_task", "max_retries", "ALTER TABLE stage_task ADD COLUMN max_retries INTEGER DEFAULT 3")
     _add_column_if_missing(target_engine, "stage_task", "retry_at", "ALTER TABLE stage_task ADD COLUMN retry_at DATETIME")
     _add_column_if_missing(target_engine, "pipeline_run", "approval_mode", "ALTER TABLE pipeline_run ADD COLUMN approval_mode VARCHAR(16) DEFAULT 'manual'")
+    _add_column_if_missing(target_engine, "workspace", "industry_code", "ALTER TABLE workspace ADD COLUMN industry_code VARCHAR(128) DEFAULT 'general'")
 
     with target_engine.begin() as conn:
         conn.execute(
