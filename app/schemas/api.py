@@ -546,3 +546,20 @@ class ShopAnalysisListItem(BaseModel):
 
 class ShopAnalysisHistoryResponse(BaseModel):
     items: list[ShopAnalysisListItem]
+
+
+class ShopItem(BaseModel):
+    name: str
+    industry_code: str = "general"
+
+
+class ShopListResponse(BaseModel):
+    shops: list[ShopItem]
+
+
+class CategoryItem(BaseModel):
+    name: str
+
+
+class CategoryListResponse(BaseModel):
+    categories: list[CategoryItem]

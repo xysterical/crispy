@@ -73,6 +73,10 @@ from app.schemas.api import (
     ShopAnalysisResponse,
     ShopAnalysisListItem,
     ShopAnalysisHistoryResponse,
+    ShopItem,
+    ShopListResponse,
+    CategoryItem,
+    CategoryListResponse,
 )
 from app.schemas.contracts import ComplianceLevel, ConversionForecast, ScoreCard
 from app.services.agent_api_configs import (
@@ -2884,6 +2888,32 @@ def dashboard_agent_apis(db: Session = Depends(get_db)) -> str:
 @router.get("/pipeline-modes", response_model=list[PipelineModeView])
 def list_pipeline_modes() -> list[PipelineModeView]:
     return _pipeline_mode_views()
+
+
+# ── Shops & Categories ────────────────────────────────────────────
+
+@router.get("/shops", response_model=ShopListResponse)
+def list_shops(db: Session = Depends(get_db)) -> dict:
+    from app.data.models import Workspace
+    rows = db.scalars(select(Workspace).order_by(Workspace.name)).all()
+    return {
+        "shops": [
+            ShopItem(name=r.name, industry_code=r.industry_code or "general").model_dump()
+            for r in rows
+        ]
+    }
+
+
+@router.get("/shops/{shop_name}/categories", response_model=CategoryListResponse)
+def list_shop_categories(shop_name: str, db: Session = Depends(get_db)) -> dict:
+    from app.data.models import Project, Workspace
+    workspace = db.scalar(select(Workspace).where(Workspace.name == shop_name))
+    if not workspace:
+        return {"categories": []}
+    rows = db.scalars(
+        select(Project.name).where(Project.workspace_id == workspace.id).order_by(Project.name)
+    ).all()
+    return {"categories": [CategoryItem(name=r).model_dump() for r in rows]}
 
 
 # ── Shop Analysis ─────────────────────────────────────────────────
