@@ -2341,7 +2341,11 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
                 : r.mode === "text" ? (cfg.api_key_env || "")
                 : r.mode === "image" ? (cfg.image_api_key_env || "")
                 : (cfg.video_api_key_env || "");
-              const keyFound = r.mode === "text" ? cfg.api_key_available : (r.mode === "image" ? cfg.image_api_key_available : cfg.video_api_key_available);
+              const keyFound = r.mode === "tavily" ? cfg.tavily_api_key_available
+                : r.mode === "firecrawl" ? cfg.firecrawl_api_key_available
+                : r.mode === "text" ? cfg.api_key_available
+                : r.mode === "image" ? cfg.image_api_key_available
+                : cfg.video_api_key_available;
               const thinkingMode = r.mode === "text" ? (cfg.thinking_mode || "auto") : "";
               const thinkingBudget = r.mode === "text" ? (cfg.thinking_budget_tokens || "") : "";
               const maxTokens = r.mode === "text" ? (cfg.max_output_tokens || "") : "";
