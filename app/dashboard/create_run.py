@@ -57,8 +57,9 @@ CREATE_RUN_HTML = """
                     <div class="row">
                       <div>
                         <label>Shop</label>
-                        <input id="workspace_name" list="shop-list" value="workspace_demo" onchange="onShopChange()" />
-                        <datalist id="shop-list"></datalist>
+                        <select id="workspace_name" onchange="onShopChange()">
+                          <option value="">Loading...</option>
+                        </select>
                       </div>
                       <div>
                         <label>Product Category</label>
@@ -612,17 +613,26 @@ CREATE_RUN_JS = """
             try {
               const data = await fetch("/shops").then(r => r.json());
               allShops = data.shops || [];
-              const datalist = document.getElementById("shop-list");
-              datalist.innerHTML = allShops.map(s =>
-                '<option value="' + s.name.replace(/"/g, '&quot;') + '">' + (s.industry_code || 'general') + '</option>'
+              const sel = document.getElementById("workspace_name");
+              sel.innerHTML = allShops.map(s =>
+                '<option value="' + s.name.replace(/"/g, '&quot;') + '" data-industry="' + (s.industry_code || 'general') + '">' + s.name.replace(/</g, '&lt;') + '</option>'
               ).join("");
+              if (allShops.length > 0) {
+                sel.value = allShops[0].name;
+                onShopChange();
+              }
             } catch (err) {
               console.error("Failed to load shops", err);
             }
           }
 
           function onShopChange() {
-            const shopName = document.getElementById("workspace_name").value;
+            const sel = document.getElementById("workspace_name");
+            const shopName = sel.value;
+            const selectedOpt = sel.options[sel.selectedIndex];
+            if (selectedOpt && selectedOpt.dataset.industry) {
+              document.getElementById("industry_code").value = selectedOpt.dataset.industry;
+            }
             const shop = allShops.find(s => s.name === shopName);
             if (shop) {
               document.getElementById("industry_code").value = shop.industry_code || "general";

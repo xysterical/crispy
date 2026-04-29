@@ -1463,6 +1463,24 @@ def _shop_analysis_page_html() -> str:
             <a class="nav-link" href="/dashboard">Back to Dashboard</a>
           </header>
 
+          <section class="card" id="shop-mgmt-card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <h2 style="margin-bottom:0;">Shop Management</h2>
+              <button onclick="toggleShopMgmt()" style="font-size:12px;padding:4px 10px;" id="btn-toggle-shops">-</button>
+            </div>
+            <div id="shop-mgmt-body">
+              <div id="shop-list-mgmt"></div>
+              <div class="form-row" style="margin-top:8px;">
+                <div>
+                  <input id="new-shop-name" placeholder="New shop name" style="font-size:13px;padding:6px 10px;" />
+                </div>
+                <div style="flex:0 0 auto;">
+                  <button onclick="addShop()" style="font-size:13px;padding:6px 14px;">Add Shop</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
           <section class="card">
             <h2>New Analysis</h2>
             <div class="form-row" style="margin-bottom:10px;">
@@ -1525,6 +1543,65 @@ def _shop_analysis_page_html() -> str:
             const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
             if (!res.ok) throw new Error(await res.text());
             return res.json();
+          }
+
+          // ── Shop Management ──
+          async function loadShopMgmt() {
+            try {
+              const data = await api("/shops");
+              const shops = data.shops || [];
+              renderShopMgmt(shops);
+              // Also refresh the analysis form datalist
+              const datalist = document.getElementById("shop-analysis-list");
+              datalist.innerHTML = shops.map(s =>
+                '<option value="' + s.name.replace(/"/g, '&quot;') + '" data-industry="' + (s.industry_code || 'general') + '">'
+              ).join("");
+            } catch (err) {}
+          }
+
+          function renderShopMgmt(shops) {
+            const list = document.getElementById("shop-list-mgmt");
+            list.innerHTML = shops.map(s =>
+              '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);font-size:13px;">'
+              + '<span id="shop-label-' + s.name.replace(/[^a-zA-Z0-9_-]/g, '_') + '"><b>' + s.name.replace(/</g, '&lt;') + '</b> <span class="muted">' + (s.industry_code || '').replace(/</g, '&lt;') + '</span></span>'
+              + '<span style="display:flex;gap:4px;">'
+              + '<button onclick="renameShopPrompt(\'' + s.name.replace(/'/g, "\\'") + '\')" title="Rename" style="font-size:11px;padding:3px 8px;">&#9998;</button>'
+              + '<button onclick="deleteShopConfirm(\'' + s.name.replace(/'/g, "\\'") + '\')" title="Delete" style="font-size:11px;padding:3px 8px;color:var(--danger);">&#10005;</button>'
+              + '</span></div>'
+            ).join("");
+          }
+
+          async function addShop() {
+            const input = document.getElementById("new-shop-name");
+            const name = input.value.trim();
+            if (!name) { alert("Please enter a shop name."); return; }
+            try {
+              await api("/shops", { method: "POST", body: JSON.stringify({ name: name }) });
+              input.value = "";
+              loadShopMgmt();
+            } catch (err) { alert("Error: " + err.message); }
+          }
+
+          function renameShopPrompt(oldName) {
+            const newName = prompt("Rename shop:", oldName);
+            if (!newName || newName === oldName) return;
+            api("/shops/" + encodeURIComponent(oldName), { method: "PUT", body: JSON.stringify({ name: newName }) })
+              .then(() => loadShopMgmt())
+              .catch(err => alert("Error: " + err.message));
+          }
+
+          function deleteShopConfirm(name) {
+            if (!confirm("Delete shop \"" + name + "\"?")) return;
+            api("/shops/" + encodeURIComponent(name), { method: "DELETE" })
+              .then(() => loadShopMgmt())
+              .catch(err => alert("Error: " + err.message));
+          }
+
+          function toggleShopMgmt() {
+            const body = document.getElementById("shop-mgmt-body");
+            const btn = document.getElementById("btn-toggle-shops");
+            if (body.style.display === "none") { body.style.display = "block"; btn.textContent = "-"; }
+            else { body.style.display = "none"; btn.textContent = "+"; }
           }
 
           async function loadShopAnalysisShops() {
@@ -1643,7 +1720,7 @@ def _shop_analysis_page_html() -> str:
             }
           }
 
-          document.addEventListener("DOMContentLoaded", () => { loadHistory(); loadShopAnalysisShops(); });
+          document.addEventListener("DOMContentLoaded", () => { loadShopMgmt(); loadHistory(); });
         </script>
       </body>
     </html>
@@ -2926,7 +3003,14 @@ def list_pipeline_modes() -> list[PipelineModeView]:
 @router.get("/shops", response_model=ShopListResponse)
 def list_shops(db: Session = Depends(get_db)) -> dict:
     from app.data.models import Workspace
+    # Ensure at least one default shop exists
     rows = db.scalars(select(Workspace).order_by(Workspace.name)).all()
+    if not rows:
+        ws = Workspace(name="workspace_demo", industry_code="general")
+        db.add(ws)
+        db.commit()
+        db.refresh(ws)
+        rows = [ws]
     return {
         "shops": [
             ShopItem(name=r.name, industry_code=r.industry_code or "general").model_dump()
@@ -2945,6 +3029,56 @@ def list_shop_categories(shop_name: str, db: Session = Depends(get_db)) -> dict:
         select(Project.name).where(Project.workspace_id == workspace.id).order_by(Project.name)
     ).all()
     return {"categories": [CategoryItem(name=r).model_dump() for r in rows]}
+
+
+@router.post("/shops", response_model=ShopItem, status_code=201)
+def create_shop(payload: ShopItem, db: Session = Depends(get_db)) -> dict:
+    from app.data.models import Workspace
+    existing = db.scalar(select(Workspace).where(Workspace.name == payload.name))
+    if existing:
+        raise HTTPException(status_code=409, detail=f"shop already exists: {payload.name}")
+    ws = Workspace(name=payload.name, industry_code=payload.industry_code or "general")
+    db.add(ws)
+    db.commit()
+    db.refresh(ws)
+    return ShopItem(name=ws.name, industry_code=ws.industry_code or "general").model_dump()
+
+
+@router.put("/shops/{shop_name}", response_model=ShopItem)
+def rename_shop(shop_name: str, payload: ShopItem, db: Session = Depends(get_db)) -> dict:
+    from app.data.models import Workspace
+    ws = db.scalar(select(Workspace).where(Workspace.name == shop_name))
+    if not ws:
+        raise HTTPException(status_code=404, detail=f"shop not found: {shop_name}")
+    if payload.name and payload.name != shop_name:
+        conflict = db.scalar(select(Workspace).where(Workspace.name == payload.name))
+        if conflict:
+            raise HTTPException(status_code=409, detail=f"shop already exists: {payload.name}")
+        ws.name = payload.name
+    if payload.industry_code:
+        ws.industry_code = payload.industry_code
+    db.commit()
+    db.refresh(ws)
+    return ShopItem(name=ws.name, industry_code=ws.industry_code or "general").model_dump()
+
+
+@router.delete("/shops/{shop_name}", status_code=204)
+def delete_shop(shop_name: str, db: Session = Depends(get_db)):
+    from app.data.models import PipelineRun, Workspace
+    ws = db.scalar(select(Workspace).where(Workspace.name == shop_name))
+    if not ws:
+        raise HTTPException(status_code=404, detail=f"shop not found: {shop_name}")
+    run_count = db.scalar(
+        select(func.count(PipelineRun.id)).where(PipelineRun.workspace_id == ws.id)
+    )
+    if run_count and run_count > 0:
+        raise HTTPException(status_code=409, detail=f"Shop has {run_count} runs, cannot delete")
+    # Also block if shop is the only/default one
+    total = db.scalar(select(func.count(Workspace.id)))
+    if total and total <= 1:
+        raise HTTPException(status_code=409, detail="Cannot delete the last shop")
+    db.delete(ws)
+    db.commit()
 
 
 # ── Shop Analysis ─────────────────────────────────────────────────
