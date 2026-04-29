@@ -2263,16 +2263,9 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           const byAgent = Object.fromEntries(existing.map(c => [c.agent_name, c]));
           const baseRows = [{{ agent_name: "default", display_name: "Default Fallback", stage: "global" }}, ...personas];
           const shopAnalysisAgents = new Set(["shop_analyst"]);
-          const rows = baseRows.flatMap((r) => {{
+          const pipelinePersonas = baseRows.filter((r) => !shopAnalysisAgents.has(r.agent_name));
+          const rows = pipelinePersonas.flatMap((r) => {{
             const title = (r.display_name || r.agent_name);
-            if (shopAnalysisAgents.has(r.agent_name)) {{
-              return [
-                {{ row_key: "__divider_shop__", agent_name: "__divider__", mode: "text", title: "divider", source: "divider", isDivider: true }},
-                {{ row_key: "shop_analyst__text", agent_name: "shop_analyst", mode: "text", title: "Shop Analyst - LLM", source: "shop_analyst" }},
-                {{ row_key: "shop_analyst__tavily", agent_name: "shop_analyst", mode: "tavily", title: "Shop Analyst - Tavily", source: "shop_analyst" }},
-                {{ row_key: "shop_analyst__firecrawl", agent_name: "shop_analyst", mode: "firecrawl", title: "Shop Analyst - Firecrawl", source: "shop_analyst" }},
-              ];
-            }}
             if (r.agent_name === "copy_image_agent") {{
               return [
                 {{ row_key: "copy_image_agent__text", agent_name: "copy_image_agent", mode: "text", title: "Copy Image Agent - Text", source: "copy_image_agent" }},
@@ -2287,6 +2280,13 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             }}
             return [{{ row_key: `${{r.agent_name}}__text`, agent_name: r.agent_name, mode: "text", title, source: r.agent_name }}];
           }});
+          // Append Shop Analysis section at the bottom
+          rows.push(
+            {{ row_key: "__divider_shop__", agent_name: "__divider__", mode: "text", title: "divider", source: "divider", isDivider: true }},
+            {{ row_key: "shop_analyst__text", agent_name: "shop_analyst", mode: "text", title: "Shop Analyst - LLM", source: "shop_analyst" }},
+            {{ row_key: "shop_analyst__tavily", agent_name: "shop_analyst", mode: "tavily", title: "Shop Analyst - Tavily", source: "shop_analyst" }},
+            {{ row_key: "shop_analyst__firecrawl", agent_name: "shop_analyst", mode: "firecrawl", title: "Shop Analyst - Firecrawl", source: "shop_analyst" }},
+          );
           async function api(path, options = {{}}) {{
             const res = await fetch(path, {{ headers: {{ "Content-Type": "application/json" }}, ...options }});
             if (!res.ok) throw new Error(await res.text());
