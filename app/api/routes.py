@@ -2867,6 +2867,14 @@ def run_shop_analysis(
     model = config["model_name"]
     runtime_config = resolve_agent_runtime(config)
 
+    # Extract search tool API keys from config extra
+    extra = config.get("extra") or {}
+    tavily_cfg = extra.get("tavily_config") or {}
+    firecrawl_cfg = extra.get("firecrawl_config") or {}
+    import os
+    tavily_api_key = os.getenv(tavily_cfg.get("api_key_env", "")) if tavily_cfg.get("api_key_env") else None
+    firecrawl_api_key = os.getenv(firecrawl_cfg.get("api_key_env", "")) if firecrawl_cfg.get("api_key_env") else None
+
     analysis_id = str(uuid.uuid4())
     errors: list[str] = []
 
@@ -2879,6 +2887,8 @@ def run_shop_analysis(
             provider=provider,
             model=model,
             runtime_config=runtime_config,
+            tavily_api_key=tavily_api_key,
+            firecrawl_api_key=firecrawl_api_key,
         )
         entry = save_shop_profile(
             db,
@@ -2906,6 +2916,8 @@ def run_shop_analysis(
                 provider=provider,
                 model=model,
                 runtime_config=runtime_config,
+                tavily_api_key=tavily_api_key,
+                firecrawl_api_key=firecrawl_api_key,
             )
             entry = save_competitor_analysis(
                 db,
