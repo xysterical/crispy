@@ -716,7 +716,7 @@ def render_shell_top() -> str:
               <button onclick="refreshRuns()" style="font-size:12px;padding:6px 10px;">Refresh</button>
             </div>
             <div class="data-source-block" style="margin-bottom:10px;padding:8px 12px;background:#f8fbf9;border-radius:10px;border:1px solid var(--line);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-              <label style="margin-bottom:0;white-space:nowrap;">Data Source</label>
+              <label style="margin-bottom:0;white-space:nowrap;">Shop</label>
               <select id="data-source-select" onchange="switchDataSource()" style="width:auto;min-width:160px;font-size:12px;padding:5px 8px;"></select>
               <div id="data-source-path" class="muted mono" style="font-size:11px;"></div>
             </div>
