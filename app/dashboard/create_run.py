@@ -55,8 +55,16 @@ CREATE_RUN_HTML = """
                     </div>
                     <div id="product-hint" class="hint" style="display:none;"></div>
                     <div class="row">
-                      <div><label>Workspace</label><input id="workspace_name" value="workspace_demo" /></div>
-                      <div><label>Project</label><input id="project_name" value="project_demo" /></div>
+                      <div>
+                        <label>Shop</label>
+                        <input id="workspace_name" list="shop-list" value="workspace_demo" onchange="onShopChange()" />
+                        <datalist id="shop-list"></datalist>
+                      </div>
+                      <div>
+                        <label>Product Category</label>
+                        <input id="project_name" list="category-list" value="project_demo" />
+                        <datalist id="category-list"></datalist>
+                      </div>
                     </div>
                     <div class="row">
                       <div><label>Campaign</label><input id="campaign_name" value="meta_dog_leash_1" /></div>
@@ -597,11 +605,52 @@ CREATE_RUN_JS = """
       });
   }
 
+          // ── Shop & Product Category ──
+          let allShops = [];
+
+          async function loadShops() {
+            try {
+              const data = await fetch("/shops").then(r => r.json());
+              allShops = data.shops || [];
+              const datalist = document.getElementById("shop-list");
+              datalist.innerHTML = allShops.map(s =>
+                '<option value="' + s.name.replace(/"/g, '&quot;') + '">' + (s.industry_code || 'general') + '</option>'
+              ).join("");
+            } catch (err) {
+              console.error("Failed to load shops", err);
+            }
+          }
+
+          function onShopChange() {
+            const shopName = document.getElementById("workspace_name").value;
+            const shop = allShops.find(s => s.name === shopName);
+            if (shop) {
+              document.getElementById("industry_code").value = shop.industry_code || "general";
+            }
+            if (shopName) loadCategories(shopName);
+            else {
+              document.getElementById("category-list").innerHTML = "";
+            }
+          }
+
+          async function loadCategories(shopName) {
+            try {
+              const data = await fetch("/shops/" + encodeURIComponent(shopName) + "/categories").then(r => r.json());
+              const datalist = document.getElementById("category-list");
+              datalist.innerHTML = (data.categories || []).map(c =>
+                '<option value="' + c.name.replace(/"/g, '&quot;') + '"></option>'
+              ).join("");
+            } catch (err) {
+              console.error("Failed to load categories", err);
+            }
+          }
+
   // -- Init --
   document.addEventListener('DOMContentLoaded', function() {
     switchMode(currentMode);
     buildQuickFillOptions();
     loadTemplates();
+    loadShops();
     // loadPipelineModes, refreshResearchHint, data source loading, and polling
     // are handled by the shared JS init which runs immediately on page load
     refreshResearchHint();
