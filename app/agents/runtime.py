@@ -1738,30 +1738,70 @@ class AgentsRuntime:
         provider: str,
         model: str,
         runtime_config: dict | None = None,
+        tavily_api_key: str | None = None,
+        firecrawl_api_key: str | None = None,
     ) -> dict:
-        """Phase 1: Analyze a store's own positioning, SEO, and product catalog."""
-        prompt = (
-            f"{self._business_strategy_system_prompt('Shop Analyst')} "
-            f"You are researching a store. Visit and analyze: {store_url}. "
-            f"Operator notes: {description or 'None provided'}. "
-            "Produce a STRUCTURED JSON profile with these keys: "
-            "positioning (one-line), target_audience (string), price_tier (budget/mid/premium), "
-            "product_categories (list of strings), unique_selling_points (list of strings), "
-            "seo_keywords (list of top 5-10 inferred search terms), "
-            "content_gaps (list of observations about missing content or weak areas), "
-            "brand_voice (brief description of tone and style). "
+        """Phase 1: Analyze a store's own positioning, SEO, and product catalog using real web search."""
+        from app.search import FirecrawlClient, TavilyClient
+
+        store_content = ""
+        tavily_results: dict = {}
+        search_errors: list[str] = []
+
+        if firecrawl_api_key:
+            try:
+                fc = FirecrawlClient(api_key=firecrawl_api_key)
+                result = fc.scrape(store_url)
+                store_content = result.markdown[:8000]
+            except Exception as exc:
+                search_errors.append(f"firecrawl_scrape: {exc}")
+
+        if tavily_api_key:
+            try:
+                tv = TavilyClient(api_key=tavily_api_key)
+                search_query = f"{description or store_url} brand positioning reviews target audience"
+                tavily_results = tv.search_raw(search_query, max_results=5)
+            except Exception as exc:
+                search_errors.append(f"tavily_search: {exc}")
+
+        prompt_parts = [
+            f"{self._business_strategy_system_prompt('Shop Analyst')}",
+            f"Research this store: {store_url}",
+            f"Operator description: {description or 'None provided'}.",
+        ]
+        if store_content:
+            prompt_parts.append(
+                f"SCRAPED STORE CONTENT (from Firecrawl):\n{store_content}\n---"
+            )
+        if tavily_results:
+            prompt_parts.append(
+                f"WEB SEARCH RESULTS (from Tavily): {json.dumps(tavily_results, indent=2)}\n---"
+            )
+        if search_errors:
+            prompt_parts.append(
+                f"Search errors (partial data): {'; '.join(search_errors)}"
+            )
+        prompt_parts.append(
+            "Produce a STRUCTURED JSON profile: positioning (one-line), target_audience (string), "
+            "price_tier (budget/mid/premium), product_categories (list), unique_selling_points (list), "
+            "seo_keywords (list of 5-10 search terms), content_gaps (list), "
+            "brand_voice (tone and style description). "
             "Return ONLY valid JSON, no markdown wrapping."
         )
+        prompt = "\n".join(prompt_parts)
+
         summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         try:
             profile = json.loads(summary)
         except json.JSONDecodeError:
             match = re.search(r'\{[\s\S]*\}', summary)
             profile = json.loads(match.group(0)) if match else {"raw_response": summary}
+
         return {
             "profile": profile,
             "model_used": model_used,
             "estimated_cost": estimated_cost,
+            "search_errors": search_errors if search_errors else None,
         }
 
     def run_competitor_analysis(
@@ -1773,22 +1813,74 @@ class AgentsRuntime:
         provider: str,
         model: str,
         runtime_config: dict | None = None,
+        tavily_api_key: str | None = None,
+        firecrawl_api_key: str | None = None,
     ) -> dict:
-        """Phase 2: Analyze competitors based on store profile."""
-        prompt = (
-            f"{self._business_strategy_system_prompt('Shop Analyst')} "
-            f"Based on this store profile: {json.dumps(store_profile)} "
-            f"for store at {store_url} (operator notes: {description or 'None provided'}), "
-            "Identify 3-5 comparable competitor stores. For each competitor, note: "
-            "their positioning, creative/ad style patterns, pricing approach, "
-            "and differentiation opportunities for our store. "
-            "Return a Markdown report with sections: "
-            "## Competitive Landscape Overview, ## Competitor 1..N (name, URL if known, analysis), "
+        """Phase 2: Analyze competitors based on store profile using real web search."""
+        from app.search import FirecrawlClient, TavilyClient
+
+        search_errors: list[str] = []
+        competitor_search_results: dict = {}
+        competitor_pages: list[str] = []
+
+        if tavily_api_key:
+            try:
+                tv = TavilyClient(api_key=tavily_api_key)
+                positioning = store_profile.get("positioning", description)
+                categories = store_profile.get("product_categories", [])
+                cat_str = ", ".join(categories[:3]) if categories else ""
+                query = f"competitors similar to {positioning} {cat_str} online store"
+                competitor_search_results = tv.search_raw(query, max_results=5)
+                for r in (competitor_search_results.get("results") or []):
+                    url = r.get("url", "")
+                    if url and url != store_url:
+                        competitor_pages.append(url)
+            except Exception as exc:
+                search_errors.append(f"tavily_competitor_search: {exc}")
+
+        competitor_content: list[str] = []
+        if firecrawl_api_key and competitor_pages:
+            try:
+                fc = FirecrawlClient(api_key=firecrawl_api_key)
+                for comp_url in competitor_pages[:3]:
+                    try:
+                        result = fc.scrape(comp_url)
+                        competitor_content.append(
+                            f"URL: {comp_url}\nTITLE: {result.title}\n{result.markdown[:4000]}"
+                        )
+                    except Exception:
+                        competitor_content.append(f"URL: {comp_url}\n[Scrape failed]")
+            except Exception as exc:
+                search_errors.append(f"firecrawl_competitor: {exc}")
+
+        prompt_parts = [
+            f"{self._business_strategy_system_prompt('Shop Analyst')}",
+            f"Store profile: {json.dumps(store_profile)}",
+            f"Store URL: {store_url}",
+            f"Operator notes: {description or 'None provided'}.",
+        ]
+        if competitor_search_results:
+            prompt_parts.append(
+                f"COMPETITOR SEARCH RESULTS: {json.dumps(competitor_search_results, indent=2)}\n---"
+            )
+        if competitor_content:
+            prompt_parts.append(
+                "COMPETITOR PAGE CONTENT:\n" + "\n---\n".join(competitor_content)
+            )
+        if search_errors:
+            prompt_parts.append(f"Search errors (partial data): {'; '.join(search_errors)}")
+        prompt_parts.append(
+            "Identify 3-5 comparable competitors. For each: positioning, creative/ad style patterns, "
+            "pricing approach, differentiation opportunities. "
+            "Return Markdown with: ## Competitive Landscape Overview, ## Competitor N (name, URL, analysis), "
             "## Differentiation Opportunities, ## Recommended Creative Angles."
         )
+        prompt = "\n".join(prompt_parts)
+
         summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         return {
             "report": summary,
             "model_used": model_used,
             "estimated_cost": estimated_cost,
+            "search_errors": search_errors if search_errors else None,
         }
