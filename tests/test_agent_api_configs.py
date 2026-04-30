@@ -110,7 +110,7 @@ def test_agent_api_page_loads(client, monkeypatch):
     monkeypatch.setenv("CRISPY_API_KEY_KIMI", "dummy")
     resp = client.get("/dashboard/agent-apis")
     assert resp.status_code == 200
-    assert "Agent API Configs" in resp.text
+    assert "API &amp; Integration Configs" in resp.text
     assert "default" in resp.text
     assert "CRISPY_API_KEY_KIMI" in resp.text
     assert "Copy Image Agent - Text" in resp.text

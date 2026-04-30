@@ -702,7 +702,7 @@ def render_shell_top() -> str:
       </header>
       <div class="topbar">
         <div class="top-actions links">
-          <a class="nav-link" href="/dashboard/agent-apis">Agent API Configs</a>
+          <a class="nav-link" href="/dashboard/agent-apis">API &amp; Integration Configs</a>
           <a class="nav-link" href="/dashboard/shop-analysis">Shop Analysis</a>
           <a class="nav-link" href="/dashboard/assets">Asset Library</a>
           <a class="nav-link" href="/dashboard/personas">Personas</a>

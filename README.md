@@ -87,6 +87,11 @@ Open dashboard
 - `GET /agent-configs/env-vars` list discovered env vars (`CRISPY_API_KEY_` prefix only)
 - `PATCH /agent-configs/{agent}` upsert per-agent API config (fallback to `default` if unset)
 - `GET /gm-memory` inspect GM memory entries by scope/product/industry
+- `POST /integrations/shopify/sync` trigger Shopify product/order data sync
+- `POST /integrations/meta/sync` trigger Meta campaign/performance data sync
+- `GET /integrations/sync-status` query sync history for a project
+- `GET /integrations/shopify/products` list products linked to Shopify
+- `GET /integrations/meta/campaigns` list campaigns linked to Meta
 
 ## Current pipeline flow (with GM memory loop)
 1. Input product/task/materials with required `product_code`, `industry_code`, and `creative_preset` (or custom specs).
@@ -101,6 +106,48 @@ Open dashboard
    - write product-scope and industry-scope GM memories
    - bump GM instruction version
    - next same `product_code` / `industry_code` run reuses those lessons automatically.
+
+## Data chain &amp; attribution
+
+Crispy ingests performance data from two external sources and attributes it at two levels. All data flows into `GmMemory` for consumption by the planning agent.
+
+### Data sources
+
+```
+Shopify Admin API ──→ ShopifyProvider ──→ Product metadata enrichment
+                                     ──→ GmMemory (product + store scope)
+
+Meta Marketing API ──→ MetaProvider ──→ FeedbackRow[]
+                                     ──→ import_feedback_rows()
+                                     ──→ PerformanceSnapshot
+                                     ──→ GmMemory (product + industry scope)
+                                     ──→ GmMemory (store scope)
+```
+
+### Attribution hierarchy
+
+| Level | Scope | Source | Consumer |
+|---|---|---|---|
+| **Product** (primary) | `memory_scope="product"` | Shopify orders via SKU matching, Meta ads via Campaign→Product chain | Planning agent creative strategy |
+| **Store** (secondary) | `memory_scope="shop"` | Shopify/Meta aggregate metrics across all products | Cross-product context, industry benchmarks |
+| **Industry** | `memory_scope="industry"` | FeedbackRow with `industry_code` from PipelineRun or sync | Industry-level pattern memory |
+
+### Attribution logic
+
+- **Shopify → Product**: Order line items matched to `Product.product_code` via variant SKU. Unmatched items are skipped.
+- **Meta → Product**: Ad insights matched to `Campaign.platform_campaign_id`, then resolved through `Campaign.product_id → Product.product_code`. Ads without a linked product still produce `PerformanceSnapshot` but skip product-level `GmMemory`.
+- **Shopify → Store**: Aggregated total revenue, quantity, and product count across all matched products.
+- **Meta → Store**: Aggregated total spend, revenue, impressions, clicks, conversions, and creative count across all ad insights.
+- **Industry**: Set from `Workspace.industry_code` during sync, or from `PipelineRun.industry_code` during feedback import.
+
+### GmMemory source_type reference
+
+| source_type | memory_type | Scope | Origin |
+|---|---|---|---|
+| `shopify_sync` | `product_intelligence` | product | Shopify order aggregation |
+| `shopify_sync` | `store_intelligence` | shop | Shopify store-level aggregation |
+| `meta_sync` | `store_intelligence` | shop | Meta ad account aggregation |
+| `feedback_import` | `strategy` | product / industry | Manual CSV import or Meta sync via FeedbackRow pipeline |
 
 ## Real API adapter notes
 - Provider adapter now supports OpenAI-compatible endpoints for:

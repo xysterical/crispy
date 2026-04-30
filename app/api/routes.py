@@ -2428,7 +2428,7 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
     return f"""
     <html>
       <head>
-        <title>Crispy Agent API Configs</title>
+        <title>Crispy API &amp; Integration Configs</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <style>
           :root {{
@@ -2587,17 +2587,18 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
         <main class="app-shell">
           <header class="hero">
             <div>
-              <h1>Agent API Configs</h1>
-              <div class="subtitle">Fallback rule: if agent config missing, use <b>default</b>.</div>
-              <div class="subtitle">Security: only env var names are stored. Prefix required: <b>{API_KEY_ENV_PREFIX}</b>.</div>
-              <div class="subtitle">Multimodal agents expose modality-specific rows for image and video generation.</div>
+              <h1>API &amp; Integration Configs</h1>
+              <div class="subtitle">Manage LLM provider credentials for agents and integration credentials for Shopify / Meta.</div>
+              <div class="subtitle">Security: only env var names are stored. Env var values are read from the runtime environment.</div>
             </div>
             <a class="nav-link" href="/dashboard">Back to Dashboard</a>
           </header>
-          <div class="page-actions">
-            <button id="toggle-advanced-cols" class="secondary-btn" onclick="toggleAdvancedCols()">Show Advanced Columns</button>
-          </div>
           <section class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <h2 style="margin:0;">Agent LLM Providers</h2>
+              <button id="toggle-advanced-cols" class="secondary-btn" onclick="toggleAdvancedCols()">Show Advanced Columns</button>
+            </div>
+            <div class="subtitle" style="margin-bottom: 12px;">Fallback rule: if agent config missing, use <b>default</b>. Multimodal agents expose modality-specific rows.</div>
             <div class="table-wrap">
               <table id="cfg-table" class="advanced-collapsed">
                 <thead><tr><th>Agent</th><th>Provider</th><th>Model</th><th>Base URL</th><th>API Key Env</th><th>Thinking</th><th class="advanced-col">Stream</th><th class="advanced-col">Budget</th><th class="advanced-col">Max Tokens</th><th class="advanced-col">Timeout</th><th>Env Status</th><th>Action</th></tr></thead>

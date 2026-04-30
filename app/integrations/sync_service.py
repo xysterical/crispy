@@ -219,6 +219,36 @@ async def sync_shopify(
                 db.add(entry)
                 memory_count += 1
 
+            # Store-level aggregate memory
+            if by_product:
+                total_store_revenue = sum(a["total_revenue"] for a in by_product.values())
+                total_store_quantity = sum(a["total_quantity"] for a in by_product.values())
+                all_dates = sorted({d for a in by_product.values() for d in a["order_dates"]})
+                active_days = max(len(all_dates), 1)
+                store_entry = GmMemory(
+                    project_id=project.id,
+                    memory_scope="shop",
+                    source_type="shopify_sync",
+                    memory_type="store_intelligence",
+                    score_hint=round(total_store_revenue / active_days, 2),
+                    content={
+                        "source": "shopify_sync",
+                        "scope": "shop",
+                        "total_revenue": round(total_store_revenue, 2),
+                        "total_quantity": total_store_quantity,
+                        "daily_avg_revenue": round(total_store_revenue / active_days, 2),
+                        "active_order_days": active_days,
+                        "product_count": len(by_product),
+                        "synced_at": _utcnow().isoformat(),
+                        "summary": (
+                            f"Store: ${total_store_revenue:.2f} total revenue, "
+                            f"{total_store_quantity} units across {len(by_product)} products."
+                        ),
+                    },
+                )
+                db.add(store_entry)
+                memory_count += 1
+
             items_synced = len(orders)
 
         sync_record.status = "completed"
@@ -328,6 +358,13 @@ async def sync_meta(
                     )
                 )
 
+                # Resolve product_code through campaign → product chain
+                product_code = ""
+                if campaign and campaign.product_id:
+                    product = db.get(Product, campaign.product_id)
+                    if product:
+                        product_code = product.product_code
+
                 feedback_rows.append(FeedbackRow(
                     project_name=project_name,
                     creative_key=ir.creative_id or ir.ad_id,
@@ -345,6 +382,8 @@ async def sync_meta(
                     platform_campaign_id=(
                         campaign.platform_campaign_id if campaign else None
                     ),
+                    product_code=product_code or None,
+                    industry_code=workspace.industry_code or None,
                 ))
 
             if feedback_rows:
@@ -357,6 +396,41 @@ async def sync_meta(
                 )
                 items_synced = snapshot_count
                 memory_count = 1 if memory else 0
+
+                # Store-level aggregate memory from Meta ad performance
+                total_spend = sum(r.spend for r in feedback_rows)
+                total_revenue = sum(r.revenue for r in feedback_rows)
+                total_impressions = sum(r.impressions for r in feedback_rows)
+                total_clicks = sum(r.clicks for r in feedback_rows)
+                total_conversions = sum(r.conversions for r in feedback_rows)
+                if total_impressions > 0:
+                    store_entry = GmMemory(
+                        project_id=project.id,
+                        memory_scope="shop",
+                        source_type="meta_sync",
+                        memory_type="store_intelligence",
+                        score_hint=round(total_revenue / total_spend, 4) if total_spend > 0 else 0,
+                        content={
+                            "source": "meta_sync",
+                            "scope": "shop",
+                            "total_spend": round(total_spend, 2),
+                            "total_revenue": round(total_revenue, 2),
+                            "total_impressions": total_impressions,
+                            "total_clicks": total_clicks,
+                            "total_conversions": total_conversions,
+                            "overall_roas": round(total_revenue / total_spend, 4) if total_spend > 0 else 0,
+                            "overall_ctr": round(total_clicks / total_impressions * 100, 4) if total_impressions > 0 else 0,
+                            "creative_count": len({r.creative_key for r in feedback_rows}),
+                            "synced_at": _utcnow().isoformat(),
+                            "summary": (
+                                f"Meta ad account: ${total_spend:.2f} spend, "
+                                f"${total_revenue:.2f} revenue, "
+                                f"ROAS {total_revenue/total_spend:.2f}" if total_spend > 0 else "No spend data"
+                            ),
+                        },
+                    )
+                    db.add(store_entry)
+                    memory_count += 1
             else:
                 items_synced = 0
 

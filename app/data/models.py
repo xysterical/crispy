@@ -465,6 +465,7 @@ class IntegrationConfig(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     platform: Mapped[str] = mapped_column(String(32), nullable=False)
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspace.id"), nullable=True)
     config_key: Mapped[str] = mapped_column(String(64), nullable=False)
     label: Mapped[str] = mapped_column(String(128), nullable=False)
     env_var: Mapped[str] = mapped_column(String(128), nullable=False)

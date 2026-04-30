@@ -168,6 +168,7 @@ def apply_runtime_migrations(target_engine) -> None:
     _add_column_if_missing(target_engine, "pipeline_run", "approval_mode", "ALTER TABLE pipeline_run ADD COLUMN approval_mode VARCHAR(16) DEFAULT 'manual'")
     _add_column_if_missing(target_engine, "campaign", "platform_campaign_id", "ALTER TABLE campaign ADD COLUMN platform_campaign_id VARCHAR(128)")
     _add_column_if_missing(target_engine, "campaign", "platform_ad_account_id", "ALTER TABLE campaign ADD COLUMN platform_ad_account_id VARCHAR(128)")
+    _add_column_if_missing(target_engine, "integration_config", "workspace_id", "ALTER TABLE integration_config ADD COLUMN workspace_id VARCHAR(36)")
     _add_column_if_missing(target_engine, "workspace", "industry_code", "ALTER TABLE workspace ADD COLUMN industry_code VARCHAR(128) DEFAULT 'general'")
     _add_column_if_missing(target_engine, "workspace", "store_url", "ALTER TABLE workspace ADD COLUMN store_url VARCHAR(512)")
     _add_column_if_missing(target_engine, "workspace", "description", "ALTER TABLE workspace ADD COLUMN description TEXT")
