@@ -920,7 +920,7 @@ def _dashboard_shared_js() -> str:
                     badge = document.createElement('span');
                     badge.className = 'schedule-badge';
                     badge.title = label;
-                    badge.textContent = '\uD83D\uDCC5 ' + label;
+                    badge.textContent = 'Scheduled: ' + label;
                     badge.style.cssText = 'display:inline-block;font-size:10px;color:var(--accent);margin-top:3px;';
                     c.appendChild(badge);
                   }
