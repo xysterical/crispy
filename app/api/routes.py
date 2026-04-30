@@ -3230,7 +3230,7 @@ def _data_dashboard_html() -> str:
           .product-item.selected { border-color: var(--accent); background: #eef7f2; }
           .thumbs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; width: 40px; height: 40px; flex-shrink: 0; border-radius: 6px; overflow: hidden; }
           .thumbs img { width: 100%; height: 100%; object-fit: cover; }
-          .thumbs .placeholder { background: #e8efe9; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #bccfc2; }
+          .thumbs .placeholder { background: #e8efe9; }
           .sync-status { display: flex; align-items: center; gap: 6px; font-size: 12px; }
           .status-dot { width: 8px; height: 8px; border-radius: 50%; }
           .status-dot.ok { background: #2ecc71; }
@@ -3350,10 +3350,21 @@ def _data_dashboard_html() -> str:
               const data=await api(`/data-dashboard/store-analytics?workspace_name=${encodeURIComponent(currentWs)}&project_name=${encodeURIComponent(currentProj)}`);
               const products=data.products||[];
               const list=document.getElementById("product-list");
-              list.innerHTML=products.map(p=>`<div class="product-item" onclick="selectProduct('${esc(p.product_code)}')" id="prod-${esc(p.product_code)}">
-                <div class="thumbs"><div class="placeholder">P</div></div>
-                <div><div style="font-weight:600;">${esc(p.product_code)}</div><div class="muted">$${p.revenue.toFixed(0)} | ${p.revenue_share_pct}%</div></div>
-              </div>`).join("")||'<span class="muted">No products yet</span>';
+              list.innerHTML=products.map(p=>{
+                const thumbs=(p.thumbnails||[]).slice(0,4);
+                let thumbsHtml='';
+                for(let i=0;i<4;i++){
+                  if(i<thumbs.length){
+                    thumbsHtml+=`<img src="/media?path=${encodeURIComponent(thumbs[i])}" alt="" />`;
+                  }else{
+                    thumbsHtml+=`<div class="placeholder"></div>`;
+                  }
+                }
+                return `<div class="product-item" onclick="selectProduct('${esc(p.product_code)}')" id="prod-${esc(p.product_code)}">
+                  <div class="thumbs">${thumbsHtml}</div>
+                  <div><div style="font-weight:600;">${esc(p.product_code)}</div><div class="muted">$${p.revenue.toFixed(0)} | ${p.revenue_share_pct}%</div></div>
+                </div>`;
+              }).join("")||'<span class="muted">No products yet</span>';
             }catch(e){ console.error(e); }
           }
           async function selectProduct(code){
@@ -5159,6 +5170,29 @@ def data_dashboard_store_analytics(
     products = sorted(by_product.items(), key=lambda kv: kv[1]["revenue"], reverse=True)
     total_rev = sum(p[1]["revenue"] for p in products)
 
+    # Query thumbnails for all product codes in one batch
+    from app.data.models import PipelineRun as PR, VariantAsset as VA
+
+    product_codes = [code for code, _ in products[:30]]
+    thumbnails: dict[str, list[str]] = {code: [] for code in product_codes}
+    if product_codes:
+        # Get one representative run per product, then get its image assets
+        for code in product_codes:
+            if len(thumbnails[code]) >= 4:
+                continue
+            asset_rows = db.scalars(
+                select(VA.uri)
+                .join(PR, VA.run_id == PR.id)
+                .where(
+                    PR.product_code == code,
+                    VA.asset_type.in_(["generated_image", "image"]),
+                    VA.uri.isnot(None),
+                )
+                .order_by(desc(VA.created_at))
+                .limit(4)
+            ).all()
+            thumbnails[code] = [uri for uri in asset_rows if uri]
+
     return {
         "workspace_name": workspace_name,
         "project_name": project_name,
@@ -5172,6 +5206,7 @@ def data_dashboard_store_analytics(
                 "revenue_share_pct": round(data["revenue"] / total_rev * 100, 1) if total_rev > 0 else 0,
                 "score_hint": round(data["score_hint"], 2),
                 "memory_count": data["memory_count"],
+                "thumbnails": thumbnails.get(code, [])[:4],
             }
             for code, data in products
         ],
