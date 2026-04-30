@@ -329,8 +329,9 @@ async def sync_meta(
                     existing.name = mc.name
                     existing.objective = mc.objective
                     existing.platform_ad_account_id = mc.ad_account_id
+                    target = existing
                 else:
-                    campaign = Campaign(
+                    target = Campaign(
                         project_id=project.id,
                         name=mc.name,
                         channel="meta",
@@ -338,7 +339,22 @@ async def sync_meta(
                         platform_campaign_id=mc.campaign_id,
                         platform_ad_account_id=mc.ad_account_id,
                     )
-                    db.add(campaign)
+                    db.add(target)
+
+                # Auto-link campaign to product by name matching
+                if not target.product_id:
+                    products = db.scalars(
+                        select(Product).where(Product.project_id == project.id)
+                    ).all()
+                    camp_lower = target.name.lower()
+                    for prod in products:
+                        prod_code_lower = (prod.product_code or "").lower()
+                        prod_name_lower = (prod.name or "").lower()
+                        if (prod_code_lower and prod_code_lower in camp_lower) or \
+                           (prod_name_lower and (prod_name_lower in camp_lower or camp_lower in prod_name_lower)):
+                            target.product_id = prod.id
+                            break
+
                 items_synced += 1
 
         if sync_type in ("performance", "all"):
