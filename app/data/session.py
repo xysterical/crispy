@@ -174,6 +174,10 @@ def apply_runtime_migrations(target_engine) -> None:
     _add_column_if_missing(target_engine, "workspace", "description", "ALTER TABLE workspace ADD COLUMN description TEXT")
     _add_column_if_missing(target_engine, "workspace", "archived_at", "ALTER TABLE workspace ADD COLUMN archived_at DATETIME")
     _add_column_if_missing(target_engine, "workspace", "last_analyzed_at", "ALTER TABLE workspace ADD COLUMN last_analyzed_at DATETIME")
+    _add_column_if_missing(target_engine, "workspace", "shopify_auto_sync_minutes", "ALTER TABLE workspace ADD COLUMN shopify_auto_sync_minutes INTEGER DEFAULT 0")
+    _add_column_if_missing(target_engine, "workspace", "meta_auto_sync_minutes", "ALTER TABLE workspace ADD COLUMN meta_auto_sync_minutes INTEGER DEFAULT 0")
+    _add_column_if_missing(target_engine, "workspace", "shopify_last_sync_at", "ALTER TABLE workspace ADD COLUMN shopify_last_sync_at DATETIME")
+    _add_column_if_missing(target_engine, "workspace", "meta_last_sync_at", "ALTER TABLE workspace ADD COLUMN meta_last_sync_at DATETIME")
 
     with target_engine.begin() as conn:
         conn.execute(

@@ -90,6 +90,10 @@ class Workspace(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    shopify_auto_sync_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    meta_auto_sync_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    shopify_last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    meta_last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     projects: Mapped[list["Project"]] = relationship(back_populates="workspace")

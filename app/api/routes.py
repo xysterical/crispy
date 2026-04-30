@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.registry import stage_agent
 from app.core.config import get_settings
-from app.data.models import Artifact, GmMemory, IntegrationSync, PipelineRun, RunVariant, ScoreCard as ScoreCardModel, StageTask, VariantAsset
+from app.data.models import Artifact, Campaign, GmMemory, IntegrationSync, PerformanceSnapshot, PipelineRun, Product, Project, RunVariant, ScoreCard as ScoreCardModel, StageTask, VariantAsset, Workspace
 from app.data.session import (
     SessionLocal,
     get_active_database_url,
@@ -3153,6 +3153,308 @@ def _assets_dashboard_html() -> str:
     """
 
 
+def _data_dashboard_html() -> str:
+    return """
+    <html>
+      <head>
+        <title>Crispy Data Dashboard</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+        <style>
+          :root {
+            --bg: #f4f7f2; --bg-alt: #e8f2f8; --card: rgba(255,255,255,0.92);
+            --text: #183329; --muted: #5e6e66; --line: #d8e5dc; --accent: #1f7a62;
+            --radius: 16px; --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          }
+          * { box-sizing: border-box; }
+          body {
+            margin: 0; color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            background: radial-gradient(circle at 10% -20%, #d9ede6 0%, transparent 40%),
+                        radial-gradient(circle at 90% -20%, #d8e9f6 0%, transparent 42%),
+                        linear-gradient(180deg, var(--bg-alt), var(--bg) 30%);
+          }
+          .app-shell { width: min(1440px, calc(100% - 24px)); margin: 22px auto 30px auto; }
+          .app-body { display: flex; gap: 16px; min-height: calc(100vh - 140px); }
+          .sidebar { width: 260px; flex-shrink: 0; }
+          .main-panel { flex: 1; min-width: 0; }
+          .card {
+            border: 1px solid var(--line); border-radius: var(--radius); padding: 16px;
+            background: var(--card); box-shadow: 0 8px 24px rgba(30,62,50,0.07);
+            backdrop-filter: blur(4px); margin-bottom: 14px;
+          }
+          h1 { margin: 0; font-size: 27px; letter-spacing: -0.02em; line-height: 1.2; }
+          h2 { margin: 0 0 8px 0; font-size: 18px; }
+          h3 { margin: 0 0 6px 0; font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+          .subtitle { color: var(--muted); font-size: 13px; }
+          .muted { color: var(--muted); font-size: 12px; }
+          .nav-link {
+            border: 1px solid var(--line); background: #fff; padding: 8px 12px;
+            border-radius: 999px; font-size: 13px; font-weight: 600; color: #135f4c;
+            text-decoration: none; white-space: nowrap;
+          }
+          select, input {
+            width: 100%; padding: 8px 10px; border-radius: 10px;
+            border: 1px solid #c8d8ce; background: #fff; color: var(--text); font-size: 13px;
+          }
+          select:focus, input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(31,122,98,0.16); }
+          button {
+            padding: 8px 14px; border-radius: 10px; border: 1px solid #bfd0c5;
+            background: #f4faf5; color: #20473a; font-weight: 600; cursor: pointer; font-size: 13px;
+          }
+          button:hover { background: #eaf6ee; }
+          button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+          button.primary:hover { background: #18694f; }
+          button.danger { background: #fff0f0; border-color: #e0c0c0; color: #a04040; }
+          .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+          .kpi-card {
+            border: 1px solid var(--line); border-radius: 12px; padding: 14px;
+            background: #fff; text-align: center;
+          }
+          .kpi-value { font-size: 24px; font-weight: 700; color: var(--accent); }
+          .kpi-label { font-size: 12px; color: var(--muted); margin-top: 2px; }
+          .tab-bar { display: flex; gap: 4px; margin-bottom: 14px; }
+          .tab-btn {
+            padding: 8px 18px; border-radius: 999px; border: 1px solid var(--line);
+            background: #fff; cursor: pointer; font-weight: 600; font-size: 13px;
+          }
+          .tab-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+          .tab-content { display: none; }
+          .tab-content.active { display: block; }
+          .product-item {
+            display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+            border-radius: 10px; cursor: pointer; border: 1px solid transparent;
+            margin-bottom: 4px; font-size: 13px;
+          }
+          .product-item:hover { background: #f0f7f3; }
+          .product-item.selected { border-color: var(--accent); background: #eef7f2; }
+          .thumbs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; width: 40px; height: 40px; flex-shrink: 0; border-radius: 6px; overflow: hidden; }
+          .thumbs img { width: 100%; height: 100%; object-fit: cover; }
+          .thumbs .placeholder { background: #e8efe9; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #bccfc2; }
+          .sync-status { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+          .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+          .status-dot.ok { background: #2ecc71; }
+          .status-dot.warn { background: #f39c12; }
+          .status-dot.off { background: #ccc; }
+          .chart-wrap { position: relative; height: 220px; margin-bottom: 16px; }
+          .table-wrap { overflow-x: auto; }
+          table { width: 100%; border-collapse: collapse; font-size: 13px; }
+          th { text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--line); color: var(--muted); font-weight: 600; }
+          td { padding: 8px 10px; border-bottom: 1px solid #eef3ef; }
+          .tag { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+          .tag-ok { background: #e6f7ee; color: #1a6b44; }
+          .tag-warn { background: #fff6e6; color: #9a6b00; }
+          .tag-rising { background: #e6f7ee; color: #1a6b44; }
+          .tag-declining { background: #ffeaea; color: #a04040; }
+          @media (max-width: 900px) {
+            .app-body { flex-direction: column; }
+            .sidebar { width: 100%; }
+          }
+        </style>
+      </head>
+      <body>
+        <main class="app-shell">
+          <header class="hero" style="width:100%;display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:16px;">
+            <div>
+              <h1>Data Dashboard</h1>
+              <div class="subtitle">Performance monitoring, analytics insights, and API sync controls for Shopify &amp; Meta.</div>
+              <div class="subtitle">Auto-sync pulls fresh data from connected platforms on a configurable schedule.</div>
+            </div>
+            <a class="nav-link" href="/dashboard">Back to Dashboard</a>
+          </header>
+          <div class="app-body">
+          <aside class="sidebar">
+            <div class="card">
+              <div style="margin-bottom:8px;"><label>Workspace</label><select id="ws-select" onchange="onWorkspaceChange()"></select></div>
+              <div style="margin-bottom:8px;"><label>Project</label><select id="proj-select" onchange="onProjectChange()"></select></div>
+            </div>
+            <div class="card">
+              <h3>Products</h3>
+              <div id="product-list" class="muted" style="max-height:320px;overflow-y:auto;">Select a project</div>
+            </div>
+            <div class="card">
+              <h3>Auto Sync</h3>
+              <div style="margin-bottom:6px;"><label>Shopify interval</label><select id="shopify-interval" onchange="saveAutoSync()"><option value="0">Off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></div>
+              <div style="margin-bottom:6px;"><label>Meta interval</label><select id="meta-interval" onchange="saveAutoSync()"><option value="0">Off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></div>
+              <div class="sync-status" style="margin-top:8px;"><span class="status-dot off" id="sync-dot"></span><span class="muted" id="sync-status-text">-</span></div>
+            </div>
+          </aside>
+          <div class="main-panel">
+            <div class="card">
+              <div class="tab-bar">
+                <button class="tab-btn active" onclick="switchTab('overview')">Overview</button>
+                <button class="tab-btn" onclick="switchTab('products')">Products</button>
+                <button class="tab-btn" onclick="switchTab('store')">Store</button>
+              </div>
+              <div class="tab-content active" id="tab-overview">
+                <div class="kpi-grid" id="kpi-cards"></div>
+                <div style="display:flex;gap:10px;margin-bottom:12px;">
+                  <button class="primary" onclick="manualSync('shopify')">Sync Shopify</button>
+                  <button class="primary" onclick="manualSync('meta')">Sync Meta</button>
+                </div>
+                <div class="chart-wrap"><canvas id="revenue-chart"></canvas></div>
+              </div>
+              <div class="tab-content" id="tab-products">
+                <div id="product-detail">Select a product from the sidebar.</div>
+              </div>
+              <div class="tab-content" id="tab-store">
+                <div class="chart-wrap"><canvas id="store-chart"></canvas></div>
+                <div class="table-wrap"><table id="store-table"><thead><tr><th>Product</th><th>Revenue</th><th>Quantity</th><th>Share</th><th>Score</th></tr></thead><tbody></tbody></table></div>
+              </div>
+            </div>
+          </div>
+          </div>
+        </main>
+        <script>
+          let currentTab = "overview";
+          let workspaces = [];
+          let projects = [];
+          let currentWs = "";
+          let currentProj = "";
+          let currentProduct = "";
+          const charts = {};
+          function esc(v){ return String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;"); }
+          async function api(path, opts){ const r=await fetch(path,{headers:{"Content-Type":"application/json"},...opts}); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+          function switchTab(t){ currentTab=t; document.querySelectorAll(".tab-btn").forEach(b=>b.classList.toggle("active",b.textContent.toLowerCase().includes(t))); document.querySelectorAll(".tab-content").forEach(c=>c.classList.toggle("active",c.id==="tab-"+t)); if(t==="store") refreshStoreTab(); if(t==="overview") refreshOverview(); }
+          function destroyChart(key){ if(charts[key]){ charts[key].destroy(); delete charts[key]; } }
+          async function loadWorkspaces(){
+            const data=await api("/shops?limit=50");
+            workspaces=(data.shops||data.items||[]);
+            const sel=document.getElementById("ws-select");
+            sel.innerHTML='<option value="">Select workspace</option>'+workspaces.map(w=>`<option value="${esc(w.name)}">${esc(w.name)}</option>`).join("");
+          }
+          async function onWorkspaceChange(){
+            currentWs=document.getElementById("ws-select").value;
+            document.getElementById("proj-select").innerHTML='<option value="">Select project</option>';
+            document.getElementById("product-list").innerHTML='<span class="muted">Select a project</span>';
+            if(!currentWs) return;
+            try{
+              const data=await api(`/projects?workspace_name=${encodeURIComponent(currentWs)}`);
+              projects=data||[];
+              const sel=document.getElementById("proj-select");
+              sel.innerHTML='<option value="">Select project</option>'+projects.map(p=>`<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("");
+            }catch(e){ console.error(e); }
+          }
+          async function onProjectChange(){
+            currentProj=document.getElementById("proj-select").value;
+            if(!currentProj){ document.getElementById("product-list").innerHTML='<span class="muted">Select a project</span>'; return; }
+            await loadProducts();
+            await loadAutoSyncConfig();
+            refreshOverview();
+          }
+          async function loadProducts(){
+            try{
+              const data=await api(`/data-dashboard/store-analytics?workspace_name=${encodeURIComponent(currentWs)}&project_name=${encodeURIComponent(currentProj)}`);
+              const products=data.products||[];
+              const list=document.getElementById("product-list");
+              list.innerHTML=products.map(p=>`<div class="product-item" onclick="selectProduct('${esc(p.product_code)}')" id="prod-${esc(p.product_code)}">
+                <div class="thumbs"><div class="placeholder">P</div></div>
+                <div><div style="font-weight:600;">${esc(p.product_code)}</div><div class="muted">$${p.revenue.toFixed(0)} | ${p.revenue_share_pct}%</div></div>
+              </div>`).join("")||'<span class="muted">No products yet</span>';
+            }catch(e){ console.error(e); }
+          }
+          async function selectProduct(code){
+            currentProduct=code;
+            document.querySelectorAll(".product-item").forEach(el=>el.classList.remove("selected"));
+            const el=document.getElementById("prod-"+code);
+            if(el) el.classList.add("selected");
+            switchTab("products");
+            await loadProductDetail(code);
+          }
+          async function loadProductDetail(code){
+            const div=document.getElementById("product-detail");
+            div.innerHTML='<div class="muted">Loading...</div>';
+            try{
+              const data=await api(`/data-dashboard/product-analytics?workspace_name=${encodeURIComponent(currentWs)}&project_name=${encodeURIComponent(currentProj)}&product_code=${encodeURIComponent(code)}`);
+              const v=data.sales_velocity||{};
+              const c=data.contribution||{};
+              const fatigue=data.creative_fatigue||[];
+              div.innerHTML=`
+                <h2>${esc(code)}</h2>
+                <div class="kpi-grid">
+                  <div class="kpi-card"><div class="kpi-value">$${v.current_daily_avg?.toFixed(2)||0}</div><div class="kpi-label">Daily Avg Revenue</div></div>
+                  <div class="kpi-card"><div class="kpi-value">${v.change_pct!=null?(v.change_pct>0?"+":"")+v.change_pct.toFixed(1)+"%":"-"}</div><div class="kpi-label">Change</div></div>
+                  <div class="kpi-card"><div class="kpi-value"><span class="tag tag-${v.trend==='rising'?'rising':v.trend==='declining'?'declining':'ok'}">${v.trend||"stable"}</span></div><div class="kpi-label">Trend (${((v.trend_confidence||0)*100).toFixed(0)}%)</div></div>
+                  <div class="kpi-card"><div class="kpi-value">${c.hero_products?.includes(code)?"Hero":"Tail"}</div><div class="kpi-label">Contribution</div></div>
+                </div>
+                ${fatigue.length?`<h3>Creative Fatigue</h3><div class="table-wrap"><table><thead><tr><th>Creative</th><th>Status</th><th>CTR Slope</th><th>Days Left</th></tr></thead><tbody>${fatigue.map(f=>`<tr><td><code>${esc(f.creative_key||"")}</code></td><td><span class="tag tag-${f.ctr_trend==='fatigued'?'declining':'ok'}">${f.ctr_trend}</span></td><td>${f.ctr_slope?.toFixed(6)||"-"}</td><td>${f.estimated_effective_days_remaining??"-"}</td></tr>`).join("")}</tbody></table></div>`:""}
+                ${v.interpretation?`<div class="subtitle" style="margin-top:8px;">${esc(v.interpretation)}</div>`:""}
+              `;
+            }catch(e){ div.innerHTML=`<div class="muted">Error: ${esc(e.message)}</div>`; }
+          }
+          async function refreshOverview(){
+            if(!currentProj) return;
+            try{
+              const data=await api(`/data-dashboard/summary?workspace_name=${encodeURIComponent(currentWs)}&project_name=${encodeURIComponent(currentProj)}`);
+              document.getElementById("kpi-cards").innerHTML=`
+                <div class="kpi-card"><div class="kpi-value">$${data.shopify_revenue?.toFixed(0)||0}</div><div class="kpi-label">Shopify Revenue</div></div>
+                <div class="kpi-card"><div class="kpi-value">$${data.meta_spend?.toFixed(0)||0}</div><div class="kpi-label">Meta Spend</div></div>
+                <div class="kpi-card"><div class="kpi-value">${data.overall_roas?.toFixed(2)||"0.00"}x</div><div class="kpi-label">ROAS</div></div>
+                <div class="kpi-card"><div class="kpi-value">${data.overall_ctr?.toFixed(2)||"0.00"}%</div><div class="kpi-label">CTR</div></div>
+                <div class="kpi-card"><div class="kpi-value">${data.product_count||0}</div><div class="kpi-label">Products</div></div>
+              `;
+              const trend=data.daily_trend||[];
+              destroyChart("revenue");
+              const ctx=document.getElementById("revenue-chart").getContext("2d");
+              charts.revenue=new Chart(ctx,{type:"line",data:{labels:trend.map(t=>t.date),datasets:[{label:"Revenue",data:trend.map(t=>t.revenue),borderColor:"#1f7a62",backgroundColor:"rgba(31,122,98,0.08)",fill:true,tension:0.3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
+            }catch(e){ console.error(e); }
+          }
+          async function refreshStoreTab(){
+            if(!currentProj) return;
+            try{
+              const data=await api(`/data-dashboard/store-analytics?workspace_name=${encodeURIComponent(currentWs)}&project_name=${encodeURIComponent(currentProj)}`);
+              const products=data.products||[];
+              const tbody=document.querySelector("#store-table tbody");
+              tbody.innerHTML=products.map(p=>`<tr><td><a href="#" onclick="selectProduct('${esc(p.product_code)}');return false;">${esc(p.product_code)}</a></td><td>$${p.revenue.toFixed(0)}</td><td>${p.quantity}</td><td>${p.revenue_share_pct}%</td><td>${p.score_hint.toFixed(1)}</td></tr>`).join("");
+              destroyChart("store");
+              const ctx=document.getElementById("store-chart").getContext("2d");
+              charts.store=new Chart(ctx,{type:"bar",data:{labels:products.slice(0,10).map(p=>p.product_code),datasets:[{label:"Revenue",data:products.slice(0,10).map(p=>p.revenue),backgroundColor:"rgba(31,122,98,0.6)"}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
+            }catch(e){ console.error(e); }
+          }
+          async function manualSync(platform){
+            if(!currentProj){ alert("Select a project first"); return; }
+            const btn=event.target;
+            btn.disabled=true; btn.textContent="Syncing...";
+            try{
+              const resp=await fetch(`/integrations/${platform}/sync?workspace_name=${encodeURIComponent(currentWs)}&project_name=${encodeURIComponent(currentProj)}&sync_type=all`,{method:"POST"});
+              const data=await resp.json();
+              alert(`${platform} sync: ${data.status} (${data.items_synced} items, ${data.memory_entries_created} memories)`);
+              updateSyncDot(platform);
+              refreshOverview();
+              await loadProducts();
+            }catch(e){ alert("Sync failed: "+e.message); }
+            finally{ btn.disabled=false; btn.textContent=`Sync ${platform.charAt(0).toUpperCase()+platform.slice(1)}`; }
+          }
+          async function loadAutoSyncConfig(){
+            if(!currentWs) return;
+            try{
+              const data=await api(`/data-dashboard/auto-sync-config?workspace_name=${encodeURIComponent(currentWs)}`);
+              document.getElementById("shopify-interval").value=String(data.shopify_auto_sync_minutes||0);
+              document.getElementById("meta-interval").value=String(data.meta_auto_sync_minutes||0);
+              updateSyncDot("shopify"); updateSyncDot("meta");
+            }catch(e){ console.error(e); }
+          }
+          async function saveAutoSync(){
+            if(!currentWs) return;
+            try{
+              await fetch(`/data-dashboard/auto-sync-config?workspace_name=${encodeURIComponent(currentWs)}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+                shopify_auto_sync_minutes:parseInt(document.getElementById("shopify-interval").value),
+                meta_auto_sync_minutes:parseInt(document.getElementById("meta-interval").value)
+              })});
+            }catch(e){ console.error(e); }
+          }
+          function updateSyncDot(platform){
+            const dot=document.getElementById("sync-dot");
+            const intVal=parseInt(document.getElementById(platform+"-interval")?.value||"0");
+            if(intVal>0){ dot.className="status-dot ok"; document.getElementById("sync-status-text").textContent=platform+" auto every "+intVal+"min"; }
+            else { dot.className="status-dot off"; document.getElementById("sync-status-text").textContent="Auto sync off"; }
+          }
+          loadWorkspaces();
+        </script>
+      </body>
+    </html>"""
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard_root() -> str:
     return _dashboard_html()
@@ -3166,6 +3468,11 @@ def dashboard_page() -> str:
 @router.get("/dashboard/assets", response_class=HTMLResponse)
 def dashboard_assets_page() -> str:
     return _assets_dashboard_html()
+
+
+@router.get("/dashboard/data", response_class=HTMLResponse)
+def dashboard_data_page() -> str:
+    return _data_dashboard_html()
 
 
 @router.get("/dashboard/personas", response_class=HTMLResponse)
@@ -4655,3 +4962,252 @@ def patch_integration_config(
     row = upsert_integration_config(db, platform=platform, config_key=config_key, env_var=env_var)
     db.commit()
     return IntegrationConfigView(**row)
+
+
+@router.get("/projects")
+def list_projects(
+    workspace_name: str = Query(...),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    workspace = db.scalar(select(Workspace).where(Workspace.name == workspace_name))
+    if not workspace:
+        return []
+    rows = db.scalars(
+        select(Project).where(Project.workspace_id == workspace.id).order_by(Project.name)
+    ).all()
+    return [{"id": r.id, "name": r.name, "metric_weights": r.metric_weights} for r in rows]
+
+
+# ── Data Dashboard Endpoints ────────────────────────────────────────────────
+
+
+@router.get("/data-dashboard/summary")
+def data_dashboard_summary(
+    workspace_name: str = Query(...),
+    project_name: str = Query(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    workspace = db.scalar(select(Workspace).where(Workspace.name == workspace_name))
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    project = db.scalar(
+        select(Project).where(Project.workspace_id == workspace.id, Project.name == project_name)
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    store_memories = db.scalars(
+        select(GmMemory)
+        .where(
+            GmMemory.project_id == project.id,
+            GmMemory.memory_scope == "shop",
+            GmMemory.source_type.in_(["shopify_sync", "meta_sync"]),
+        )
+        .order_by(desc(GmMemory.created_at))
+        .limit(10)
+    ).all()
+
+    latest_shopify = next((m for m in store_memories if m.source_type == "shopify_sync"), None)
+    latest_meta = next((m for m in store_memories if m.source_type == "meta_sync"), None)
+
+    product_count = db.scalar(
+        select(func.count()).select_from(Product).where(Product.project_id == project.id)
+    )
+
+    recent_snapshots = db.scalars(
+        select(PerformanceSnapshot)
+        .where(PerformanceSnapshot.project_id == project.id)
+        .order_by(desc(PerformanceSnapshot.created_at))
+        .limit(100)
+    ).all()
+
+    total_spend = sum(float((s.metrics or {}).get("spend", 0)) for s in recent_snapshots)
+    total_revenue = sum(float((s.metrics or {}).get("revenue", 0)) for s in recent_snapshots)
+    total_impressions = sum(int((s.metrics or {}).get("impressions", 0)) for s in recent_snapshots)
+    total_clicks = sum(int((s.metrics or {}).get("clicks", 0)) for s in recent_snapshots)
+
+    return {
+        "workspace_name": workspace_name,
+        "project_name": project_name,
+        "product_count": product_count,
+        "shopify_revenue": (latest_shopify.content or {}).get("total_revenue", 0) if latest_shopify else 0,
+        "shopify_quantity": (latest_shopify.content or {}).get("total_quantity", 0) if latest_shopify else 0,
+        "meta_spend": round(total_spend, 2),
+        "meta_revenue": round(total_revenue, 2),
+        "overall_roas": round(total_revenue / total_spend, 4) if total_spend > 0 else 0,
+        "overall_ctr": round(total_clicks / total_impressions * 100, 4) if total_impressions > 0 else 0,
+        "total_impressions": total_impressions,
+        "total_clicks": total_clicks,
+        "auto_sync": {
+            "shopify_interval_minutes": workspace.shopify_auto_sync_minutes,
+            "meta_interval_minutes": workspace.meta_auto_sync_minutes,
+            "shopify_last_sync_at": workspace.shopify_last_sync_at.isoformat() if workspace.shopify_last_sync_at else None,
+            "meta_last_sync_at": workspace.meta_last_sync_at.isoformat() if workspace.meta_last_sync_at else None,
+        },
+        "daily_trend": _daily_revenue_trend(recent_snapshots),
+    }
+
+
+@router.get("/data-dashboard/product-analytics")
+def data_dashboard_product_analytics(
+    workspace_name: str = Query(...),
+    project_name: str = Query(...),
+    product_code: str = Query(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.analytics import ProductAnalyzer, AdAnalyzer
+    from app.data.models import Project, Workspace
+
+    workspace = db.scalar(select(Workspace).where(Workspace.name == workspace_name))
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    project = db.scalar(
+        select(Project).where(Project.workspace_id == workspace.id, Project.name == project_name)
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    pa = ProductAnalyzer(db, project.id)
+    aa = AdAnalyzer(db, project.id)
+
+    velocity = pa.analyze_product_sales_velocity(product_code)
+    contribution = pa.analyze_product_contribution([product_code])
+
+    snapshots = db.scalars(
+        select(PerformanceSnapshot)
+        .where(PerformanceSnapshot.project_id == project.id)
+        .order_by(desc(PerformanceSnapshot.created_at))
+        .limit(50)
+    ).all()
+    creative_keys = list({s.creative_key for s in snapshots if s.creative_key})
+    fatigue_results = []
+    for ck in creative_keys[:5]:
+        f = aa.analyze_creative_fatigue(ck)
+        if not f.insufficient_data:
+            fatigue_results.append(f.model_dump())
+
+    return {
+        "product_code": product_code,
+        "sales_velocity": velocity.model_dump(),
+        "contribution": contribution.model_dump(),
+        "creative_fatigue": fatigue_results,
+    }
+
+
+@router.get("/data-dashboard/store-analytics")
+def data_dashboard_store_analytics(
+    workspace_name: str = Query(...),
+    project_name: str = Query(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.data.models import Product as ProductModel, Project, Workspace
+
+    workspace = db.scalar(select(Workspace).where(Workspace.name == workspace_name))
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    project = db.scalar(
+        select(Project).where(Project.workspace_id == workspace.id, Project.name == project_name)
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    product_memories = db.scalars(
+        select(GmMemory)
+        .where(
+            GmMemory.project_id == project.id,
+            GmMemory.memory_scope == "product",
+            GmMemory.source_type.in_(["shopify_sync", "feedback_import"]),
+        )
+        .order_by(desc(GmMemory.created_at))
+        .limit(200)
+    ).all()
+
+    by_product: dict[str, dict] = {}
+    for mem in product_memories:
+        code = mem.product_code or "unknown"
+        if code not in by_product:
+            by_product[code] = {"revenue": 0, "quantity": 0, "score_hint": 0, "memory_count": 0}
+        c = mem.content or {}
+        by_product[code]["revenue"] = max(by_product[code]["revenue"], float(c.get("total_revenue", 0)))
+        by_product[code]["quantity"] = max(by_product[code]["quantity"], int(c.get("total_quantity", 0)))
+        by_product[code]["score_hint"] = max(by_product[code]["score_hint"], float(mem.score_hint or 0))
+        by_product[code]["memory_count"] += 1
+
+    products = sorted(by_product.items(), key=lambda kv: kv[1]["revenue"], reverse=True)
+    total_rev = sum(p[1]["revenue"] for p in products)
+
+    return {
+        "workspace_name": workspace_name,
+        "project_name": project_name,
+        "product_count": len(products),
+        "total_revenue": round(total_rev, 2),
+        "products": [
+            {
+                "product_code": code,
+                "revenue": round(data["revenue"], 2),
+                "quantity": data["quantity"],
+                "revenue_share_pct": round(data["revenue"] / total_rev * 100, 1) if total_rev > 0 else 0,
+                "score_hint": round(data["score_hint"], 2),
+                "memory_count": data["memory_count"],
+            }
+            for code, data in products
+        ],
+    }
+
+
+@router.get("/data-dashboard/auto-sync-config")
+def get_auto_sync_config(
+    workspace_name: str = Query(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    workspace = db.scalar(select(Workspace).where(Workspace.name == workspace_name))
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    return {
+        "workspace_name": workspace_name,
+        "shopify_auto_sync_minutes": workspace.shopify_auto_sync_minutes,
+        "meta_auto_sync_minutes": workspace.meta_auto_sync_minutes,
+        "shopify_last_sync_at": workspace.shopify_last_sync_at.isoformat() if workspace.shopify_last_sync_at else None,
+        "meta_last_sync_at": workspace.meta_last_sync_at.isoformat() if workspace.meta_last_sync_at else None,
+    }
+
+
+class AutoSyncPatchRequest(_PydanticBaseModel):
+    shopify_auto_sync_minutes: int | None = None
+    meta_auto_sync_minutes: int | None = None
+
+
+@router.patch("/data-dashboard/auto-sync-config")
+def patch_auto_sync_config(
+    workspace_name: str = Query(...),
+    payload: AutoSyncPatchRequest = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    workspace = db.scalar(select(Workspace).where(Workspace.name == workspace_name))
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    if payload is None:
+        payload = AutoSyncPatchRequest()
+    if payload.shopify_auto_sync_minutes is not None:
+        workspace.shopify_auto_sync_minutes = max(0, payload.shopify_auto_sync_minutes)
+    if payload.meta_auto_sync_minutes is not None:
+        workspace.meta_auto_sync_minutes = max(0, payload.meta_auto_sync_minutes)
+    db.commit()
+    return {
+        "workspace_name": workspace_name,
+        "shopify_auto_sync_minutes": workspace.shopify_auto_sync_minutes,
+        "meta_auto_sync_minutes": workspace.meta_auto_sync_minutes,
+        "shopify_last_sync_at": workspace.shopify_last_sync_at.isoformat() if workspace.shopify_last_sync_at else None,
+        "meta_last_sync_at": workspace.meta_last_sync_at.isoformat() if workspace.meta_last_sync_at else None,
+    }
+
+
+def _daily_revenue_trend(snapshots: list) -> list[dict]:
+    from collections import defaultdict
+
+    daily: dict[str, float] = defaultdict(float)
+    for s in snapshots:
+        day = str(s.period_start or s.created_at.date())
+        daily[day] += float((s.metrics or {}).get("revenue", 0))
+    sorted_days = sorted(daily.keys())[-14:]
+    return [{"date": d, "revenue": round(daily[d], 2)} for d in sorted_days]

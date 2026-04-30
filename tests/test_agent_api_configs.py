@@ -152,3 +152,21 @@ def test_agent_api_env_prefix_validation(client):
     )
     assert video_resp.status_code == 400
     assert "CRISPY_API_KEY_" in video_resp.text
+
+
+def test_data_dashboard_page_loads(client):
+    resp = client.get("/dashboard/data")
+    assert resp.status_code == 200
+    assert "Data Dashboard" in resp.text
+    assert "Chart.js" in resp.text or "chart.js" in resp.text.lower()
+
+
+def test_data_dashboard_summary_endpoint(client):
+    resp = client.get("/data-dashboard/summary?workspace_name=nonexistent&project_name=nonexistent")
+    assert resp.status_code == 404
+    assert "not found" in resp.text.lower()
+
+
+def test_auto_sync_config_endpoint(client):
+    resp = client.get("/data-dashboard/auto-sync-config?workspace_name=nonexistent")
+    assert resp.status_code == 404
