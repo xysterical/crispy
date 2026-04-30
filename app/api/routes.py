@@ -3273,6 +3273,9 @@ def _data_dashboard_html() -> str:
               <div id="product-list" class="muted" style="max-height:320px;overflow-y:auto;">Select a project</div>
             </div>
             <div class="card">
+              <h3>Credentials</h3>
+              <div class="sync-status" style="margin-bottom:4px;"><span class="status-dot off" id="cred-shopify"></span><span class="muted">Shopify <span id="cred-shopify-text">-</span></span></div>
+              <div class="sync-status" style="margin-bottom:10px;"><span class="status-dot off" id="cred-meta"></span><span class="muted">Meta <span id="cred-meta-text">-</span></span></div>
               <h3>Auto Sync</h3>
               <div style="margin-bottom:6px;"><label>Shopify interval</label><select id="shopify-interval" onchange="saveAutoSync()"><option value="0">Off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></div>
               <div style="margin-bottom:6px;"><label>Meta interval</label><select id="meta-interval" onchange="saveAutoSync()"><option value="0">Off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></div>
@@ -3386,6 +3389,12 @@ def _data_dashboard_html() -> str:
             if(!currentProj) return;
             try{
               const data=await api(`/data-dashboard/summary?workspace_name=${encodeURIComponent(currentWs)}&project_name=${encodeURIComponent(currentProj)}`);
+              const cred=data.credentials||{};
+              const sh=cred.shopify||{}; const mt=cred.meta||{};
+              document.getElementById("cred-shopify").className="status-dot "+(sh.ready?"ok":"off");
+              document.getElementById("cred-shopify-text").textContent=sh.ready?"ready":"not configured";
+              document.getElementById("cred-meta").className="status-dot "+(mt.ready?"ok":"off");
+              document.getElementById("cred-meta-text").textContent=mt.ready?"ready":"not configured";
               document.getElementById("kpi-cards").innerHTML=`
                 <div class="kpi-card"><div class="kpi-value">$${data.shopify_revenue?.toFixed(0)||0}</div><div class="kpi-label">Shopify Revenue</div></div>
                 <div class="kpi-card"><div class="kpi-value">$${data.meta_spend?.toFixed(0)||0}</div><div class="kpi-label">Meta Spend</div></div>
@@ -5026,9 +5035,23 @@ def data_dashboard_summary(
     total_impressions = sum(int((s.metrics or {}).get("impressions", 0)) for s in recent_snapshots)
     total_clicks = sum(int((s.metrics or {}).get("clicks", 0)) for s in recent_snapshots)
 
+    import os
+
     return {
         "workspace_name": workspace_name,
         "project_name": project_name,
+        "credentials": {
+            "shopify": {
+                "store_domain": bool(os.getenv("CRISPY_SHOPIFY_STORE_DOMAIN")),
+                "access_token": bool(os.getenv("CRISPY_SHOPIFY_ACCESS_TOKEN")),
+                "ready": bool(os.getenv("CRISPY_SHOPIFY_STORE_DOMAIN") and os.getenv("CRISPY_SHOPIFY_ACCESS_TOKEN")),
+            },
+            "meta": {
+                "access_token": bool(os.getenv("CRISPY_META_ACCESS_TOKEN")),
+                "ad_account_id": bool(os.getenv("CRISPY_META_AD_ACCOUNT_ID")),
+                "ready": bool(os.getenv("CRISPY_META_ACCESS_TOKEN") and os.getenv("CRISPY_META_AD_ACCOUNT_ID")),
+            },
+        },
         "product_count": product_count,
         "shopify_revenue": (latest_shopify.content or {}).get("total_revenue", 0) if latest_shopify else 0,
         "shopify_quantity": (latest_shopify.content or {}).get("total_quantity", 0) if latest_shopify else 0,
