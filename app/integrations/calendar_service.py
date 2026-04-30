@@ -49,22 +49,34 @@ def _to_calendar_data(schedule: ContentSchedule, variant_url: str = "") -> Calen
     )
 
 
-async def push_to_notion(db: Session, schedule: ContentSchedule, variant_url: str = "") -> str | None:
-    """Push a ContentSchedule to Notion. Returns the Notion page ID on success, None on failure."""
+async def push_to_notion(db: Session, schedule: ContentSchedule, variant_url: str = "") -> tuple[str | None, str | None]:
+    """Push a ContentSchedule to Notion.
+
+    Returns (page_id, error_message). On success error_message is None.
+    On failure page_id is None and error_message describes what went wrong.
+    """
     provider = _get_notion_provider(db)
     if not provider:
-        return None
+        return None, "Notion not configured (missing API key or Database ID)"
     try:
         data = _to_calendar_data(schedule, variant_url)
         if schedule.notion_page_id:
             await provider.update_schedule(schedule.notion_page_id, data)
-            return schedule.notion_page_id
+            return schedule.notion_page_id, None
         else:
             page_id = await provider.push_schedule(data)
-            return page_id
-    except Exception:
+            return page_id, None
+    except Exception as exc:
         logger.exception("Notion push failed for schedule %s", schedule.id)
-        return None
+        msg = str(exc)
+        # Notion API returns helpful JSON errors — try to extract
+        if hasattr(exc, "response") and exc.response is not None:
+            try:
+                body = exc.response.json()
+                msg = body.get("message", msg)
+            except Exception:
+                pass
+        return None, msg
     finally:
         await provider.close()
 
@@ -133,9 +145,12 @@ async def schedule_variant(
     db.add(schedule)
     db.flush()
 
-    notion_id = await push_to_notion(db, schedule, variant_url)
+    notion_id, notion_error = await push_to_notion(db, schedule, variant_url)
     if notion_id:
         schedule.notion_page_id = notion_id
-        db.flush()
+        schedule.notion_sync_error = None
+    elif notion_error:
+        schedule.notion_sync_error = notion_error
+    db.flush()
 
     return schedule

@@ -523,6 +523,7 @@ class ContentSchedule(Base):
     platform_post_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     platform_post_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     notion_page_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    notion_sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

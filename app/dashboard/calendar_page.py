@@ -345,7 +345,7 @@ CALENDAR_PAGE_HTML = """
     document.getElementById('sched-variant').value = s.variant_id || '';
     document.getElementById('schedule-modal-title').textContent = 'Edit Schedule';
     document.getElementById('sched-delete-btn').style.display = '';
-    document.getElementById('sched-msg').textContent = '';
+    document.getElementById('sched-msg').textContent = s.notion_sync_error ? 'Notion: ' + s.notion_sync_error : '';
     openScheduleModal();
     loadVariantOptions();
   };

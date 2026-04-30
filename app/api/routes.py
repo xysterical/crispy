@@ -737,6 +737,13 @@ def _dashboard_shared_js() -> str:
           async function scheduleVariantQuick(variantId, runId, hook){
             const wsSelect = document.getElementById('workspace_name');
             const wsName = wsSelect?.value || 'workspace_demo';
+            const today = new Date().toISOString().slice(0,10);
+            const title = (hook || 'Variant ' + variantId.slice(0,8)).slice(0,256);
+            // Show inline form instead of auto-creating
+            const dateStr = window.prompt('Schedule date (YYYY-MM-DD):', today);
+            if (!dateStr) return;
+            const channel = window.prompt('Channel (meta / tiktok / youtube / google / amazon):', 'meta');
+            if (!channel) return;
             try {
               const shopsResp = await fetch('/shops?limit=50');
               const shopsData = await shopsResp.json();
@@ -746,18 +753,20 @@ def _dashboard_shared_js() -> str:
               const projResp = await fetch('/projects?workspace_name=' + encodeURIComponent(wsName));
               const projData = await projResp.json();
               const projId = (projData && projData[0]) ? projData[0].id : (wsName + '_project');
-              const today = new Date().toISOString().slice(0,10);
-              const title = (hook || 'Variant ' + variantId.slice(0,8)).slice(0,256);
               const r = await fetch('/content-schedules', {
                 method: 'POST',
                 headers: {'Content-Type':'application/json'},
                 body: JSON.stringify({
                   workspace_id: wsId, project_id: projId, variant_id: variantId,
-                  title: title, channel: 'meta', scheduled_date: today
+                  title: title, channel: channel, scheduled_date: dateStr
                 })
               });
               if (!r.ok) { const err = await r.json(); throw new Error(err.detail || 'Failed'); }
-              alert('Scheduled for today (' + today + '). Open Content Calendar to view.');
+              const created = await r.json();
+              const notionMsg = created.notion_sync_error ? ' (Notion sync: ' + created.notion_sync_error + ')' : '';
+              alert('Scheduled for ' + dateStr + ' on ' + channel + '.' + notionMsg + ' Open Content Calendar to view.');
+              // Refresh to show schedule indicator
+              if (window.__lastRunId) selectRun(window.__lastRunId);
             } catch(e){
               alert('Schedule failed: ' + e.message);
             }
@@ -882,6 +891,44 @@ def _dashboard_shared_js() -> str:
             `;
           }
 
+          async function loadScheduleIndicators(){
+            const cards = document.querySelectorAll('.variant-score-card');
+            if (!cards.length) return;
+            const variantIds = [];
+            cards.forEach(function(c){ variantIds.push(c.getAttribute('data-variant-id')); });
+            const wsSelect = document.getElementById('workspace_name');
+            const wsName = wsSelect?.value || 'workspace_demo';
+            try {
+              const shopsResp = await fetch('/shops?limit=50');
+              const shopsData = await shopsResp.json();
+              const shops = shopsData.shops || shopsData.items || [];
+              const shop = shops.find(function(s){ return s.name === wsName; }) || shops[0] || {};
+              const wsId = shop.id || wsName;
+              const r = await fetch('/content-schedules?workspace_id=' + encodeURIComponent(wsId) + '&start_date=2020-01-01&end_date=2099-12-31');
+              const data = await r.json();
+              const scheduled = new Set();
+              (data.items || []).forEach(function(s){
+                if (s.variant_id) scheduled.add(s.variant_id);
+              });
+              cards.forEach(function(c){
+                const vid = c.getAttribute('data-variant-id');
+                if (scheduled.has(vid)){
+                  const s = (data.items || []).find(function(x){ return x.variant_id === vid; });
+                  const label = s ? (s.scheduled_date + (s.channel ? ' ' + s.channel : '')) : '';
+                  let badge = c.querySelector('.schedule-badge');
+                  if (!badge){
+                    badge = document.createElement('span');
+                    badge.className = 'schedule-badge';
+                    badge.title = label;
+                    badge.textContent = '\uD83D\uDCC5 ' + label;
+                    badge.style.cssText = 'display:inline-block;font-size:10px;color:var(--accent);margin-top:3px;';
+                    c.appendChild(badge);
+                  }
+                }
+              });
+            } catch(e){ /* silently skip */ }
+          }
+
           function renderVariantBoard(runId, variants){
             window.__lastVariants = variants;
             const allItems = variants?.items || [];
@@ -1002,6 +1049,7 @@ def _dashboard_shared_js() -> str:
                 ${header}
                 ${filters}
                 <div class="variant-scoreboard">${scoreCards}</div>
+                <div id="variant-schedule-indicators" style="display:none;"></div>
                 ${detailPanel}
               </div>
             `;
@@ -1237,6 +1285,7 @@ def _dashboard_shared_js() -> str:
             requestAnimationFrame(() => scrollTraceToLeft("auto"));
             connectRunEvents(runId);
             startRunDetailPolling(runId);
+            setTimeout(loadScheduleIndicators, 300);
           }
 
           async function loadPipelineModes(){
@@ -5139,10 +5188,13 @@ async def update_content_schedule(
         if variant:
             variant_url = f"/dashboard?run={variant.run_id}&variant={variant.id}"
 
-    notion_id = await push_to_notion(db, schedule, variant_url)
+    notion_id, notion_error = await push_to_notion(db, schedule, variant_url)
     if notion_id:
         schedule.notion_page_id = notion_id
-        db.flush()
+        schedule.notion_sync_error = None
+    elif notion_error:
+        schedule.notion_sync_error = notion_error
+    db.flush()
 
     db.commit()
     return _serialize_schedule(schedule)
@@ -5236,6 +5288,7 @@ def _serialize_schedule(s: ContentSchedule) -> ContentScheduleView:
         platform_post_id=s.platform_post_id,
         platform_post_url=s.platform_post_url,
         notion_page_id=s.notion_page_id,
+        notion_sync_error=s.notion_sync_error,
         notes=s.notes,
         created_at=s.created_at,
         updated_at=s.updated_at,

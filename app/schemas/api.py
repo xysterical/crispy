@@ -647,6 +647,7 @@ class ContentScheduleView(BaseModel):
     platform_post_id: str | None = None
     platform_post_url: str | None = None
     notion_page_id: str | None = None
+    notion_sync_error: str | None = None
     notes: str | None = None
     created_at: datetime
     updated_at: datetime
