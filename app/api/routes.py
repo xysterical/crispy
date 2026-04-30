@@ -3291,10 +3291,11 @@ def _data_dashboard_html() -> str:
               </div>
               <div class="tab-content active" id="tab-overview">
                 <div class="kpi-grid" id="kpi-cards"></div>
-                <div style="display:flex;gap:10px;margin-bottom:12px;">
+                <div style="display:flex;gap:10px;margin-bottom:4px;">
                   <button class="primary" onclick="manualSync('shopify')">Sync Shopify</button>
                   <button class="primary" onclick="manualSync('meta')">Sync Meta</button>
                 </div>
+                <div id="sync-msg" class="muted" style="margin-bottom:10px;min-height:18px;"></div>
                 <div class="chart-wrap"><canvas id="revenue-chart"></canvas></div>
               </div>
               <div class="tab-content" id="tab-products">
@@ -3318,7 +3319,7 @@ def _data_dashboard_html() -> str:
           const charts = {};
           function esc(v){ return String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;"); }
           async function api(path, opts){ const r=await fetch(path,{headers:{"Content-Type":"application/json"},...opts}); if(!r.ok) throw new Error(await r.text()); return r.json(); }
-          function switchTab(t){ currentTab=t; document.querySelectorAll(".tab-btn").forEach(b=>b.classList.toggle("active",b.textContent.toLowerCase().includes(t))); document.querySelectorAll(".tab-content").forEach(c=>c.classList.toggle("active",c.id==="tab-"+t)); if(t==="store") refreshStoreTab(); if(t==="overview") refreshOverview(); }
+          function switchTab(t){ currentTab=t; document.querySelectorAll(".tab-btn").forEach(b=>b.classList.toggle("active",b.textContent.toLowerCase().includes(t))); document.querySelectorAll(".tab-content").forEach(c=>c.classList.toggle("active",c.id==="tab-"+t)); if(t==="store") refreshStoreTab(); if(t==="overview"||t==="products") refreshOverview(); }
           function destroyChart(key){ if(charts[key]){ charts[key].destroy(); delete charts[key]; } }
           async function loadWorkspaces(){
             const data=await api("/shops?limit=50");
@@ -3344,6 +3345,7 @@ def _data_dashboard_html() -> str:
             await loadProducts();
             await loadAutoSyncConfig();
             refreshOverview();
+            startPolling();
           }
           async function loadProducts(){
             try{
@@ -3432,18 +3434,26 @@ def _data_dashboard_html() -> str:
             }catch(e){ console.error(e); }
           }
           async function manualSync(platform){
-            if(!currentProj){ alert("Select a project first"); return; }
+            if(!currentProj){ showSyncMsg("Select a project first", "warn"); return; }
             const btn=event.target;
             btn.disabled=true; btn.textContent="Syncing...";
+            showSyncMsg(`${platform} sync running...`, "");
             try{
               const resp=await fetch(`/integrations/${platform}/sync?workspace_name=${encodeURIComponent(currentWs)}&project_name=${encodeURIComponent(currentProj)}&sync_type=all`,{method:"POST"});
               const data=await resp.json();
-              alert(`${platform} sync: ${data.status} (${data.items_synced} items, ${data.memory_entries_created} memories)`);
+              showSyncMsg(`${platform}: ${data.status} (${data.items_synced} items, ${data.memory_entries_created} memories)`, data.status==="completed"?"ok":"warn");
               updateSyncDot(platform);
               refreshOverview();
               await loadProducts();
-            }catch(e){ alert("Sync failed: "+e.message); }
+            }catch(e){ showSyncMsg("Sync failed: "+e.message, "warn"); }
             finally{ btn.disabled=false; btn.textContent=`Sync ${platform.charAt(0).toUpperCase()+platform.slice(1)}`; }
+          }
+          function showSyncMsg(msg, type){
+            const el=document.getElementById("sync-msg");
+            if(!el) return;
+            el.textContent=msg;
+            el.style.color=type==="ok"?"#1a6b44":type==="warn"?"#a04040":"var(--muted)";
+            setTimeout(()=>{ el.textContent=""; }, 8000);
           }
           async function loadAutoSyncConfig(){
             if(!currentWs) return;
@@ -3469,7 +3479,13 @@ def _data_dashboard_html() -> str:
             if(intVal>0){ dot.className="status-dot ok"; document.getElementById("sync-status-text").textContent=platform+" auto every "+intVal+"min"; }
             else { dot.className="status-dot off"; document.getElementById("sync-status-text").textContent="Auto sync off"; }
           }
+          let pollTimer=null;
+          function startPolling(){
+            if(pollTimer) clearInterval(pollTimer);
+            pollTimer=setInterval(()=>{ if(currentProj){ refreshOverview(); loadProducts(); } },60000);
+          }
           loadWorkspaces();
+          startPolling();
         </script>
       </body>
     </html>"""
