@@ -63,11 +63,10 @@ async def sync_shopify(
     store_domain: str = "",
     access_token: str = "",
 ) -> SyncResult:
-    from app.core.config import get_settings
+    import os
 
-    settings = get_settings()
-    domain = store_domain or settings.shopify_store_domain
-    token = access_token or settings.shopify_access_token
+    domain = store_domain or os.getenv("CRISPY_API_KEY_SHOPIFY_DOMAIN", "")
+    token = access_token or os.getenv("CRISPY_API_KEY_SHOPIFY", "")
     if not domain or not token:
         raise ValueError("Shopify store_domain and access_token are required")
 
@@ -288,12 +287,11 @@ async def sync_meta(
     access_token: str = "",
     ad_account_id: str = "",
 ) -> SyncResult:
-    from app.core.config import get_settings
+    import os
     from app.services.feedback import import_feedback_rows
 
-    settings = get_settings()
-    token = access_token or settings.meta_access_token
-    act_id = ad_account_id or settings.meta_ad_account_id
+    token = access_token or os.getenv("CRISPY_API_KEY_META", "")
+    act_id = ad_account_id or os.getenv("CRISPY_API_KEY_META_ACCOUNT", "")
     if not token or not act_id:
         raise ValueError("Meta access_token and ad_account_id are required")
 

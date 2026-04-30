@@ -157,7 +157,7 @@ body {
     linear-gradient(180deg, var(--bg-alt), var(--bg) 30%);
 }
 .app-shell { width: min(1460px, calc(100% - 24px)); margin: 22px auto 36px auto; }
-.hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-bottom: 14px; }
+.hero, .toolbar { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-bottom: 14px; }
 h1, h2, h3 { margin: 0; line-height: 1.25; }
 h1 { font-size: 28px; letter-spacing: -0.02em; }
 h2 { font-size: 20px; margin-bottom: 10px; }

@@ -2881,7 +2881,7 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             const seen = new Set();
             const names = [];
             (envVars || []).forEach(function(n) {{ if (!seen.has(n)) {{ seen.add(n); names.push(n); }} }});
-            ["CRISPY_SHOPIFY_STORE_DOMAIN", "CRISPY_SHOPIFY_ACCESS_TOKEN", "CRISPY_META_ACCESS_TOKEN", "CRISPY_META_AD_ACCOUNT_ID"].forEach(function(n) {{ if (!seen.has(n)) {{ seen.add(n); names.push(n); }} }});
+            ["CRISPY_API_KEY_SHOPIFY_DOMAIN", "CRISPY_API_KEY_SHOPIFY", "CRISPY_API_KEY_META", "CRISPY_API_KEY_META_ACCOUNT"].forEach(function(n) {{ if (!seen.has(n)) {{ seen.add(n); names.push(n); }} }});
             names.sort();
             var opts = '<option value="">(none)</option>';
             names.forEach(function(name) {{
@@ -3667,20 +3667,23 @@ def media_view(path: str = Query(..., min_length=1)) -> str:
 @router.get("/dashboard/calendar", response_class=HTMLResponse)
 def dashboard_calendar_page() -> str:
     from app.dashboard.calendar_page import CALENDAR_PAGE_HTML
-    from app.dashboard.layout import render_head, render_shell_top, render_shell_bottom
+    from app.dashboard.layout import render_head, render_shell_bottom
 
-    top = render_shell_top().replace(
-        '<div style="flex:0 0 480px;min-width:0;">',
-        '<div style="flex:0 0 100%;min-width:0;">',
-    )
-    top = top.replace(
-        '<section class="card runs-panel"',
-        '<section style="display:none;"',
-    )
+    top = """  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <div>
+          <h1>Content Calendar</h1>
+          <div class="subtitle">Schedule ad creatives to publishing channels. Connected to Notion for team visibility.</div>
+        </div>
+        <a class="nav-link" href="/dashboard">Back to Dashboard</a>
+      </header>
+      <div style="max-width:100%;min-width:0;">"""
     return (
-        render_head("Crispy Content Calendar")
+        render_head("Content Calendar")
         + top
         + '<section class="card" style="margin-top:0;">' + CALENDAR_PAGE_HTML + '</section>'
+        + "</div>"
         + render_shell_bottom()
         + "\n  </body>\n</html>"
     )
@@ -5332,14 +5335,14 @@ def data_dashboard_summary(
         "project_name": project_name,
         "credentials": {
             "shopify": {
-                "store_domain": bool(os.getenv("CRISPY_SHOPIFY_STORE_DOMAIN")),
-                "access_token": bool(os.getenv("CRISPY_SHOPIFY_ACCESS_TOKEN")),
-                "ready": bool(os.getenv("CRISPY_SHOPIFY_STORE_DOMAIN") and os.getenv("CRISPY_SHOPIFY_ACCESS_TOKEN")),
+                "store_domain": bool(os.getenv("CRISPY_API_KEY_SHOPIFY_DOMAIN")),
+                "access_token": bool(os.getenv("CRISPY_API_KEY_SHOPIFY")),
+                "ready": bool(os.getenv("CRISPY_API_KEY_SHOPIFY_DOMAIN") and os.getenv("CRISPY_API_KEY_SHOPIFY")),
             },
             "meta": {
-                "access_token": bool(os.getenv("CRISPY_META_ACCESS_TOKEN")),
-                "ad_account_id": bool(os.getenv("CRISPY_META_AD_ACCOUNT_ID")),
-                "ready": bool(os.getenv("CRISPY_META_ACCESS_TOKEN") and os.getenv("CRISPY_META_AD_ACCOUNT_ID")),
+                "access_token": bool(os.getenv("CRISPY_API_KEY_META")),
+                "ad_account_id": bool(os.getenv("CRISPY_API_KEY_META_ACCOUNT")),
+                "ready": bool(os.getenv("CRISPY_API_KEY_META") and os.getenv("CRISPY_API_KEY_META_ACCOUNT")),
             },
         },
         "product_count": product_count,

@@ -39,21 +39,85 @@ ROI-focused multi-agent ad creative pipeline for cross-border ecommerce.
 uv sync
 ```
 
-### API Key env naming and zshrc setup
-- Crispy only auto-discovers API key env vars with prefix: `CRISPY_API_KEY_`.
-- In Agent API config page, `API Key Env` uses dropdown options from current shell environment and writes only the env var name to DB.
-- Real key values are never stored in DB.
+### API key management — one convention for everything
 
-Example run in terminal app, or write directly in your `~/.zshrc`:
-```bash
-# Crispy API keys (detected by /dashboard/agent-apis dropdown)
-echo 'export CRISPY_API_KEY_OPENAI="your-openai-key"' >> /.zshrc
+**Every configuration value in Crispy uses `CRISPY_API_KEY_*`.** There are no other env var prefixes. All of them — LLM keys, platform tokens, database IDs, account IDs — live under this single namespace and are auto-discovered by the configs page.
+
+```
+CRISPY_API_KEY_OPENAI              # OpenAI API key
+CRISPY_API_KEY_DEEPSEEK            # DeepSeek API key
+CRISPY_API_KEY_KIMI                # Kimi / Moonshot API key
+CRISPY_API_KEY_NOTION              # Notion internal integration token
+CRISPY_API_KEY_NOTION_DATABASE     # Notion content calendar database ID
+CRISPY_API_KEY_SHOPIFY             # Shopify access token (reserved)
+CRISPY_API_KEY_META                # Meta Ads access token (reserved)
 ```
 
-Apply changes:
+#### How it works end-to-end
+
+1. **You** set `export CRISPY_API_KEY_OPENAI="sk-..."` in `~/.zshrc`.
+2. **Configs page** (`/dashboard/agent-apis`) calls `list_api_key_env_names()` which scans `os.environ` for all vars starting with `CRISPY_API_KEY_`. These appear as dropdown options in the Agent API Configs UI and as entries in the Integration Configs section.
+3. **You** assign a key to an agent by selecting it from the dropdown. The configs page writes only the *env var name* (e.g. `CRISPY_API_KEY_OPENAI`) to the `agent_api_config` table. The actual key value is never stored in the database.
+4. **Runtime** calls `resolve_agent_runtime()` which reads the env var name from the DB, then calls `os.getenv("CRISPY_API_KEY_OPENAI")` to get the actual key value. Integration providers (Notion, Shopify, Meta) also read directly via `os.getenv("CRISPY_API_KEY_*")`.
+
+```
+~/.zshrc                    Configs page DB              Runtime
+─────────                   ───────────────              ───────
+export CRISPY_API_KEY_      agent_api_config             resolve_agent_runtime()
+  OPENAI="sk-..."    →      api_key_env =                os.getenv(
+                              "CRISPY_API_KEY_OPENAI"      "CRISPY_API_KEY_OPENAI")
+                                                        → "sk-..."
+export CRISPY_API_KEY_      IntegrationConfig            os.getenv(
+  NOTION="ntn_..."   →      env_var =                      "CRISPY_API_KEY_NOTION")
+                              "CRISPY_API_KEY_NOTION"    → "ntn_..."
+```
+
+#### Setting up credentials
+
+Add to `~/.zshrc` (or `~/.zprofile`):
+
+```bash
+# ── LLM API keys ──
+export CRISPY_API_KEY_OPENAI="sk-your-openai-key"
+export CRISPY_API_KEY_DEEPSEEK="sk-your-deepseek-key"
+export CRISPY_API_KEY_KIMI="sk-your-kimi-key"
+
+# ── Notion calendar integration ──
+export CRISPY_API_KEY_NOTION="ntn_your-notion-internal-integration-token"
+export CRISPY_API_KEY_NOTION_DATABASE="your-notion-database-32char-id"
+
+# ── Shopify (reserved) ──
+export CRISPY_API_KEY_SHOPIFY="shpat_your-shopify-access-token"
+
+# ── Meta Ads (reserved) ──
+export CRISPY_API_KEY_META="EAA..."
+```
+
+Apply and verify:
+
 ```bash
 source ~/.zshrc
+
+# Verify — every CRISPY_API_KEY_* var should appear
+env | grep CRISPY_API_KEY | sort
+
+# Start the app
+uv run uvicorn app.main:app --reload
 ```
+
+Open `/dashboard/agent-apis` — the dropdown and the Integration Configs section both list everything under `CRISPY_API_KEY_*`. The configs page shows `is_set: true` for every var that has a value.
+
+#### Architecture — single resolution path
+
+```
+CRISPY_API_KEY_*  ──→  list_api_key_env_names()   ──→  Configs page dropdown
+  (env vars)            os.environ scan                  AgentApiConfig.api_key_env (DB)
+                     ──→  list_integration_configs() ──→  IntegrationConfig.env_var (DB)
+                                                         resolve_agent_runtime() → actual key
+                                                         os.getenv() → actual key
+```
+
+**One rule**: everything lives under `CRISPY_API_KEY_*`. If you need a new credential, you name it `CRISPY_API_KEY_<PURPOSE>` and it's automatically visible everywhere.
 
 ### Dashboard:
 

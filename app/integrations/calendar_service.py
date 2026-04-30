@@ -17,13 +17,20 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _get_notion_credentials() -> tuple[str, str]:
+    """Resolve Notion API key and database ID from environment.
+
+    All credentials use the CRISPY_API_KEY_* prefix — this is the single
+    naming convention for every env var in the project.
+    """
+    api_key = os.getenv("CRISPY_API_KEY_NOTION", "")
+    database_id = os.getenv("CRISPY_API_KEY_NOTION_DATABASE", "")
+    return api_key, database_id
+
+
 def _get_notion_provider(db: Session) -> NotionProvider | None:
     """Build a NotionProvider from env vars. Returns None if not configured."""
-    from app.core.config import get_settings
-
-    settings = get_settings()
-    api_key = settings.notion_api_key or os.getenv("CRISPY_API_KEY_NOTION", "")
-    database_id = settings.notion_database_id or os.getenv("CRISPY_NOTION_DATABASE_ID", "")
+    api_key, database_id = _get_notion_credentials()
     if not api_key or not database_id:
         return None
     return NotionProvider(config={"api_key": api_key, "database_id": database_id})
@@ -77,9 +84,17 @@ async def delete_from_notion(db: Session, notion_page_id: str) -> bool:
 
 
 async def test_notion_connection(db: Session) -> dict:
+    api_key, database_id = _get_notion_credentials()
+    if not api_key and not database_id:
+        return {"ok": False, "error": "Notion API key and Database ID are not configured"}
+    if not api_key:
+        return {"ok": False, "error": "Notion API key is not set (CRISPY_API_KEY_NOTION)"}
+    if not database_id:
+        return {"ok": False, "error": "Notion Database ID is not set (CRISPY_API_KEY_NOTION_DATABASE)"}
+
     provider = _get_notion_provider(db)
     if not provider:
-        return {"ok": False, "error": "Notion API key and Database ID are not configured"}
+        return {"ok": False, "error": "Failed to initialise Notion provider"}
     try:
         ok = await provider.test_connection()
         return {"ok": ok, "error": None if ok else "Connection test failed — check credentials and database ID"}

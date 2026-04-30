@@ -3,7 +3,6 @@ from __future__ import annotations
 CALENDAR_PAGE_HTML = """
 <div class="calendar-page">
   <div class="calendar-header">
-    <a href="/dashboard" class="nav-link" style="margin-right:12px;">&larr; Dashboard</a>
     <div class="calendar-nav">
       <button onclick="calendarPrevWeek()" title="Previous week">&larr;</button>
       <button onclick="calendarToday()" title="Today">Today</button>

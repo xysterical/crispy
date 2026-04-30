@@ -451,12 +451,12 @@ def list_api_key_env_names(prefix: str = API_KEY_ENV_PREFIX) -> list[str]:
 
 
 _BUILTIN_INTEGRATION_CONFIGS = [
-    {"platform": "shopify", "config_key": "store_domain", "label": "Store Domain", "env_var": "CRISPY_SHOPIFY_STORE_DOMAIN", "is_required": True},
-    {"platform": "shopify", "config_key": "access_token", "label": "Access Token", "env_var": "CRISPY_SHOPIFY_ACCESS_TOKEN", "is_required": True},
-    {"platform": "meta", "config_key": "access_token", "label": "Access Token", "env_var": "CRISPY_META_ACCESS_TOKEN", "is_required": True},
-    {"platform": "meta", "config_key": "ad_account_id", "label": "Ad Account ID", "env_var": "CRISPY_META_AD_ACCOUNT_ID", "is_required": True},
+    {"platform": "shopify", "config_key": "store_domain", "label": "Store Domain", "env_var": "CRISPY_API_KEY_SHOPIFY_DOMAIN", "is_required": True},
+    {"platform": "shopify", "config_key": "access_token", "label": "Access Token", "env_var": "CRISPY_API_KEY_SHOPIFY", "is_required": True},
+    {"platform": "meta", "config_key": "access_token", "label": "Access Token", "env_var": "CRISPY_API_KEY_META", "is_required": True},
+    {"platform": "meta", "config_key": "ad_account_id", "label": "Ad Account ID", "env_var": "CRISPY_API_KEY_META_ACCOUNT", "is_required": True},
     {"platform": "notion", "config_key": "api_key", "label": "API Key (Internal Integration)", "env_var": "CRISPY_API_KEY_NOTION", "is_required": True},
-    {"platform": "notion", "config_key": "database_id", "label": "Content Calendar Database ID", "env_var": "CRISPY_NOTION_DATABASE_ID", "is_required": True},
+    {"platform": "notion", "config_key": "database_id", "label": "Content Calendar Database ID", "env_var": "CRISPY_API_KEY_NOTION_DATABASE", "is_required": True},
 ]
 
 
@@ -470,7 +470,11 @@ def _seed_integration_configs(db: Session) -> None:
                 IntConfig.config_key == item["config_key"],
             )
         )
-        if not existing:
+        if existing:
+            # Repair env_var if it was modified away from the built-in default
+            if existing.env_var != item["env_var"]:
+                existing.env_var = item["env_var"]
+        else:
             db.add(IntConfig(**item))
     db.flush()
 
