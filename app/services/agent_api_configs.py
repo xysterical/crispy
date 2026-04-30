@@ -448,3 +448,79 @@ def list_api_key_env_names(prefix: str = API_KEY_ENV_PREFIX) -> list[str]:
     names = [name for name in os.environ.keys() if name.startswith(prefix)]
     names.sort()
     return names
+
+
+_BUILTIN_INTEGRATION_CONFIGS = [
+    {"platform": "shopify", "config_key": "store_domain", "label": "Store Domain", "env_var": "CRISPY_SHOPIFY_STORE_DOMAIN", "is_required": True},
+    {"platform": "shopify", "config_key": "access_token", "label": "Access Token", "env_var": "CRISPY_SHOPIFY_ACCESS_TOKEN", "is_required": True},
+    {"platform": "meta", "config_key": "access_token", "label": "Access Token", "env_var": "CRISPY_META_ACCESS_TOKEN", "is_required": True},
+    {"platform": "meta", "config_key": "ad_account_id", "label": "Ad Account ID", "env_var": "CRISPY_META_AD_ACCOUNT_ID", "is_required": True},
+]
+
+
+def _seed_integration_configs(db: Session) -> None:
+    from app.data.models import IntegrationConfig as IntConfig
+
+    for item in _BUILTIN_INTEGRATION_CONFIGS:
+        existing = db.scalar(
+            select(IntConfig).where(
+                IntConfig.platform == item["platform"],
+                IntConfig.config_key == item["config_key"],
+            )
+        )
+        if not existing:
+            db.add(IntConfig(**item))
+    db.flush()
+
+
+def list_integration_configs(db: Session) -> list[dict]:
+    from app.data.models import IntegrationConfig as IntConfig
+
+    _seed_integration_configs(db)
+    rows = db.scalars(select(IntConfig).order_by(IntConfig.platform, IntConfig.config_key)).all()
+    return [
+        {
+            "id": row.id,
+            "platform": row.platform,
+            "config_key": row.config_key,
+            "label": row.label,
+            "env_var": row.env_var,
+            "is_required": row.is_required,
+            "is_set": bool(os.getenv(row.env_var)),
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
+        for row in rows
+    ]
+
+
+def upsert_integration_config(db: Session, platform: str, config_key: str, env_var: str) -> dict:
+    from app.data.models import IntegrationConfig as IntConfig
+
+    row = db.scalar(
+        select(IntConfig).where(
+            IntConfig.platform == platform,
+            IntConfig.config_key == config_key,
+        )
+    )
+    if not row:
+        label = " ".join(p.capitalize() for p in config_key.split("_"))
+        row = IntConfig(
+            platform=platform,
+            config_key=config_key,
+            label=label,
+            env_var=env_var,
+        )
+        db.add(row)
+    else:
+        row.env_var = env_var
+    db.flush()
+    return {
+        "id": row.id,
+        "platform": row.platform,
+        "config_key": row.config_key,
+        "label": row.label,
+        "env_var": row.env_var,
+        "is_required": row.is_required,
+        "is_set": bool(os.getenv(row.env_var)),
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }

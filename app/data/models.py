@@ -142,6 +142,8 @@ class Campaign(Base):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     channel: Mapped[str] = mapped_column(String(32), default="meta")
     objective: Mapped[str] = mapped_column(String(64), default="conversions")
+    platform_campaign_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    platform_ad_account_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     project: Mapped[Project] = relationship(back_populates="campaigns")
@@ -439,6 +441,34 @@ class AgentApiConfig(Base):
     streaming_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     extra: Mapped[dict] = mapped_column(json_type(), default=dict)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class IntegrationSync(Base):
+    __tablename__ = "integration_sync"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id"), nullable=False)
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), nullable=False)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False)
+    sync_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="running")
+    items_synced: Mapped[int] = mapped_column(Integer, default=0)
+    error_log: Mapped[dict | None] = mapped_column(json_type(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class IntegrationConfig(Base):
+    __tablename__ = "integration_config"
+    __table_args__ = (UniqueConstraint("platform", "config_key", name="uq_integration_config_platform_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    platform: Mapped[str] = mapped_column(String(32), nullable=False)
+    config_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
+    env_var: Mapped[str] = mapped_column(String(128), nullable=False)
+    is_required: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

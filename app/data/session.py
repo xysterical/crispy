@@ -166,6 +166,8 @@ def apply_runtime_migrations(target_engine) -> None:
     _add_column_if_missing(target_engine, "stage_task", "max_retries", "ALTER TABLE stage_task ADD COLUMN max_retries INTEGER DEFAULT 3")
     _add_column_if_missing(target_engine, "stage_task", "retry_at", "ALTER TABLE stage_task ADD COLUMN retry_at DATETIME")
     _add_column_if_missing(target_engine, "pipeline_run", "approval_mode", "ALTER TABLE pipeline_run ADD COLUMN approval_mode VARCHAR(16) DEFAULT 'manual'")
+    _add_column_if_missing(target_engine, "campaign", "platform_campaign_id", "ALTER TABLE campaign ADD COLUMN platform_campaign_id VARCHAR(128)")
+    _add_column_if_missing(target_engine, "campaign", "platform_ad_account_id", "ALTER TABLE campaign ADD COLUMN platform_ad_account_id VARCHAR(128)")
     _add_column_if_missing(target_engine, "workspace", "industry_code", "ALTER TABLE workspace ADD COLUMN industry_code VARCHAR(128) DEFAULT 'general'")
     _add_column_if_missing(target_engine, "workspace", "store_url", "ALTER TABLE workspace ADD COLUMN store_url VARCHAR(512)")
     _add_column_if_missing(target_engine, "workspace", "description", "ALTER TABLE workspace ADD COLUMN description TEXT")
@@ -173,6 +175,36 @@ def apply_runtime_migrations(target_engine) -> None:
     _add_column_if_missing(target_engine, "workspace", "last_analyzed_at", "ALTER TABLE workspace ADD COLUMN last_analyzed_at DATETIME")
 
     with target_engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS integration_config ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "platform VARCHAR(32) NOT NULL, "
+                "config_key VARCHAR(64) NOT NULL, "
+                "label VARCHAR(128) NOT NULL, "
+                "env_var VARCHAR(128) NOT NULL, "
+                "is_required BOOLEAN DEFAULT 1, "
+                "created_at DATETIME, "
+                "updated_at DATETIME, "
+                "UNIQUE(platform, config_key)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS integration_sync ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "workspace_id VARCHAR(36) NOT NULL, "
+                "project_id VARCHAR(36) NOT NULL, "
+                "platform VARCHAR(32) NOT NULL, "
+                "sync_type VARCHAR(32) NOT NULL, "
+                "status VARCHAR(32) DEFAULT 'running', "
+                "items_synced INTEGER DEFAULT 0, "
+                "error_log JSON, "
+                "created_at DATETIME"
+                ")"
+            )
+        )
         conn.execute(
             text(
                 "CREATE TABLE IF NOT EXISTS agent_trace_event ("

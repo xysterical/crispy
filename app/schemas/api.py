@@ -258,6 +258,21 @@ class AgentApiConfigPatchRequest(BaseModel):
     extra: dict | None = None
 
 
+class IntegrationConfigView(BaseModel):
+    id: str
+    platform: str
+    config_key: str
+    label: str
+    env_var: str
+    is_required: bool = True
+    is_set: bool = False
+    updated_at: str | None = None
+
+
+class IntegrationConfigPatchRequest(BaseModel):
+    env_var: str | None = None
+
+
 class DeliverablesResponse(BaseModel):
     run_id: str
     winner_variant_id: str | None = None

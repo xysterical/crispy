@@ -16,6 +16,7 @@ from app.data.models import (
     Artifact,
     Campaign,
     GmMemory,
+    PerformanceSnapshot,
     PipelineRun,
     Product,
     Project,
@@ -571,6 +572,63 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
     return merged
 
 
+def _analytics_insights(db: Session, run: PipelineRun) -> list[dict]:
+    try:
+        from app.analytics import ProductAnalyzer, AdAnalyzer
+
+        insights: list[dict] = []
+        if run.product_code:
+            pa = ProductAnalyzer(db, run.project_id)
+            vel = pa.analyze_product_sales_velocity(run.product_code)
+            if not vel.insufficient_data:
+                insights.append({
+                    "memory_scope": "analytics",
+                    "source_type": "product_sales_velocity",
+                    "product_code": run.product_code,
+                    "content": vel.model_dump(),
+                })
+            contrib = pa.analyze_product_contribution([run.product_code])
+            if not contrib.insufficient_data:
+                insights.append({
+                    "memory_scope": "analytics",
+                    "source_type": "product_contribution",
+                    "product_code": run.product_code,
+                    "content": contrib.model_dump(),
+                })
+
+        aa = AdAnalyzer(db, run.project_id)
+        snapshots = db.scalars(
+            select(PerformanceSnapshot)
+            .where(PerformanceSnapshot.project_id == run.project_id)
+            .order_by(desc(PerformanceSnapshot.created_at))
+            .limit(50)
+        ).all()
+        creative_keys = list({s.creative_key for s in snapshots if s.creative_key})
+        for ck in creative_keys[:3]:
+            fatigue = aa.analyze_creative_fatigue(ck)
+            if not fatigue.insufficient_data:
+                insights.append({
+                    "memory_scope": "analytics",
+                    "source_type": "creative_fatigue",
+                    "creative_key": ck,
+                    "product_code": run.product_code,
+                    "content": fatigue.model_dump(),
+                })
+        if len(creative_keys) >= 2:
+            comp = aa.compare_creatives(creative_keys[:5])
+            if not comp.insufficient_data:
+                insights.append({
+                    "memory_scope": "analytics",
+                    "source_type": "creative_compare",
+                    "product_code": run.product_code,
+                    "content": comp.model_dump(),
+                })
+
+        return insights
+    except Exception:
+        return []
+
+
 def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
     product = db.get(Product, run.product_id)
     campaign = db.get(Campaign, run.campaign_id)
@@ -595,7 +653,8 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
     if task.stage_name == "intake":
         return base
     if task.stage_name == "planning":
-        return {**base, "intake": _stage_output_optional(db, run.id, "intake"), "gm_lessons": _recent_gm_lessons(db, run)}
+        gm_lessons = _recent_gm_lessons(db, run) + _analytics_insights(db, run)
+        return {**base, "intake": _stage_output_optional(db, run.id, "intake"), "gm_lessons": gm_lessons}
     if task.stage_name == "divergence":
         return {**base, "planning": _stage_output_optional(db, run.id, "planning")}
     if task.stage_name == "copy_image_generation":

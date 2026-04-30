@@ -134,6 +134,8 @@ class FeedbackRow(BaseModel):
     revenue: float = 0
     period_start: date | None = None
     period_end: date | None = None
+    platform: str | None = None
+    platform_campaign_id: str | None = None
 
     @field_validator("impressions", "clicks", "conversions")
     @classmethod

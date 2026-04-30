@@ -6,6 +6,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.data.models import (
+    Campaign,
     FeedbackImport,
     GmMemory,
     GmInstructionVersion,
@@ -147,6 +148,25 @@ def import_feedback_rows(
         run_model = db.get(PipelineRun, row.run_id) if row.run_id else None
         product_code = run_model.product_code if run_model else ""
         industry_code = run_model.industry_code if run_model else ""
+        campaign_id = run_model.campaign_id if run_model else None
+        if not campaign_id and row.platform_campaign_id:
+            camp = db.scalar(
+                select(Campaign).where(
+                    Campaign.project_id == project.id,
+                    Campaign.platform_campaign_id == row.platform_campaign_id,
+                )
+            )
+            if camp:
+                campaign_id = camp.id
+        if not campaign_id and row.campaign_name:
+            camp = db.scalar(
+                select(Campaign).where(
+                    Campaign.project_id == project.id,
+                    Campaign.name == row.campaign_name,
+                )
+            )
+            if camp:
+                campaign_id = camp.id
         if product_code:
             memory_by_product.setdefault(product_code, []).append((resolved_variant_id, weighted, pattern_payload))
         if industry_code:
@@ -154,6 +174,7 @@ def import_feedback_rows(
 
         snapshot = PerformanceSnapshot(
             project_id=project.id,
+            campaign_id=campaign_id,
             run_id=row.run_id,
             creative_key=resolved_variant_id,
             metrics={

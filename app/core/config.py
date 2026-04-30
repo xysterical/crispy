@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     default_provider: str = "openai"
     default_model: str = "gpt-4.1"
     enable_worker: bool = True
+    # Shopify read-only integration
+    shopify_store_domain: str = ""
+    shopify_access_token: str = ""
+    # Meta Ads read-only integration
+    meta_access_token: str = ""
+    meta_ad_account_id: str = ""
 
 
 @lru_cache(maxsize=1)

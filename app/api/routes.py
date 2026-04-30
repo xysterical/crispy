@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.registry import stage_agent
 from app.core.config import get_settings
-from app.data.models import Artifact, GmMemory, PipelineRun, RunVariant, ScoreCard as ScoreCardModel, StageTask, VariantAsset
+from app.data.models import Artifact, GmMemory, IntegrationSync, PipelineRun, RunVariant, ScoreCard as ScoreCardModel, StageTask, VariantAsset
 from app.data.session import (
     SessionLocal,
     get_active_database_url,
@@ -40,6 +40,8 @@ from app.schemas.api import (
     FeedbackImportRequest,
     FeedbackImportResponse,
     GmMemoryItem,
+    IntegrationConfigPatchRequest,
+    IntegrationConfigView,
     LeaderboardItem,
     LeaderboardResponse,
     PersonaMeta,
@@ -2422,7 +2424,7 @@ def _personas_dashboard_html() -> str:
     """
 
 
-def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_json: str) -> str:
+def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_json: str, integration_configs_json: str = "[]") -> str:
     return f"""
     <html>
       <head>
@@ -2603,10 +2605,21 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
               </table>
             </div>
           </section>
+          <section class="card" style="margin-top: 24px;">
+            <h2>Integration Credentials</h2>
+            <div class="subtitle" style="margin-bottom: 12px;">Credentials are read from environment variables. Only env var names are stored here.</div>
+            <div class="table-wrap">
+              <table id="int-cfg-table">
+                <thead><tr><th>Platform</th><th>Config Key</th><th>Label</th><th>Env Var</th><th>Required</th><th>Status</th><th>Action</th></tr></thead>
+                <tbody id="int-cfg-body"></tbody>
+              </table>
+            </div>
+          </section>
         </main>
         <script>
           const personas = {personas_json};
           const existing = {configs_json};
+          const integrationConfigs = {integration_configs_json};
           let envVars = {env_vars_json};
           let advancedColsVisible = false;
           let toastTimer = null;
@@ -2796,9 +2809,55 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             render();
             showSaveToast(`Saved: ${{row.title}}`);
           }}
+          async function refreshIntegrationTable() {{
+            const body = document.getElementById("int-cfg-body");
+            if (!body) return;
+            let configs = integrationConfigs;
+            try {{ configs = await api("/integration-configs"); }} catch (_e) {{}}
+            body.innerHTML = configs.map(c => {{
+              const platform = String(c.platform || "");
+              const configKey = String(c.config_key || "");
+              const label = String(c.label || "");
+              const envVar = String(c.env_var || "");
+              const isSet = c.is_set;
+              const updated = c.updated_at ? c.updated_at.slice(0,10) : "-";
+              return '<tr>'
+                + '<td>' + platform + '</td>'
+                + '<td><code>' + configKey + '</code></td>'
+                + '<td>' + label + '</td>'
+                + '<td><select onchange="saveIntegrationConfig(\\'' + platform + '\\', \\'' + configKey + '\\', this.value)">'
+                + envOptionsIntegration(envVar)
+                + '</select></td>'
+                + '<td>' + (c.is_required ? "Yes" : "No") + '</td>'
+                + '<td>' + (isSet ? '<span class="badge">found</span>' : '<span class="badge badge-missing">missing</span>') + '</td>'
+                + '<td><span class="muted">' + updated + '</span></td>'
+                + '</tr>';
+            }}).join("");
+          }}
+          function envOptionsIntegration(selected) {{
+            const seen = new Set();
+            const names = [];
+            (envVars || []).forEach(function(n) {{ if (!seen.has(n)) {{ seen.add(n); names.push(n); }} }});
+            ["CRISPY_SHOPIFY_STORE_DOMAIN", "CRISPY_SHOPIFY_ACCESS_TOKEN", "CRISPY_META_ACCESS_TOKEN", "CRISPY_META_AD_ACCOUNT_ID"].forEach(function(n) {{ if (!seen.has(n)) {{ seen.add(n); names.push(n); }} }});
+            names.sort();
+            var opts = '<option value="">(none)</option>';
+            names.forEach(function(name) {{
+              opts += '<option value="' + name + '"' + (selected === name ? ' selected' : '') + '>' + name + '</option>';
+            }});
+            return opts;
+          }}
+          async function saveIntegrationConfig(platform, configKey, envVar) {{
+            try {{
+              await api("/integration-configs/" + encodeURIComponent(platform) + "/" + encodeURIComponent(configKey), {{ method: "PATCH", body: JSON.stringify({{ env_var: envVar }}) }});
+              integrationConfigs = await api("/integration-configs");
+              refreshIntegrationTable();
+              showSaveToast("Saved: " + platform + " / " + configKey);
+            }} catch (err) {{ alert(err.message); }}
+          }}
           async function init() {{
             try {{ envVars = await api("/agent-configs/env-vars"); }} catch (_err) {{}}
             render();
+            refreshIntegrationTable();
           }}
           init();
         </script>
@@ -3221,13 +3280,17 @@ def media_view(path: str = Query(..., min_length=1)) -> str:
 
 @router.get("/dashboard/agent-apis", response_class=HTMLResponse)
 def dashboard_agent_apis(db: Session = Depends(get_db)) -> str:
+    from app.services.agent_api_configs import list_integration_configs
+
     personas = [PersonaMeta(**row).model_dump(mode="json") for row in list_persona_catalog()]
     configs = [_serialize_agent_config(row).model_dump(mode="json") for row in list_agent_configs(db)]
+    int_configs = list_integration_configs(db)
     db.commit()
     return _agent_api_dashboard_html(
         personas_json=json.dumps(personas, ensure_ascii=False).replace("</", "<\\/"),
         configs_json=json.dumps(configs, ensure_ascii=False).replace("</", "<\\/"),
         env_vars_json=json.dumps(list_api_key_env_names(), ensure_ascii=False).replace("</", "<\\/"),
+        integration_configs_json=json.dumps(int_configs, ensure_ascii=False).replace("</", "<\\/"),
     )
 
 
@@ -4316,6 +4379,172 @@ def leaderboard(project_id: str, db: Session = Depends(get_db)) -> LeaderboardRe
     return LeaderboardResponse(project_id=project_id, ranking=ranking)
 
 
+# ── Integration Sync Endpoints ──────────────────────────────────────────────
+
+from pydantic import BaseModel as _PydanticBaseModel
+
+
+class IntegrationSyncResult(_PydanticBaseModel):
+    platform: str
+    sync_type: str
+    status: str
+    items_synced: int
+    memory_entries_created: int
+    error: str | None = None
+
+
+class SyncStatusItem(_PydanticBaseModel):
+    id: str
+    platform: str
+    sync_type: str
+    status: str
+    items_synced: int
+    error_log: dict | None = None
+    created_at: str
+
+
+class SyncStatusResponse(_PydanticBaseModel):
+    items: list[SyncStatusItem]
+
+
+@router.post("/integrations/{platform}/sync", response_model=IntegrationSyncResult)
+async def trigger_integration_sync(
+    platform: str,
+    workspace_name: str = Query(...),
+    project_name: str = Query(...),
+    sync_type: str = Query("all"),
+    db: Session = Depends(get_db),
+) -> IntegrationSyncResult:
+    from app.integrations.sync_service import sync_shopify, sync_meta
+
+    if platform not in ("shopify", "meta"):
+        raise HTTPException(status_code=400, detail="Platform must be 'shopify' or 'meta'")
+
+    if platform == "shopify":
+        result = await sync_shopify(
+            db, workspace_name=workspace_name, project_name=project_name, sync_type=sync_type,
+        )
+    else:
+        result = await sync_meta(
+            db, workspace_name=workspace_name, project_name=project_name, sync_type=sync_type,
+        )
+    db.commit()
+    return IntegrationSyncResult(**result.model_dump())
+
+
+@router.get("/integrations/sync-status", response_model=SyncStatusResponse)
+def get_sync_status(
+    workspace_name: str = Query(...),
+    project_name: str = Query(...),
+    platform: str | None = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> SyncStatusResponse:
+    from app.data.models import Workspace, Project
+
+    workspace = db.scalar(select(Workspace).where(Workspace.name == workspace_name))
+    if not workspace:
+        return SyncStatusResponse(items=[])
+    project = db.scalar(
+        select(Project).where(Project.workspace_id == workspace.id, Project.name == project_name)
+    )
+    if not project:
+        return SyncStatusResponse(items=[])
+
+    conditions = [IntegrationSync.project_id == project.id]
+    if platform:
+        conditions.append(IntegrationSync.platform == platform)
+    rows = db.scalars(
+        select(IntegrationSync)
+        .where(*conditions)
+        .order_by(desc(IntegrationSync.created_at))
+        .limit(limit)
+    ).all()
+    return SyncStatusResponse(items=[
+        SyncStatusItem(
+            id=row.id,
+            platform=row.platform,
+            sync_type=row.sync_type,
+            status=row.status,
+            items_synced=row.items_synced,
+            error_log=row.error_log,
+            created_at=row.created_at.isoformat() if row.created_at else "",
+        )
+        for row in rows
+    ])
+
+
+@router.get("/integrations/shopify/products")
+def list_shopify_products(
+    workspace_name: str = Query(...),
+    project_name: str = Query(...),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    from app.data.models import Product as ProductModel, Project, Workspace
+
+    workspace = db.scalar(select(Workspace).where(Workspace.name == workspace_name))
+    if not workspace:
+        return []
+    project = db.scalar(
+        select(Project).where(Project.workspace_id == workspace.id, Project.name == project_name)
+    )
+    if not project:
+        return []
+    products = db.scalars(
+        select(ProductModel).where(ProductModel.project_id == project.id)
+    ).all()
+    return [
+        {
+            "id": p.id,
+            "name": p.name,
+            "product_code": p.product_code,
+            "shopify_product_id": (p.metadata_json or {}).get("shopify_product_id"),
+            "shopify_handle": (p.metadata_json or {}).get("shopify_handle"),
+            "shopify_vendor": (p.metadata_json or {}).get("shopify_vendor"),
+            "shopify_product_type": (p.metadata_json or {}).get("shopify_product_type"),
+        }
+        for p in products
+        if (p.metadata_json or {}).get("shopify_product_id")
+    ]
+
+
+@router.get("/integrations/meta/campaigns")
+def list_meta_campaigns(
+    workspace_name: str = Query(...),
+    project_name: str = Query(...),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    from app.data.models import Campaign as CampaignModel, Project, Workspace
+
+    workspace = db.scalar(select(Workspace).where(Workspace.name == workspace_name))
+    if not workspace:
+        return []
+    project = db.scalar(
+        select(Project).where(Project.workspace_id == workspace.id, Project.name == project_name)
+    )
+    if not project:
+        return []
+    campaigns = db.scalars(
+        select(CampaignModel).where(
+            CampaignModel.project_id == project.id,
+            CampaignModel.platform_campaign_id.isnot(None),
+        )
+    ).all()
+    return [
+        {
+            "id": c.id,
+            "name": c.name,
+            "channel": c.channel,
+            "objective": c.objective,
+            "platform_campaign_id": c.platform_campaign_id,
+            "platform_ad_account_id": c.platform_ad_account_id,
+        }
+        for c in campaigns
+    ]
+
+
+# ── Persona Endpoints ──────────────────────────────────────────────────────
+
 @router.get("/personas", response_model=list[PersonaMeta])
 def list_agent_personas() -> list[PersonaMeta]:
     return [PersonaMeta(**row) for row in list_persona_catalog()]
@@ -4401,3 +4630,27 @@ def patch_agent_config(agent_name: str, payload: AgentApiConfigPatchRequest, db:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
     return _serialize_agent_config(row)
+
+
+@router.get("/integration-configs", response_model=list[IntegrationConfigView])
+def get_integration_configs(db: Session = Depends(get_db)) -> list[IntegrationConfigView]:
+    from app.services.agent_api_configs import list_integration_configs
+
+    rows = list_integration_configs(db)
+    db.commit()
+    return [IntegrationConfigView(**row) for row in rows]
+
+
+@router.patch("/integration-configs/{platform}/{config_key}", response_model=IntegrationConfigView)
+def patch_integration_config(
+    platform: str,
+    config_key: str,
+    payload: IntegrationConfigPatchRequest,
+    db: Session = Depends(get_db),
+) -> IntegrationConfigView:
+    from app.services.agent_api_configs import upsert_integration_config
+
+    env_var = (payload.env_var or "").strip()
+    row = upsert_integration_config(db, platform=platform, config_key=config_key, env_var=env_var)
+    db.commit()
+    return IntegrationConfigView(**row)
