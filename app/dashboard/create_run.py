@@ -213,15 +213,20 @@ CREATE_RUN_HTML = """
 CREATE_RUN_JS = """
 <script>
   // -- Drawer --
+  function toggleFabCreate() {
+    const panel = document.getElementById('drawer-panel');
+    if (panel.classList.contains('open')) { closeDrawer(); }
+    else { openDrawer(); }
+  }
   function openDrawer() {
     document.getElementById('drawer-overlay').classList.add('open');
     document.getElementById('drawer-panel').classList.add('open');
-    document.getElementById('fab-create').style.display = 'none';
+    document.getElementById('fab-icon-swap').setAttribute('data-state', 'b');
   }
   function closeDrawer() {
     document.getElementById('drawer-overlay').classList.remove('open');
     document.getElementById('drawer-panel').classList.remove('open');
-    document.getElementById('fab-create').style.display = 'flex';
+    document.getElementById('fab-icon-swap').setAttribute('data-state', 'a');
   }
 
   // -- State --

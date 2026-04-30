@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.registry import stage_agent
 from app.core.config import get_settings
-from app.data.models import Artifact, Campaign, GmMemory, IntegrationSync, PerformanceSnapshot, PipelineRun, Product, Project, RunVariant, ScoreCard as ScoreCardModel, StageTask, VariantAsset, Workspace
+from app.data.models import Artifact, Campaign, ContentSchedule, GmMemory, IntegrationSync, PerformanceSnapshot, PipelineRun, Product, Project, RunVariant, ScoreCard as ScoreCardModel, StageTask, VariantAsset, Workspace
 from app.data.session import (
     SessionLocal,
     get_active_database_url,
@@ -80,6 +80,12 @@ from app.schemas.api import (
     ShopPatchRequest,
     CategoryItem,
     CategoryListResponse,
+    ContentScheduleCreateRequest,
+    ContentScheduleUpdateRequest,
+    ContentScheduleView,
+    ContentScheduleListResponse,
+    NotionConnectionTestResponse,
+    VariantScheduleCandidate,
 )
 from app.schemas.contracts import ComplianceLevel, ConversionForecast, ScoreCard
 from app.services.agent_api_configs import (
@@ -728,6 +734,35 @@ def _dashboard_shared_js() -> str:
             });
           }
 
+          async function scheduleVariantQuick(variantId, runId, hook){
+            const wsSelect = document.getElementById('workspace_name');
+            const wsName = wsSelect?.value || 'workspace_demo';
+            try {
+              const shopsResp = await fetch('/shops?limit=50');
+              const shopsData = await shopsResp.json();
+              const shops = shopsData.shops || shopsData.items || [];
+              const shop = shops.find(function(s){ return s.name === wsName; }) || shops[0] || {};
+              const wsId = shop.id || wsName;
+              const projResp = await fetch('/projects?workspace_name=' + encodeURIComponent(wsName));
+              const projData = await projResp.json();
+              const projId = (projData && projData[0]) ? projData[0].id : (wsName + '_project');
+              const today = new Date().toISOString().slice(0,10);
+              const title = (hook || 'Variant ' + variantId.slice(0,8)).slice(0,256);
+              const r = await fetch('/content-schedules', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({
+                  workspace_id: wsId, project_id: projId, variant_id: variantId,
+                  title: title, channel: 'meta', scheduled_date: today
+                })
+              });
+              if (!r.ok) { const err = await r.json(); throw new Error(err.detail || 'Failed'); }
+              alert('Scheduled for today (' + today + '). Open Content Calendar to view.');
+            } catch(e){
+              alert('Schedule failed: ' + e.message);
+            }
+          }
+
           function scoreColorClass(score) {
             if (score == null) return "";
             if (score >= 80) return "high";
@@ -763,7 +798,12 @@ def _dashboard_shared_js() -> str:
             const cards = document.querySelectorAll(".variant-score-card");
             if (expandedVariantId === variantId) {
               expandedVariantId = null;
-              if (panel) panel.classList.remove("open");
+              if (panel) {
+                panel.classList.remove("open");
+                panel.classList.add("is-closing");
+                const closeMs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--modal-close-dur")) || 150;
+                setTimeout(() => panel.classList.remove("is-closing"), closeMs);
+              }
               cards.forEach((c) => c.classList.remove("selected"));
               return;
             }
@@ -772,6 +812,7 @@ def _dashboard_shared_js() -> str:
               c.classList.toggle("selected", c.dataset.variantId === variantId);
             });
             if (panel) {
+              panel.classList.remove("is-closing");
               panel.innerHTML = renderVariantDetail(runId, variantId);
               panel.classList.add("open");
               panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -801,7 +842,7 @@ def _dashboard_shared_js() -> str:
                   ${item.is_winner ? '<span class="quality-chip good">Winner</span>' : ''}
                   ${item.shortlisted ? '<span class="quality-chip good">Shortlisted</span>' : ''}
                 </div>
-                <button onclick="expandedVariantId=null;document.getElementById('variant-detail-panel').classList.remove('open');document.querySelectorAll('.variant-score-card').forEach(c=>c.classList.remove('selected'));" style="font-size:12px;">Close</button>
+                <button onclick="(()=>{const p=document.getElementById('variant-detail-panel');expandedVariantId=null;p.classList.remove('open');p.classList.add('is-closing');const m=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--modal-close-dur'))||150;setTimeout(()=>p.classList.remove('is-closing'),m);document.querySelectorAll('.variant-score-card').forEach(c=>c.classList.remove('selected'));})()" style="font-size:12px;">Close</button>
               </div>
               <div class="variant-detail-grid" style="margin-top:14px;">
                 <div>
@@ -836,6 +877,7 @@ def _dashboard_shared_js() -> str:
                 <button onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/select', {shortlist:true, comment:'shortlisted from dashboard'})">Shortlist</button>
                 <button class="primary" onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/select', {winner:true, comment:'winner chosen from dashboard'})">Set Winner</button>
                 <button onclick="requestVariantRegeneration('${runId}', '${variantId}')">Regenerate</button>
+                <button onclick="scheduleVariantQuick('${variantId}','${runId}','${(item.hook||'').replace(/'/g,\"\\\\'\")}')" style="background:var(--soft);border-color:var(--accent);color:var(--accent);">+ Calendar</button>
               </div>
             `;
           }
@@ -975,7 +1017,7 @@ def _dashboard_shared_js() -> str:
                   const isAutoApproved = task.status === "approved" && String(task.review_notes || "").includes("auto_approved");
                   const statusLabel = isAutoApproved ? "AUTO-APPROVED" : esc(task.status);
                   return `
-                <article class="trace-event">
+                <article class="trace-event t-resize">
                   <div class="trace-head">
                     <div class="trace-head-main">
                       <span class="trace-index">${stages.length - index}</span>
@@ -1013,7 +1055,7 @@ def _dashboard_shared_js() -> str:
             return `
               <div id="agent-trace-board" class="agent-trace">
                 ${events.map((event, index) => `
-                  <article class="trace-event">
+                  <article class="trace-event t-resize">
                     <div class="trace-head">
                       <div class="trace-head-main">
                         <span class="trace-index">${events.length - index}</span>
@@ -3622,6 +3664,28 @@ def media_view(path: str = Query(..., min_length=1)) -> str:
     """
 
 
+@router.get("/dashboard/calendar", response_class=HTMLResponse)
+def dashboard_calendar_page() -> str:
+    from app.dashboard.calendar_page import CALENDAR_PAGE_HTML
+    from app.dashboard.layout import render_head, render_shell_top, render_shell_bottom
+
+    top = render_shell_top().replace(
+        '<div style="flex:0 0 480px;min-width:0;">',
+        '<div style="flex:0 0 100%;min-width:0;">',
+    )
+    top = top.replace(
+        '<section class="card runs-panel"',
+        '<section style="display:none;"',
+    )
+    return (
+        render_head("Crispy Content Calendar")
+        + top
+        + '<section class="card" style="margin-top:0;">' + CALENDAR_PAGE_HTML + '</section>'
+        + render_shell_bottom()
+        + "\n  </body>\n</html>"
+    )
+
+
 @router.get("/dashboard/agent-apis", response_class=HTMLResponse)
 def dashboard_agent_apis(db: Session = Depends(get_db)) -> str:
     from app.services.agent_api_configs import list_integration_configs
@@ -4974,6 +5038,205 @@ def patch_agent_config(agent_name: str, payload: AgentApiConfigPatchRequest, db:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
     return _serialize_agent_config(row)
+
+
+# ── Content Calendar ────────────────────────────────────────────────────────
+
+
+@router.get("/content-schedules", response_model=ContentScheduleListResponse)
+def list_content_schedules(
+    workspace_id: str = Query(...),
+    start_date: str = Query(..., description="YYYY-MM-DD"),
+    end_date: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+) -> ContentScheduleListResponse:
+    from datetime import date as date_type
+
+    rows = db.scalars(
+        select(ContentSchedule)
+        .where(
+            ContentSchedule.workspace_id == workspace_id,
+            ContentSchedule.scheduled_date >= date_type.fromisoformat(start_date),
+            ContentSchedule.scheduled_date <= date_type.fromisoformat(end_date),
+        )
+        .order_by(ContentSchedule.scheduled_date.asc(), ContentSchedule.scheduled_time.asc())
+    ).all()
+    return ContentScheduleListResponse(items=[_serialize_schedule(r) for r in rows])
+
+
+@router.post("/content-schedules", response_model=ContentScheduleView)
+async def create_content_schedule(
+    payload: ContentScheduleCreateRequest,
+    db: Session = Depends(get_db),
+) -> ContentScheduleView:
+    from datetime import date as date_type
+
+    from app.integrations.calendar_service import schedule_variant
+
+    scheduled_date = date_type.fromisoformat(payload.scheduled_date)
+    variant_url = ""
+    if payload.variant_id:
+        variant = db.get(RunVariant, payload.variant_id)
+        if variant:
+            variant_url = f"/dashboard?run={variant.run_id}&variant={variant.id}"
+
+    schedule = await schedule_variant(
+        db,
+        workspace_id=payload.workspace_id,
+        project_id=payload.project_id,
+        variant_id=payload.variant_id,
+        campaign_id=payload.campaign_id,
+        title=payload.title,
+        channel=payload.channel,
+        scheduled_date=scheduled_date,
+        scheduled_time=payload.scheduled_time,
+        notes=payload.notes,
+        variant_url=variant_url,
+    )
+    db.commit()
+    return _serialize_schedule(schedule)
+
+
+@router.put("/content-schedules/{schedule_id}", response_model=ContentScheduleView)
+async def update_content_schedule(
+    schedule_id: str,
+    payload: ContentScheduleUpdateRequest,
+    db: Session = Depends(get_db),
+) -> ContentScheduleView:
+    from datetime import date as date_type
+
+    from app.integrations.calendar_service import push_to_notion
+
+    schedule = db.get(ContentSchedule, schedule_id)
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+
+    if payload.title is not None:
+        schedule.title = payload.title
+    if payload.channel is not None:
+        schedule.channel = payload.channel
+    if payload.scheduled_date is not None:
+        schedule.scheduled_date = date_type.fromisoformat(payload.scheduled_date)
+    if payload.scheduled_time is not None:
+        schedule.scheduled_time = payload.scheduled_time or None
+    if payload.state is not None:
+        schedule.state = payload.state
+    if payload.notes is not None:
+        schedule.notes = payload.notes or None
+    if payload.variant_id is not None:
+        schedule.variant_id = payload.variant_id or None
+    if payload.campaign_id is not None:
+        schedule.campaign_id = payload.campaign_id or None
+
+    db.flush()
+
+    variant_url = ""
+    if schedule.variant_id:
+        variant = db.get(RunVariant, schedule.variant_id)
+        if variant:
+            variant_url = f"/dashboard?run={variant.run_id}&variant={variant.id}"
+
+    notion_id = await push_to_notion(db, schedule, variant_url)
+    if notion_id:
+        schedule.notion_page_id = notion_id
+        db.flush()
+
+    db.commit()
+    return _serialize_schedule(schedule)
+
+
+@router.delete("/content-schedules/{schedule_id}")
+async def delete_content_schedule(
+    schedule_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.integrations.calendar_service import delete_from_notion
+
+    schedule = db.get(ContentSchedule, schedule_id)
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+
+    if schedule.notion_page_id:
+        await delete_from_notion(db, schedule.notion_page_id)
+
+    db.delete(schedule)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/content-schedules/notion-status", response_model=NotionConnectionTestResponse)
+async def check_notion_connection(db: Session = Depends(get_db)) -> NotionConnectionTestResponse:
+    from app.integrations.calendar_service import test_notion_connection
+
+    result = await test_notion_connection(db)
+    return NotionConnectionTestResponse(**result)
+
+
+@router.get("/variants/ready-to-schedule", response_model=list[VariantScheduleCandidate])
+def list_variants_ready_to_schedule(
+    workspace_id: str = Query(...),
+    project_id: str = Query(...),
+    db: Session = Depends(get_db),
+) -> list[VariantScheduleCandidate]:
+    rows = db.scalars(
+        select(RunVariant)
+        .join(PipelineRun, RunVariant.run_id == PipelineRun.id)
+        .where(
+            PipelineRun.workspace_id == workspace_id,
+            PipelineRun.project_id == project_id,
+            RunVariant.status.in_(["approved", "winner"]),
+        )
+        .order_by(RunVariant.updated_at.desc())
+        .limit(50)
+    ).all()
+
+    candidates: list[VariantScheduleCandidate] = []
+    seen = set()
+    for v in rows:
+        if v.id in seen:
+            continue
+        seen.add(v.id)
+        run = db.get(PipelineRun, v.run_id)
+        campaign_name = ""
+        channel = "meta"
+        if run:
+            campaign = db.get(Campaign, run.campaign_id) if run.campaign_id else None
+            if campaign:
+                campaign_name = campaign.name
+                channel = campaign.channel
+        candidates.append(VariantScheduleCandidate(
+            variant_id=v.id,
+            run_id=v.run_id,
+            hook=v.hook or "",
+            message=v.message or "",
+            status=v.status,
+            is_winner=v.is_winner,
+            product_code=run.product_code if run else "",
+            campaign_name=campaign_name,
+            channel=channel,
+        ))
+    return candidates
+
+
+def _serialize_schedule(s: ContentSchedule) -> ContentScheduleView:
+    return ContentScheduleView(
+        id=s.id,
+        workspace_id=s.workspace_id,
+        project_id=s.project_id,
+        variant_id=s.variant_id,
+        campaign_id=s.campaign_id,
+        title=s.title,
+        channel=s.channel,
+        scheduled_date=s.scheduled_date.isoformat(),
+        scheduled_time=s.scheduled_time,
+        state=s.state,
+        platform_post_id=s.platform_post_id,
+        platform_post_url=s.platform_post_url,
+        notion_page_id=s.notion_page_id,
+        notes=s.notes,
+        created_at=s.created_at,
+        updated_at=s.updated_at,
+    )
 
 
 @router.get("/integration-configs", response_model=list[IntegrationConfigView])

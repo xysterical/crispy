@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Meta Ads read-only integration
     meta_access_token: str = ""
     meta_ad_account_id: str = ""
+    # Notion calendar integration
+    notion_api_key: str = ""
+    notion_database_id: str = ""
 
 
 @lru_cache(maxsize=1)

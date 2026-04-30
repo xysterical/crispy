@@ -505,3 +505,24 @@ class RunTemplate(Base):
     is_shared: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ContentSchedule(Base):
+    __tablename__ = "content_schedule"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id"), nullable=False)
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), nullable=False)
+    variant_id: Mapped[str | None] = mapped_column(ForeignKey("run_variant.id"), nullable=True)
+    campaign_id: Mapped[str | None] = mapped_column(ForeignKey("campaign.id"), nullable=True)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    channel: Mapped[str] = mapped_column(String(32), default="meta")
+    scheduled_date: Mapped[date] = mapped_column(Date, nullable=False)
+    scheduled_time: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    state: Mapped[str] = mapped_column(String(32), default="draft")
+    platform_post_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    platform_post_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    notion_page_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

@@ -603,3 +603,71 @@ class CategoryItem(BaseModel):
 
 class CategoryListResponse(BaseModel):
     categories: list[CategoryItem]
+
+
+# ── Content Calendar ────────────────────────────────────────────────────────
+
+
+class ContentScheduleCreateRequest(BaseModel):
+    workspace_id: str
+    project_id: str
+    variant_id: str | None = None
+    campaign_id: str | None = None
+    title: str = Field(..., min_length=1, max_length=256)
+    channel: str = "meta"
+    scheduled_date: str  # "YYYY-MM-DD"
+    scheduled_time: str | None = None  # "HH:MM"
+    notes: str | None = None
+
+
+class ContentScheduleUpdateRequest(BaseModel):
+    title: str | None = None
+    channel: str | None = None
+    scheduled_date: str | None = None
+    scheduled_time: str | None = None
+    state: str | None = None
+    notes: str | None = None
+    variant_id: str | None = None
+    campaign_id: str | None = None
+
+
+class ContentScheduleView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workspace_id: str
+    project_id: str
+    variant_id: str | None = None
+    campaign_id: str | None = None
+    title: str
+    channel: str
+    scheduled_date: str
+    scheduled_time: str | None = None
+    state: str
+    platform_post_id: str | None = None
+    platform_post_url: str | None = None
+    notion_page_id: str | None = None
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ContentScheduleListResponse(BaseModel):
+    items: list[ContentScheduleView] = Field(default_factory=list)
+
+
+class NotionConnectionTestResponse(BaseModel):
+    ok: bool
+    error: str | None = None
+
+
+class VariantScheduleCandidate(BaseModel):
+    variant_id: str
+    run_id: str
+    hook: str = ""
+    message: str = ""
+    status: str
+    is_winner: bool = False
+    product_code: str = ""
+    campaign_name: str = ""
+    channel: str = "meta"

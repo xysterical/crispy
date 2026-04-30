@@ -17,8 +17,136 @@ SHARED_STYLES = """
   --danger: #be3b3b;
   --radius: 16px;
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  /* Card resize — transitions.dev */
+  --resize-dur: 300ms;
+  --resize-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Panel reveal — transitions.dev */
+  --panel-open-dur: 400ms;
+  --panel-close-dur: 350ms;
+  --panel-translate-x: 100%;
+  --panel-blur: 2px;
+  --panel-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Modal — transitions.dev */
+  --modal-open-dur: 250ms;
+  --modal-close-dur: 150ms;
+  --modal-scale: 0.96;
+  --modal-scale-close: 0.96;
+  --modal-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Icon swap — transitions.dev */
+  --icon-swap-dur: 200ms;
+  --icon-swap-blur: 2px;
+  --icon-swap-start-scale: 0.25;
+  --icon-swap-ease: ease-in-out;
+  /* Notification badge — transitions.dev */
+  --badge-slide-dur: 260ms;
+  --badge-pop-dur: 500ms;
+  --badge-pop-close-dur: 180ms;
+  --badge-fade-dur: 400ms;
+  --badge-fade-close-dur: 180ms;
+  --badge-blur: 2px;
+  --badge-offset-x: -8.2px;
+  --badge-offset-y: 12.4px;
+  --badge-slide-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --badge-pop-ease: cubic-bezier(0.34, 1.36, 0.64, 1);
+  --badge-close-ease: cubic-bezier(0.4, 0, 0.2, 1);
 }
 * { box-sizing: border-box; }
+
+/* transitions.dev — card resize */
+.t-resize {
+  transition:
+    min-width var(--resize-dur) var(--resize-ease),
+    max-width var(--resize-dur) var(--resize-ease),
+    flex-basis var(--resize-dur) var(--resize-ease),
+    box-shadow var(--resize-dur) var(--resize-ease);
+  will-change: min-width, max-width, flex-basis;
+}
+
+/* transitions.dev — panel reveal */
+.t-panel-slide {
+  transform: translateX(var(--panel-translate-x));
+  opacity: 0;
+  filter: blur(var(--panel-blur));
+  pointer-events: none;
+  transition:
+    transform var(--panel-close-dur) var(--panel-ease),
+    opacity   var(--panel-close-dur) var(--panel-ease),
+    filter    var(--panel-close-dur) var(--panel-ease);
+  will-change: transform, opacity, filter;
+}
+.t-panel-slide[data-open="true"] {
+  transform: translateX(0);
+  opacity: 1;
+  filter: blur(0);
+  pointer-events: auto;
+  transition:
+    transform var(--panel-open-dur) var(--panel-ease),
+    opacity   var(--panel-open-dur) var(--panel-ease),
+    filter    var(--panel-open-dur) var(--panel-ease);
+}
+
+/* transitions.dev — modal */
+.t-modal {
+  transform-origin: center;
+  transform: scale(var(--modal-scale));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--modal-open-dur) var(--modal-ease),
+    opacity   var(--modal-open-dur) var(--modal-ease);
+  will-change: transform, opacity;
+}
+.t-modal.is-open {
+  transform: scale(1);
+  opacity: 1;
+  pointer-events: auto;
+}
+.t-modal.is-closing {
+  transform: scale(var(--modal-scale-close));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--modal-close-dur) var(--modal-ease),
+    opacity   var(--modal-close-dur) var(--modal-ease);
+}
+
+/* transitions.dev — icon swap */
+.t-icon-swap {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+}
+.t-icon-swap .t-icon {
+  grid-area: 1 / 1;
+  transition:
+    opacity   var(--icon-swap-dur) var(--icon-swap-ease),
+    filter    var(--icon-swap-dur) var(--icon-swap-ease),
+    transform var(--icon-swap-dur) var(--icon-swap-ease);
+  will-change: opacity, filter, transform;
+}
+.t-icon-swap[data-state="a"] .t-icon[data-icon="a"],
+.t-icon-swap[data-state="b"] .t-icon[data-icon="b"] {
+  opacity: 1;
+  filter: blur(0);
+  transform: scale(1);
+}
+.t-icon-swap[data-state="a"] .t-icon[data-icon="b"],
+.t-icon-swap[data-state="b"] .t-icon[data-icon="a"] {
+  opacity: 0;
+  filter: blur(var(--icon-swap-blur));
+  transform: scale(var(--icon-swap-start-scale));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-resize { transition: none !important; }
+  .t-panel-slide { transition: none !important; }
+  .drawer-panel { transition: none !important; }
+  .drawer-overlay { transition: none !important; }
+  .t-modal { transition: none !important; }
+  .t-icon-swap .t-icon { transition: none !important; }
+  .fab-pill { transition: none !important; animation: none !important; }
+}
+
 body {
   margin: 0;
   color: var(--text);
@@ -83,16 +211,34 @@ button.primary:hover { background: var(--accent-dark); }
 /* drawer */
 .drawer-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.25); z-index: 999;
-  opacity: 0; pointer-events: none; transition: opacity 0.25s;
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--panel-open-dur) var(--panel-ease);
 }
 .drawer-overlay.open { opacity: 1; pointer-events: auto; }
 .drawer-panel {
   position: fixed; top: 0; right: 0; bottom: 0; width: min(700px, 94vw);
   background: var(--bg); z-index: 1000; overflow-y: auto;
-  transform: translateX(100%); transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: -4px 0 28px rgba(0,0,0,0.12); padding: 20px 24px 40px;
+  transform: translateX(100%);
+  opacity: 0;
+  filter: blur(var(--panel-blur));
+  pointer-events: none;
+  transition:
+    transform var(--panel-close-dur) var(--panel-ease),
+    opacity   var(--panel-close-dur) var(--panel-ease),
+    filter    var(--panel-close-dur) var(--panel-ease);
+  will-change: transform, opacity, filter;
 }
-.drawer-panel.open { transform: translateX(0); }
+.drawer-panel.open {
+  transform: translateX(0);
+  opacity: 1;
+  filter: blur(0);
+  pointer-events: auto;
+  transition:
+    transform var(--panel-open-dur) var(--panel-ease),
+    opacity   var(--panel-open-dur) var(--panel-ease),
+    filter    var(--panel-open-dur) var(--panel-ease);
+}
 .drawer-close {
   position: sticky; top: 12px; float: right; width: 36px; height: 36px;
   border-radius: 50%; border: 1px solid var(--line); background: #fff;
@@ -108,15 +254,31 @@ button.primary:hover { background: var(--accent-dark); }
   font-size: 13px; font-weight: 700; cursor: pointer;
   display: flex; align-items: center; gap: 6px;
   box-shadow: 0 3px 12px rgba(0,0,0,0.12);
-  transition: transform 0.15s, box-shadow 0.15s, opacity 0.2s;
-  opacity: 0; transform: scale(0.9); pointer-events: none;
+  opacity: 0;
+  filter: blur(var(--badge-blur));
+  transform: translateY(6px) scale(0.9);
+  pointer-events: none;
+  transition:
+    transform var(--badge-pop-close-dur) var(--badge-close-ease),
+    opacity   var(--badge-fade-close-dur) var(--badge-close-ease),
+    filter    var(--badge-pop-close-dur) var(--badge-close-ease);
+  will-change: transform, opacity, filter;
 }
-.fab-pill.visible { opacity: 1; transform: scale(1); pointer-events: auto; }
-.fab-pill:hover { transform: translateY(-1px); box-shadow: 0 5px 16px rgba(0,0,0,0.18); }
+.fab-pill.visible {
+  opacity: 1;
+  filter: blur(0);
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+  transition:
+    transform var(--badge-pop-dur) var(--badge-pop-ease),
+    opacity   var(--badge-fade-dur) var(--badge-pop-ease),
+    filter    var(--badge-pop-dur) var(--badge-pop-ease);
+}
+.fab-pill:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 5px 16px rgba(0,0,0,0.18); }
 .fab-pill.advance { background: var(--accent); color: #fff; }
 .fab-pill.reject { background: #fff; color: var(--danger); border: 1.5px solid var(--danger); }
 .fab-create {
-  width: 40px; height: 40px; border-radius: 50%;
+  width: 40px; height: 40px; padding: 0; border-radius: 50%;
   background: #fff; color: var(--accent); border: 1.5px solid var(--accent);
   font-size: 18px; cursor: pointer;
   box-shadow: 0 4px 16px rgba(31, 122, 98, 0.18);
@@ -301,7 +463,6 @@ tr:hover { background: #f8fcfa; }
   max-width: 280px;
   flex: 0 0 clamp(220px, 22vw, 280px);
   scroll-snap-align: end;
-  transition: min-width 200ms ease, max-width 200ms ease, flex-basis 200ms ease, box-shadow 180ms ease;
 }
 .trace-event.trace-event-expanded {
   min-width: 420px;
@@ -521,13 +682,27 @@ tr:hover { background: #f8fcfa; }
   padding: 20px;
   margin-top: 14px;
   background: #fafdfb;
-  display: none;
-  animation: detailSlideIn 200ms ease;
+  transform-origin: top center;
+  transform: scale(var(--modal-scale));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--modal-open-dur) var(--modal-ease),
+    opacity   var(--modal-open-dur) var(--modal-ease);
+  will-change: transform, opacity;
 }
-.variant-detail-panel.open { display: block; }
-@keyframes detailSlideIn {
-  from { opacity: 0; transform: translateY(-6px); }
-  to { opacity: 1; transform: translateY(0); }
+.variant-detail-panel.open {
+  transform: scale(1);
+  opacity: 1;
+  pointer-events: auto;
+}
+.variant-detail-panel.is-closing {
+  transform: scale(var(--modal-scale-close));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--modal-close-dur) var(--modal-ease),
+    opacity   var(--modal-close-dur) var(--modal-ease);
 }
 .variant-detail-panel .detail-image {
   max-width: 100%;
@@ -705,6 +880,7 @@ def render_shell_top() -> str:
           <a class="nav-link" href="/dashboard/agent-apis">API &amp; Integration Configs</a>
           <a class="nav-link" href="/dashboard/shop-analysis">Shop Analysis</a>
           <a class="nav-link" href="/dashboard/data">Data Dashboard</a>
+          <a class="nav-link" href="/dashboard/calendar">Content Calendar</a>
           <a class="nav-link" href="/dashboard/assets">Asset Library</a>
           <a class="nav-link" href="/dashboard/personas">Personas</a>
         </div>
@@ -749,7 +925,12 @@ def render_dashboard(create_run_html: str, shared_js: str) -> str:
   <div class="fab-group">
     <button class="fab-pill advance" id="fab-advance" onclick="advanceRun()" title="Advance to next stage">&#9654; Advance</button>
     <button class="fab-pill reject" id="fab-reject" onclick="rejectRun()" title="Reject current stage">&#10005; Reject</button>
-    <button class="fab-create" id="fab-create" onclick="openDrawer()" title="Create Run">+</button>
+    <button class="fab-create" id="fab-create" onclick="toggleFabCreate()" title="Create Run">
+      <span class="t-icon-swap" id="fab-icon-swap" data-state="a">
+        <span class="t-icon" data-icon="a">+</span>
+        <span class="t-icon" data-icon="b">&times;</span>
+      </span>
+    </button>
   </div>"""
 
     run_detail_html = """          <section class="card">

@@ -455,6 +455,8 @@ _BUILTIN_INTEGRATION_CONFIGS = [
     {"platform": "shopify", "config_key": "access_token", "label": "Access Token", "env_var": "CRISPY_SHOPIFY_ACCESS_TOKEN", "is_required": True},
     {"platform": "meta", "config_key": "access_token", "label": "Access Token", "env_var": "CRISPY_META_ACCESS_TOKEN", "is_required": True},
     {"platform": "meta", "config_key": "ad_account_id", "label": "Ad Account ID", "env_var": "CRISPY_META_AD_ACCOUNT_ID", "is_required": True},
+    {"platform": "notion", "config_key": "api_key", "label": "API Key (Internal Integration)", "env_var": "CRISPY_API_KEY_NOTION", "is_required": True},
+    {"platform": "notion", "config_key": "database_id", "label": "Content Calendar Database ID", "env_var": "CRISPY_NOTION_DATABASE_ID", "is_required": True},
 ]
 
 
