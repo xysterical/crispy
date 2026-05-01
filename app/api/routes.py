@@ -1410,6 +1410,24 @@ def _dashboard_shared_js() -> str:
             }
           });
           startRunListPolling();
+
+          async function backupDatabase() {
+            const btn = event.target;
+            const orig = btn.textContent;
+            btn.textContent = "Backing up...";
+            btn.disabled = true;
+            try {
+              const res = await fetch("/backup", { method: "POST" });
+              if (!res.ok) throw new Error(await res.text());
+              const data = await res.json();
+              alert("Database backed up to backups/" + data.backups[0].name + "\\n\\n" + data.backups.length + " backup(s) total.");
+            } catch (err) {
+              alert("Backup failed: " + err.message);
+            } finally {
+              btn.textContent = orig;
+              btn.disabled = false;
+            }
+          }
         </script>
     """
 @router.get("/dashboard/shop-analysis", response_class=HTMLResponse)
@@ -3706,6 +3724,20 @@ def dashboard_select_data_source(payload: DataSourceSelectRequest) -> DataSource
         active_url=active_url,
         items=[_serialize_data_source(item, active_url=active_url) for item in urls],
     )
+
+
+@router.post("/backup")
+def create_backup() -> dict:
+    from app.data.session import backup_database
+
+    path = backup_database()
+    if path is None:
+        raise HTTPException(status_code=400, detail="database is not a local SQLite file or does not exist")
+    backups = sorted(
+        [{"name": p.name, "size_kb": round(p.stat().st_size / 1024, 1), "mtime": p.stat().st_mtime} for p in path.parent.glob("*.db")],
+        key=lambda item: item["mtime"], reverse=True,
+    )
+    return {"backup_path": str(path), "backups": backups}
 
 
 @router.get("/media")

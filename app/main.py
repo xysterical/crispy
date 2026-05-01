@@ -66,6 +66,10 @@ async def lifespan(_: FastAPI):
     settings = get_settings()
     init_db()
     ensure_default_personas()
+    from app.data.session import backup_database
+    backup_path = backup_database()
+    if backup_path:
+        print(f"[crispy] Database backed up to {backup_path}")
     if settings.enable_worker:
         await worker.start()
     auto_sync_task = asyncio.create_task(_auto_sync_loop())

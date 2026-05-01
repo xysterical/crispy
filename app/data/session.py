@@ -57,7 +57,34 @@ def _build_engine(database_url: str):
     return engine
 
 
+import shutil
+
 _active_database_url = settings.database_url
+BACKUP_DIR = Path.cwd() / "backups"
+MAX_BACKUPS = 10
+
+
+def backup_database() -> Path | None:
+    """Copy the active SQLite database to backups/ with a timestamp.
+
+    Only works for SQLite (file-based) databases. Keeps the most recent
+    MAX_BACKUPS copies and removes older ones.
+    """
+    db_path = _sqlite_url_to_path(_active_database_url)
+    if not db_path or not db_path.exists():
+        return None
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = __import__("datetime").datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    backup_name = f"{db_path.stem}-{timestamp}.db"
+    backup_path = BACKUP_DIR / backup_name
+    shutil.copy2(db_path, backup_path)
+
+    # Rotate: keep only the most recent MAX_BACKUPS
+    existing = sorted(BACKUP_DIR.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for stale in existing[MAX_BACKUPS:]:
+        stale.unlink()
+
+    return backup_path
 engine = _build_engine(_active_database_url)
 _session_factory = sessionmaker(autocommit=False, autoflush=False, bind=engine, class_=Session)
 
