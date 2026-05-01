@@ -1,52 +1,47 @@
-# Crispy Agent Brief (AI-Optimized)
+# Crispy — Technical Reference
 
-## 0) Snapshot
+## Architecture Snapshot
+
 ```yaml
 project: crispy
-goal: "多产品、多模态广告素材生成 + 人工闸门 + 反馈闭环优化"
-status: "MVP可运行（半自动、可审阅、可扩展）"
-primary_stack:
-  language: "Python 3.11+"
-  runtime: "uv"
-  api: "FastAPI + Uvicorn"
-  orm: "SQLAlchemy"
-  schema: "Pydantic"
-  db: "SQLite(local) / PostgreSQL-compatible JSON design"
-  ui: "FastAPI server-side dashboard pages"
+language: Python 3.11+
+runtime: uv
+api: FastAPI + Uvicorn
+orm: SQLAlchemy (SQLite local, PostgreSQL-compatible schema)
+schema: Pydantic (strict contracts between agents)
+ui: Server-side rendered dashboard pages
+db: SQLite (local) with JSONB-compatible columns
 ```
 
-## 1) Canonical Pipeline
+## Pipeline Modes & Stage Plans
 
-### 1.1 Pipeline Modes
+### Pipeline Modes
+
 ```yaml
 copy_image_only:
-  - intake
-  - planning
-  - divergence
-  - copy_image_generation
-  - evaluation_selection
+  - intake → planning → divergence → copy_image_generation
+  - visual_quality_assessment → evaluation_selection
 
 video_only:
-  - intake
-  - planning
-  - divergence
-  - video_scripting
-  - storyboard_image_generation
-  - video_generation
-  - evaluation_selection
+  - intake → planning → divergence → video_scripting
+  - storyboard_image_generation → video_generation
+  - visual_quality_assessment → evaluation_selection
 
 full_multimodal:
-  - intake
-  - planning
-  - divergence
+  - intake → planning → divergence
   - copy_image_generation
-  - video_scripting
-  - storyboard_image_generation
-  - video_generation
-  - evaluation_selection
+  - video_scripting → storyboard_image_generation → video_generation
+  - visual_quality_assessment → evaluation_selection
+
+marketplace_main_image:
+  - Same as copy_image_only + marketplace QA checks
+
+tiktok_shop_video:
+  - Same as video_only + TikTok-specific creative specs
 ```
 
-### 1.2 Stage -> Agent Mapping
+### Stage → Agent Mapping
+
 ```yaml
 intake: gm_orchestrator
 planning: ideation_agent
@@ -55,89 +50,204 @@ copy_image_generation: generation_agent
 video_scripting: generation_agent
 storyboard_image_generation: generation_agent
 video_generation: generation_agent
+visual_quality_assessment: generation_agent
 evaluation_selection: scoring_agent
 ```
 
-### 1.3 Human Gate
-```yaml
-task_status_flow:
-  - draft
-  - queued
-  - running
-  - waiting_review
-  - approved | rejected | failed
+Source of truth: `app/agents/registry.py`
+
+### Approval Modes
+
+| Mode | Behavior |
+|---|---|
+| `manual` | Every stage pauses for human review |
+| `semi_auto` | Strategy stages auto-advance; creative/evaluation stages hold |
+| `full_auto` | All stages auto-advance; visual_qa failures trigger up to 2 regeneration cycles |
+
+Controlled via `StageTask.status` lifecycle: `draft → queued → running → waiting_review → approved | rejected | failed`
+
+## Agent Personas
+
+Persona files are structured markdown loaded at runtime:
+
+```
+personas/
+├── gm/gm_orchestrator.md       # Intake processing
+├── stages/02_planning_agent.md  # Strategy drafting
+├── stages/03_generation_agent.md# Copy, image, video generation
+├── stages/04_scoring_agent.md   # Evaluation & selection
+├── stages/05_compliance_agent.md# Compliance checks
+├── stages/08_visual_qa_agent.md # Visual quality assessment
+└── stages/shop_analyst.md       # Shop analysis
 ```
 
-## 2) Multimodal Input and Understanding (Current Behavior)
+Personas are versioned (`persona_version` table) and editable via the dashboard.
 
-### 2.1 Input Entry
-- `POST /runs/rich` 支持上传：
-  - SKU: `.csv`, `.xlsx`
-  - Image: `.png`, `.jpg`, `.jpeg`, `.webp`
-  - Video: `.mp4`, `.mov`, `.m4v`
+## Data Models
 
-### 2.2 Upload Limits
-```yaml
-max_files: 10
-max_single_file: 50MB
-max_total: 200MB
+```
+workspace → project → product → campaign → pipeline_run
+                                         → stage_task
+                                         → run_variant → variant_asset
+                                                       → variant_review
+                                                       → variant_score
+                                         → artifact
+                                         → scorecard
+                                         → agent_trace_event
+
+workspace → feedback_import → gm_memory
+                            → gm_instruction_version
+
+workspace → integration_sync
+          → content_schedule
+
+global: agent_api_config, integration_config, creative_preset, run_template, persona_version
 ```
 
-### 2.3 Intake Media Understanding
-- `intake` 阶段会读取上传图片/视频并调用多模态 chat 理解：
-  - image -> `image_url`
-  - video -> `video_url`
-- 产出字段：`ProductIntake.asset_media_summary`
-- 若视频理解失败且有图片，会自动降级为“仅图片理解”。
+### Key Models
 
-### 2.4 Downstream Consumption
-- `copy_image_generation` 使用 `asset_media_summary` + image-focused summary 生成图文素材。
-- `video_scripting` 注入 `asset_media_summary`，让 Hook/脚本更贴近真实产品素材。
+| Model | Purpose |
+|---|---|
+| `PipelineRun` | One generation run bound to product + campaign |
+| `StageTask` | Individual stage execution with retry, priority, failure tracking |
+| `RunVariant` | One creative variant (angle + hook + message) |
+| `VariantAsset` | Generated asset (copy, image, storyboard_frame, video, video_script) |
+| `VariantScore` | Evaluation/compliance/visual_quality scores per variant |
+| `AgentTraceEvent` | Per-stage execution log for debugging |
+| `GmMemory` | Cross-run strategy memory (product/industry/shop scopes) |
+| `ContentSchedule` | Publishing schedule entries, synced to Notion |
 
-## 3) Model Routing and API Config
+## API Reference
 
-### 3.1 Config Priority
-1. per-agent config (`/agent-configs/{agent}`)
-2. default config (`agent_name=default`)
-3. run payload legacy fields (`model_provider/model_name`, deprecated)
-
-### 3.2 Generation Agent Split Config
-```yaml
-generation_agent:
-  text: top-level provider/model/base_url/api_key_env
-  image: extra.image_config
-  video: extra.video_config
+### Run Management
+```
+GET    /runs                          # List runs
+POST   /runs                          # Create run (JSON)
+POST   /runs/rich                     # Create run (multipart: files + JSON)
+GET    /runs/{id}                     # Run detail
+POST   /runs/{id}/advance             # Approve current stage → advance
+POST   /runs/{id}/reject              # Reject current stage → requeue
+GET    /runs/{id}/deliverables        # Winner variant assets
+GET    /runs/{id}/variants            # All variants with scores, assets, reviews
+GET    /runs/{id}/events              # Agent trace events
+POST   /runs/preflight                # Pre-flight capability check
 ```
 
-### 3.3 API Key Security
-- 仅存储环境变量名，不存明文 key。
-- 环境变量自动发现前缀：`CRISPY_API_KEY_`.
+### Variant Actions
+```
+POST   /runs/{run_id}/variants/{variant_id}/review          # Human review action
+POST   /runs/{run_id}/variants/{variant_id}/regenerate       # Request regeneration
+POST   /runs/{run_id}/assets/refresh                         # Poll async video tasks
+```
 
-## 4) Capability Preflight (Prevent Runtime Surprises)
+### Configuration
+```
+GET    /agent-configs                 # List all agent API configs
+PATCH  /agent-configs/{agent}         # Update agent config
+GET    /agent-configs/env-vars        # List CRISPY_API_KEY_* env var names
+GET    /integration-configs           # List integration credentials
+PATCH  /integration-configs/{id}      # Update integration credential
+```
 
-### 4.1 API
-- `POST /runs/preflight`
+### Feedback & Memory
+```
+POST   /feedback/import               # Import CSV feedback rows
+GET    /projects/{id}/leaderboard     # Creative performance ranking
+GET    /gm-memory                     # List GM memory entries
+```
 
-### 4.2 Input
-```json
+### Database Backup
+```
+POST   /backup                        # Create timestamped backup
+GET    /backups                       # List available backups
+POST   /backup/restore                # Restore from a backup
+```
+
+### UI Metadata
+```
+GET    /pipeline-modes                # Available pipeline modes
+GET    /creative-presets              # Saved creative presets
+GET    /run-templates                 # Saved run templates
+GET    /personas                      # Agent persona metadata
+GET    /personas/{agent}              # Persona content
+PATCH  /personas/{agent}              # Update persona
+GET    /shops                         # List shop workspaces
+GET    /shops/{name}/categories       # Product categories for a shop
+```
+
+## Model Routing
+
+### Configuration Priority
+1. Per-agent config (`/agent-configs/{agent}`)
+2. Default config (`agent_name=default`)
+3. Run payload legacy fields (deprecated)
+
+### Generation Agent Split Config
+The `generation_agent` supports three independent model configurations:
+
+```yaml
+text:  top-level provider_name/model_name/api_base_url/api_key_env
+image: extra.image_config (provider_name/model_name/api_base_url/api_key_env)
+video: extra.video_config (provider_name/model_name/api_base_url/api_key_env)
+```
+
+### API Key Security
+Only environment variable names are stored in the database (`api_key_env` column). The actual key values are read from `os.environ` at runtime. All keys use the `CRISPY_API_KEY_*` prefix convention and are auto-discovered by the configs page.
+
+## Memory System (GM)
+
+### Architecture
+
+```
+Feedback Import ──→ GmMemory (product scope)
+                 ──→ GmMemory (industry scope)
+                 ──→ GmMemory (shop scope)
+
+Shopify Sync ──→ GmMemory (product_intelligence)
+              ──→ GmMemory (store_intelligence)
+
+Meta Sync ──→ GmMemory (store_intelligence)
+```
+
+### Write Path
+- `POST /feedback/import` → writes product + industry GmMemory entries
+- Shopify/Meta auto-sync → writes product/store intelligence
+- Operator variant review (marketplace QA tags) → writes visual_quality memory
+- `GmInstructionVersion` incremented on each feedback import
+
+### Read Path
+- `planning` stage: `_recent_gm_lessons()` queries recent memories by `product_code` + `industry_code`
+- Merged with analytics insights (sales velocity, creative fatigue, creative comparison)
+- Injected into planning agent prompt as `gm_lessons`
+
+### Attribution Logic
+- **Shopify → Product**: Order line items matched to `Product.product_code` via variant SKU
+- **Meta → Product**: Ad insights matched through Campaign → Product chain
+- **Shopify → Store**: Aggregated revenue/quantity across all matched products
+- **Meta → Store**: Aggregated spend/revenue/impressions across all ad insights
+- **Industry**: Set from `Workspace.industry_code` or `PipelineRun.industry_code`
+
+## Capability Preflight
+
+Prevents runtime failures by checking model availability before run creation.
+
+```
+POST /runs/preflight
 {
-  "pipeline_mode": "copy_image_only | video_only | full_multimodal",
-  "has_image_inputs": true,
-  "has_video_inputs": false
+  "pipeline_mode": "video_only",
+  "has_image_inputs": false,
+  "has_video_inputs": true
 }
-```
 
-### 4.3 Output
-```json
+Response:
 {
   "ok": true,
   "severity": "ok | warn | error",
-  "summary": "...",
   "checks": [
     {
       "key": "video_generation.video_generation",
       "severity": "error",
-      "message": "...",
+      "message": "Video generation not configured for generation_agent",
       "stage_name": "video_generation",
       "agent_name": "generation_agent"
     }
@@ -145,102 +255,79 @@ generation_agent:
 }
 ```
 
-### 4.4 Dashboard Behavior
-- Create Run 前自动调用 preflight：
-  - `error` -> 弹窗并阻止提交
-  - `warn` -> 弹确认框，允许人工继续
+Dashboard blocks run creation on `error` severity; warns on `warn`.
 
-## 5) Core API Surface
+## Multimodal Input Processing
 
-### Run
-- `GET /runs`
-- `POST /runs`
-- `POST /runs/rich`
-- `GET /runs/{id}`
-- `POST /runs/{id}/advance`
-- `POST /runs/{id}/reject`
-- `GET /runs/{id}/deliverables`
-- `GET /runs/{id}/variants`
-- `POST /runs/preflight`
+### Intake Stage
+- Accepts: `.csv`, `.xlsx` (SKU data), `.png`, `.jpg`, `.jpeg`, `.webp` (images), `.mp4`, `.mov`, `.m4v` (videos)
+- Limits: max 10 files, 50MB per file, 200MB total
+- Video understanding with automatic fallback to image-only on failure
+- Output: `ProductIntake.asset_media_summary` — shared multimodal context consumed by downstream stages
 
-### Config & Persona
-- `GET /agent-configs`
-- `PATCH /agent-configs/{agent}`
-- `GET /agent-configs/env-vars`
-- `GET /personas`
-- `GET /personas/{agent}`
-- `PATCH /personas/{agent}`
+### Downstream Consumption
+- `copy_image_generation`: Uses `asset_media_summary` for copy and image prompts
+- `video_scripting`: Injects `asset_media_summary` for product-accurate hooks and scripts
 
-### Feedback / Memory
-- `POST /feedback/import`
-- `GET /projects/{id}/leaderboard`
-- `GET /gm-memory`
+## Data Source Switching
 
-### UI/Meta
-- `GET /pipeline-modes`
-- `GET /creative-presets`
-- `GET /artifacts`
-- `GET /dashboard/*`
+The dashboard supports switching between SQLite database files at runtime via the Shop selector. Any `.db` file in the project root (excluding `.git`, `.venv`, `node_modules`) is auto-discovered.
 
-## 6) Key Business Fields in Create Run
+Implementation: `switch_database_url()` in `app/data/session.py` — rebuilds engine and session factory, applies runtime migrations.
 
-Required:
-```yaml
-workspace_name: str
-project_name: str
-product_name: str
-product_code: str       # 全库唯一
-industry_code: str
-campaign_name: str
-creative_preset: str
+## Worker & Concurrency
+
+The `PipelineWorker` runs background task processing:
+- Configurable concurrency (`worker_concurrency`, default 1)
+- Atomic task claiming via guarded UPDATE
+- Priority queue (0=human-rejected, 1=regen, 2=normal)
+- Retry with exponential backoff for provider errors and timeouts
+- Video poller loop for async video generation tasks
+- Orphaned task recovery on startup
+
+## Environment Variables
+
+All configuration uses the `CRISPY_API_KEY_*` prefix:
+
+```bash
+# LLM API keys
+CRISPY_API_KEY_OPENAI
+CRISPY_API_KEY_DEEPSEEK
+CRISPY_API_KEY_KIMI
+
+# Notion integration
+CRISPY_API_KEY_NOTION              # Internal integration token
+CRISPY_API_KEY_NOTION_DATABASE     # Database 32-char ID
+
+# Shopify (reserved)
+CRISPY_API_KEY_SHOPIFY
+
+# Meta Ads (reserved)
+CRISPY_API_KEY_META
+
+# Database
+CRISPY_DATABASE_URL=sqlite:///./crispy.db
+CRISPY_ENABLE_WORKER=true
 ```
 
-Important optional:
-```yaml
-pipeline_mode: copy_image_only | video_only | full_multimodal
-creative_specs:
-  image_size: "1:1 | 9:16 | 16:9 | ..."
-  video_size: "1:1 | 9:16 | 16:9 | ..."
-  resolution: "480p | 720p | 1080p"
-  video_duration_seconds: int
-business_context: object
-category_tags: string[]
-manual_research_brief: str
-enable_research: bool (default=false)
+## Development
+
+### Running Tests
+```bash
+uv run pytest tests/ -x -q
 ```
 
-## 7) Memory System (GM)
+### Adding a New Pipeline Stage
+1. Add stage name to `StageName` enum in `app/data/models.py`
+2. Add stage to pipeline plans in `app/orchestrator/state_machine.py`
+3. Add stage → agent mapping in `app/agents/registry.py`
+4. Add execution branch in `execute_stage_task()` in `app/services/runs.py`
+5. Add input assembly in `_build_task_input()`
+6. Add agent runtime method in `app/agents/runtime.py`
+7. Create persona file at `personas/stages/`
 
-Two-layer memory:
-```yaml
-scope: product | industry
-product_key: product_code
-industry_key: industry_code
-storage: gm_memory.content(JSON)
-```
-
-Write path:
-- feedback import 后写入 product + industry 两类 memory
-- 同步更新 `gm_instruction_version`
-
-Read path:
-- planning 阶段注入历史经验（产品优先，再行业补足）
-
-## 8) Data Model Landmarks
-- `workspace / project / product / campaign`
-- `pipeline_run / stage_task / artifact / scorecard`
-- `feedback_import / performance_snapshot`
-- `gm_memory / gm_instruction_version`
-- `persona_version`
-
-## 9) Practical Compatibility Notes
-- 目前是“OpenAI-compatible 优先”架构，非兼容协议需新增 provider 适配。
-- 图片理解通常兼容较广；视频理解和视频生成差异更大，建议始终走 preflight。
-- 当前 intake 视频理解会做大小约束与降级策略，避免主流程直接卡死。
-
-## 10) Fast Mental Model for AI Agents
-1. 把 `runs` 看成可审阅状态机，不是一次性黑盒任务。
-2. 把 `agent-configs` 看成“模型路由控制面”，不是运行时 prompt 文案。
-3. 把 `asset_media_summary` 看成多阶段共享的多模态事实层。
-4. 把 `feedback -> gm_memory` 看成跨 run 策略复用层（产品级 + 行业级）。
-5. 遇到模型能力不确定，先 `POST /runs/preflight` 再创建 run。
+### Adding a New Integration Provider
+1. Implement provider adapter in `app/integrations/`
+2. Register in `app/integrations/__init__.py`
+3. Add integration config entries for credential env vars
+4. Add sync logic in `app/integrations/sync_service.py`
