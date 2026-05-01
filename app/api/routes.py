@@ -1420,12 +1420,43 @@ def _dashboard_shared_js() -> str:
               const res = await fetch("/backup", { method: "POST" });
               if (!res.ok) throw new Error(await res.text());
               const data = await res.json();
-              alert("Database backed up to backups/" + data.backups[0].name + "\\n\\n" + data.backups.length + " backup(s) total.");
+              alert("Backed up to ~/.crispy/backups/" + data.backups[0].name + "\\n" + data.backups.length + " total backups.");
             } catch (err) {
               alert("Backup failed: " + err.message);
             } finally {
               btn.textContent = orig;
               btn.disabled = false;
+            }
+          }
+
+          async function showRestoreDialog() {
+            try {
+              const res = await fetch("/backups");
+              if (!res.ok) throw new Error(await res.text());
+              const backups = await res.json();
+              if (backups.length === 0) { alert("No backups found."); return; }
+              const list = backups.map((b, i) =>
+                (i + 1) + ". " + b.name + " (" + b.size_kb + " KB)"
+              ).join("\\n");
+              const choice = prompt(
+                "Available backups in ~/.crispy/backups/:\\n\\n" + list +
+                "\\n\\nType the number to restore, or cancel:"
+              );
+              if (!choice) return;
+              const idx = parseInt(choice) - 1;
+              if (idx < 0 || idx >= backups.length) { alert("Invalid choice."); return; }
+              const selected = backups[idx];
+              if (!confirm("Restore from " + selected.name + "?\\n\\nCurrent database will be backed up first, then overwritten. This cannot be undone.")) return;
+              const restoreRes = await fetch("/backup/restore", {
+                method: "POST",
+                body: JSON.stringify({ name: selected.name }),
+                headers: { "Content-Type": "application/json" }
+              });
+              if (!restoreRes.ok) throw new Error(await restoreRes.text());
+              alert("Restored from " + selected.name + ".\\n\\nPage will reload.");
+              location.reload();
+            } catch (err) {
+              alert("Restore failed: " + err.message);
             }
           }
         </script>
@@ -3738,6 +3769,44 @@ def create_backup() -> dict:
         key=lambda item: item["mtime"], reverse=True,
     )
     return {"backup_path": str(path), "backups": backups}
+
+
+@router.get("/backups")
+def list_backups() -> list[dict]:
+    from app.data.session import BACKUP_DIR
+
+    if not BACKUP_DIR.exists():
+        return []
+    files = sorted(BACKUP_DIR.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return [
+        {"name": f.name, "size_kb": round(f.stat().st_size / 1024, 1), "mtime": f.stat().st_mtime}
+        for f in files
+    ]
+
+
+@router.post("/backup/restore")
+def restore_backup(payload: dict) -> dict:
+    from app.data.session import BACKUP_DIR, _active_database_url, _sqlite_url_to_path, backup_database, switch_database_url
+
+    backup_name = (payload or {}).get("name", "")
+    if not backup_name or "/" in backup_name:
+        raise HTTPException(status_code=400, detail="invalid backup name")
+    restore_path = BACKUP_DIR / backup_name
+    if not restore_path.exists():
+        raise HTTPException(status_code=404, detail=f"backup not found: {backup_name}")
+
+    current_path = _sqlite_url_to_path(_active_database_url)
+    if not current_path:
+        raise HTTPException(status_code=400, detail="current database is not a local file")
+
+    # Safety: backup current DB before restoring
+    backup_database()
+
+    import shutil
+    shutil.copy2(restore_path, current_path)
+    switch_database_url(_active_database_url)
+
+    return {"restored_from": backup_name, "current_db": str(current_path)}
 
 
 @router.get("/media")

@@ -660,7 +660,8 @@ def render_shell_top() -> str:
           <a class="nav-link" href="/dashboard/calendar">Content Calendar</a>
           <a class="nav-link" href="/dashboard/assets">Asset Library</a>
           <a class="nav-link" href="/dashboard/personas">Personas</a>
-          <button class="nav-link" onclick="backupDatabase()" title="Back up the database to backups/">Backup DB</button>
+          <button class="nav-link" onclick="backupDatabase()" title="Save a timestamped copy to ~/.crispy/backups/">Backup DB</button>
+          <button class="nav-link" onclick="showRestoreDialog()" title="Restore database from a backup">Restore DB</button>
         </div>
       </div>
       <div style="display:flex;gap:20px;flex-wrap:wrap;">

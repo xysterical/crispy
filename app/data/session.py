@@ -60,7 +60,7 @@ def _build_engine(database_url: str):
 import shutil
 
 _active_database_url = settings.database_url
-BACKUP_DIR = Path.cwd() / "backups"
+BACKUP_DIR = Path.home() / ".crispy" / "backups"
 MAX_BACKUPS = 10
 
 
