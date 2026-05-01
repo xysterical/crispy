@@ -2664,6 +2664,55 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           }}
           .badge-missing {{ border-color: #e2c8c8; background: #fff5f5; color: #925454; }}
           code {{ font-family: var(--mono); font-size: 12px; }}
+
+          /* ── Dirty input indicator ── */
+          #cfg-table input.dirty, #cfg-table select.dirty {{
+            border-color: #f59e0b;
+            box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.15);
+            background: #fffbeb;
+          }}
+
+          /* ── Save All FAB ── */
+          #save-fab {{
+            position: fixed; bottom: 28px; right: 28px; z-index: 998;
+            background: var(--accent); color: #fff; border: none;
+            padding: 12px 22px; border-radius: 28px;
+            font-size: 14px; font-weight: 700; cursor: pointer;
+            box-shadow: 0 4px 20px rgba(5, 150, 105, 0.3);
+            display: flex; align-items: center; gap: 8px;
+            transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+          }}
+          #save-fab:hover {{
+            background: var(--accent-dark);
+            box-shadow: 0 6px 24px rgba(5, 150, 105, 0.4);
+            transform: translateY(-2px);
+          }}
+          #save-fab:active {{ transform: scale(0.97); }}
+          #save-fab.saving {{
+            background: var(--gray-500);
+            pointer-events: none;
+          }}
+          .save-fab-count {{
+            width: 22px; height: 22px; border-radius: 50%;
+            background: #fff; color: var(--accent);
+            font-size: 11px; font-weight: 800;
+            display: flex; align-items: center; justify-content: center;
+          }}
+
+          /* ── Save toast ── */
+          .save-toast {{
+            position: fixed; bottom: 88px; right: 28px; z-index: 999;
+            background: #1e293b; color: #fff;
+            padding: 10px 18px; border-radius: 10px;
+            font-size: 13px; font-weight: 600;
+            opacity: 0; transform: translateY(8px);
+            pointer-events: none;
+            transition: opacity 0.25s ease, transform 0.25s ease;
+          }}
+          .save-toast.show {{
+            opacity: 1; transform: translateY(0);
+          }}
+
           @media (max-width: 860px) {{
             .app-shell {{ width: calc(100% - 12px); margin-top: 10px; }}
             .hero {{ flex-direction: column; align-items: flex-start; }}
@@ -2692,7 +2741,7 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             <div class="subtitle" style="margin-bottom: 12px;">Fallback rule: if agent config missing, use <b>default</b>. Multimodal agents expose modality-specific rows.</div>
             <div class="table-wrap">
               <table id="cfg-table" class="advanced-collapsed">
-                <thead><tr><th>Agent</th><th>Provider</th><th>Model</th><th>Base URL</th><th>API Key Env</th><th>Thinking</th><th class="advanced-col">Stream</th><th class="advanced-col">Budget</th><th class="advanced-col">Max Tokens</th><th class="advanced-col">Timeout</th><th>Env Status</th><th>Action</th></tr></thead>
+                <thead><tr><th>Agent</th><th>Provider</th><th>Model</th><th>Base URL</th><th>API Key Env</th><th>Thinking</th><th class="advanced-col">Stream</th><th class="advanced-col">Budget</th><th class="advanced-col">Max Tokens</th><th class="advanced-col">Timeout</th><th>Env Status</th></tr></thead>
                 <tbody id="cfg-body"></tbody>
               </table>
             </div>
@@ -2707,6 +2756,11 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
               </table>
             </div>
           </section>
+          <div id="save-fab" title="Save all unsaved configuration changes">
+            <span id="save-fab-count" class="save-fab-count" style="display:none">0</span>
+            <span id="save-fab-icon">Save All</span>
+          </div>
+          <div id="save-toast" class="save-toast"></div>
         </main>
         <script>
           const personas = {personas_json};
@@ -2766,6 +2820,10 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             advancedColsVisible = !advancedColsVisible;
             applyAdvancedColsVisibility();
           }}
+          function markDirty(el) {{
+            el.classList.add("dirty");
+            updateSaveFab();
+          }}
           function showSaveToast(message) {{
             const toast = document.getElementById("save-toast");
             if (!toast) return;
@@ -2811,50 +2869,45 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
                 ? (keyFound ? '<span class="badge">found</span>' : '<span class="badge badge-missing">missing</span>')
                 : '<span class="muted">-</span>';
               const providerCell = isSearchTool ? '<td class="muted">-</td>'
-                : `<td><input id="p-${{r.row_key}}" value="${{provider}}" /></td>`;
+                : `<td><input id="p-${{r.row_key}}" value="${{provider}}" oninput="markDirty(this)" /></td>`;
               const modelCell = isSearchTool ? '<td class="muted">-</td>'
-                : `<td><input id="m-${{r.row_key}}" value="${{model}}" /></td>`;
+                : `<td><input id="m-${{r.row_key}}" value="${{model}}" oninput="markDirty(this)" /></td>`;
               const baseUrlCell = isSearchTool ? '<td class="muted">-</td>'
-                : `<td><input id="b-${{r.row_key}}" value="${{baseUrl}}" /></td>`;
-              const thinkingCell = (r.mode === "text") ? `<td><select id="t-${{r.row_key}}"><option value="auto"${{thinkingMode==="auto"?" selected":""}}>auto</option><option value="enabled"${{thinkingMode==="enabled"?" selected":""}}>enabled</option><option value="disabled"${{thinkingMode==="disabled"?" selected":""}}>disabled</option></select></td>`
+                : `<td><input id="b-${{r.row_key}}" value="${{baseUrl}}" oninput="markDirty(this)" /></td>`;
+              const thinkingCell = (r.mode === "text") ? `<td><select id="t-${{r.row_key}}" onchange="markDirty(this)"><option value="auto"${{thinkingMode==="auto"?" selected":""}}>auto</option><option value="enabled"${{thinkingMode==="enabled"?" selected":""}}>enabled</option><option value="disabled"${{thinkingMode==="disabled"?" selected":""}}>disabled</option></select></td>`
                 : '<td class="muted">-</td>';
-              const streamCell = (r.mode === "text") ? `<td class="advanced-col"><input id="s-${{r.row_key}}" type="checkbox"${{streamingEnabled ? " checked" : ""}} /></td>`
+              const streamCell = (r.mode === "text") ? `<td class="advanced-col"><input id="s-${{r.row_key}}" type="checkbox" onchange="markDirty(this)"${{streamingEnabled ? " checked" : ""}} /></td>`
                 : '<td class="advanced-col muted">-</td>';
-              const budgetCell = (r.mode === "text") ? `<td class="advanced-col"><input id="g-${{r.row_key}}" value="${{thinkingBudget}}" placeholder="optional" /></td>`
+              const budgetCell = (r.mode === "text") ? `<td class="advanced-col"><input id="g-${{r.row_key}}" value="${{thinkingBudget}}" placeholder="optional" oninput="markDirty(this)" /></td>`
                 : '<td class="advanced-col muted">-</td>';
-              const maxTokensCell = (r.mode === "text") ? `<td class="advanced-col"><input id="o-${{r.row_key}}" value="${{maxTokens}}" placeholder="1200" /></td>`
+              const maxTokensCell = (r.mode === "text") ? `<td class="advanced-col"><input id="o-${{r.row_key}}" value="${{maxTokens}}" placeholder="1200" oninput="markDirty(this)" /></td>`
                 : '<td class="advanced-col muted">-</td>';
-              const timeoutCell = (r.mode === "text") ? `<td class="advanced-col"><input id="x-${{r.row_key}}" value="${{requestTimeout}}" placeholder="90" /></td>`
+              const timeoutCell = (r.mode === "text") ? `<td class="advanced-col"><input id="x-${{r.row_key}}" value="${{requestTimeout}}" placeholder="90" oninput="markDirty(this)" /></td>`
                 : '<td class="advanced-col muted">-</td>';
               tr.innerHTML = `
                 <td>${{r.title}}<div class="muted">${{r.source}}</div></td>
                 ${{providerCell}}
                 ${{modelCell}}
                 ${{baseUrlCell}}
-                <td><select id="k-${{r.row_key}}">${{envOptions(keyEnv)}}</select></td>
+                <td><select id="k-${{r.row_key}}" onchange="markDirty(this)">${{envOptions(keyEnv)}}</select></td>
                 ${{thinkingCell}}
                 ${{streamCell}}
                 ${{budgetCell}}
                 ${{maxTokensCell}}
                 ${{timeoutCell}}
-                <td>${{envStatus}}</td>
-                <td><button onclick="save('${{r.row_key}}')">Save</button></td>`;
+                <td>${{envStatus}}</td>`;
               body.appendChild(tr);
             }});
             applyAdvancedColsVisibility();
           }}
-          async function save(rowKey) {{
-            const row = rows.find((r) => r.row_key === rowKey);
-            if (!row) return;
+          function buildSavePayload(rowKey, row) {{
             const api_key_env = document.getElementById(`k-${{rowKey}}`).value || null;
-            // Build extra config based on row mode
             let mergedExtra = {{ ...(byAgent[row.agent_name]?.extra || {{}}) }};
             if (row.mode === "tavily") {{
               mergedExtra.tavily_config = {{ api_key_env }};
             }} else if (row.mode === "firecrawl") {{
               mergedExtra.firecrawl_config = {{ api_key_env }};
             }}
-            let payload = {{}};
             if (row.mode === "text") {{
               const provider_name = document.getElementById(`p-${{rowKey}}`).value || null;
               const model_name = document.getElementById(`m-${{rowKey}}`).value || null;
@@ -2862,11 +2915,8 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
               const max_output_tokens = document.getElementById(`o-${{rowKey}}`).value;
               const thinking_budget_tokens = document.getElementById(`g-${{rowKey}}`).value;
               const request_timeout_seconds = document.getElementById(`x-${{rowKey}}`).value;
-              payload = {{
-                provider_name,
-                model_name,
-                api_base_url,
-                api_key_env,
+              return {{
+                provider_name, model_name, api_base_url, api_key_env,
                 thinking_mode: document.getElementById(`t-${{rowKey}}`).value,
                 thinking_budget_tokens: thinking_budget_tokens ? Number(thinking_budget_tokens) : null,
                 max_output_tokens: max_output_tokens ? Number(max_output_tokens) : null,
@@ -2875,31 +2925,58 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
                 extra: mergedExtra
               }};
             }} else if (row.mode === "image") {{
-              const provider_name = document.getElementById(`p-${{rowKey}}`).value || null;
-              const model_name = document.getElementById(`m-${{rowKey}}`).value || null;
-              const api_base_url = document.getElementById(`b-${{rowKey}}`).value || null;
-              payload = {{
-                image_provider_name: provider_name,
-                image_model_name: model_name,
-                image_api_base_url: api_base_url,
+              return {{
+                image_provider_name: document.getElementById(`p-${{rowKey}}`).value || null,
+                image_model_name: document.getElementById(`m-${{rowKey}}`).value || null,
+                image_api_base_url: document.getElementById(`b-${{rowKey}}`).value || null,
                 image_api_key_env: api_key_env
               }};
             }} else if (row.mode === "video") {{
-              const provider_name = document.getElementById(`p-${{rowKey}}`).value || null;
-              const model_name = document.getElementById(`m-${{rowKey}}`).value || null;
-              const api_base_url = document.getElementById(`b-${{rowKey}}`).value || null;
-              payload = {{
-                video_provider_name: provider_name,
-                video_model_name: model_name,
-                video_api_base_url: api_base_url,
+              return {{
+                video_provider_name: document.getElementById(`p-${{rowKey}}`).value || null,
+                video_model_name: document.getElementById(`m-${{rowKey}}`).value || null,
+                video_api_base_url: document.getElementById(`b-${{rowKey}}`).value || null,
                 video_api_key_env: api_key_env
               }};
             }} else if (row.mode === "tavily" || row.mode === "firecrawl") {{
-              payload = {{ extra: mergedExtra }};
+              return {{ extra: mergedExtra }};
             }}
-            byAgent[row.agent_name] = await api(`/agent-configs/${{row.agent_name}}`, {{ method: "PATCH", body: JSON.stringify(payload) }});
+            return null;
+          }}
+
+          async function saveAll() {{
+            const fab = document.getElementById("save-fab");
+            fab.classList.add("saving");
+            let saved = 0;
+            let failed = 0;
+            for (const row of rows.filter(r => !r.isDivider)) {{
+              try {{
+                const payload = buildSavePayload(row.row_key, row);
+                if (!payload) continue;
+                byAgent[row.agent_name] = await api(`/agent-configs/${{row.agent_name}}`, {{ method: "PATCH", body: JSON.stringify(payload) }});
+                // Clear dirty markers for this row
+                row.element?.querySelectorAll(".dirty").forEach(el => el.classList.remove("dirty"));
+                saved++;
+              }} catch (e) {{
+                console.error("Failed to save", row.row_key, e);
+                failed++;
+              }}
+            }}
             render();
-            showSaveToast(`Saved: ${{row.title}}`);
+            fab.classList.remove("saving");
+            updateSaveFab();
+            showSaveToast(failed === 0 ? `Saved ${{saved}} configuration${{saved !== 1 ? "s" : ""}}` : `Saved ${{saved}}, ${{failed}} failed`);
+          }}
+
+          function updateSaveFab() {{
+            const dirtyCount = document.querySelectorAll("#cfg-body .dirty").length;
+            const count = document.getElementById("save-fab-count");
+            if (dirtyCount > 0) {{
+              count.style.display = "flex";
+              count.textContent = dirtyCount;
+            }} else {{
+              count.style.display = "none";
+            }}
           }}
           async function refreshIntegrationTable() {{
             const body = document.getElementById("int-cfg-body");
@@ -2950,6 +3027,7 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             try {{ envVars = await api("/agent-configs/env-vars"); }} catch (_err) {{}}
             render();
             refreshIntegrationTable();
+            document.getElementById("save-fab").addEventListener("click", saveAll);
           }}
           init();
         </script>
