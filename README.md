@@ -64,11 +64,12 @@ Open **http://localhost:8000** in your browser.
 ## Core Workflow
 
 1. **Configure agents** — Go to API & Integration Configs, pick providers/models for each agent
-2. **Create a run** — Click the + button, fill in product info, upload reference images/videos
-3. **Review outputs** — Each stage pauses for human approval (or use semi_auto/full_auto mode)
-4. **Schedule winners** — Push approved creatives to Notion Calendar with publish dates
-5. **Import feedback** — Upload CSV with ad performance data (impressions, clicks, spend, conversions, revenue)
-6. **Next run improves** — The planning agent automatically uses winning patterns from past feedback
+2. **Add useful background information** -- Use Shop Analysis to acquire basic information strategy-wise.
+3. **Create a run** — Click the + button, fill in product info, upload reference images/videos
+4. **Review outputs** — Each stage pauses for human approval (or use semi_auto/full_auto mode)
+5. **Schedule winners** — Push approved creatives to Notion Calendar with publish dates
+6. **Import feedback** — Upload CSV with ad performance data (impressions, clicks, spend, conversions, revenue). Or use API portals to automatically feedback.
+7. **Next run improves** — The planning agent automatically uses winning patterns from past feedback
 
 ## Pipeline Modes
 

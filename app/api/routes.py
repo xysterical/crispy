@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.registry import stage_agent
 from app.core.config import get_settings
-from app.data.models import Artifact, Campaign, ContentSchedule, GmMemory, IntegrationSync, PerformanceSnapshot, PipelineRun, Product, Project, RunVariant, ScoreCard as ScoreCardModel, StageTask, VariantAsset, Workspace
+from app.data.models import Artifact, Campaign, ContentSchedule, GmMemory, GmPolicyVersion, GmReflection, IntegrationSync, PerformanceSnapshot, PipelineRun, Product, Project, RunVariant, ScoreCard as ScoreCardModel, StageTask, VariantAsset, Workspace
 from app.data.session import (
     SessionLocal,
     get_active_database_url,
@@ -40,6 +40,9 @@ from app.schemas.api import (
     FeedbackImportRequest,
     FeedbackImportResponse,
     GmMemoryItem,
+    GmPolicyItem,
+    GmPolicyPromoteRequest,
+    GmReflectionItem,
     IntegrationConfigPatchRequest,
     IntegrationConfigView,
     LeaderboardItem,
@@ -96,6 +99,11 @@ from app.services.agent_api_configs import (
     upsert_agent_config,
 )
 from app.services.feedback import import_feedback_rows, project_leaderboard
+from app.services.gm_evolution import (
+    compile_feedback_import_reflections,
+    compile_operator_review_reflection,
+    promote_gm_policy,
+)
 from app.services.intake_assets import process_uploaded_payloads
 from app.services.marketplace_qa import is_marketplace_main_image
 from app.services.personas import get_persona, list_persona_catalog, persona_info, update_persona
@@ -4457,6 +4465,127 @@ def list_gm_memory(
     ]
 
 
+@router.get("/gm-reflections", response_model=list[GmReflectionItem])
+def list_gm_reflections(
+    scope: str | None = Query(default=None),
+    reflection_type: str | None = Query(default=None),
+    product_code: str | None = Query(default=None),
+    industry_code: str | None = Query(default=None),
+    pipeline_mode: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> list[GmReflectionItem]:
+    query = select(GmReflection).order_by(desc(GmReflection.created_at))
+    if scope:
+        query = query.where(GmReflection.target_scope == scope)
+    if reflection_type:
+        query = query.where(GmReflection.reflection_type == reflection_type)
+    if product_code:
+        query = query.where(GmReflection.product_code == product_code)
+    if industry_code:
+        query = query.where(GmReflection.industry_code == industry_code)
+    if pipeline_mode:
+        query = query.where(GmReflection.pipeline_mode == pipeline_mode)
+    rows = db.scalars(query.limit(limit)).all()
+    return [
+        GmReflectionItem(
+            id=row.id,
+            project_id=row.project_id,
+            run_id=row.run_id,
+            feedback_import_id=row.feedback_import_id,
+            reflection_type=row.reflection_type,
+            target_scope=row.target_scope,
+            shop_id=row.shop_id,
+            product_code=row.product_code,
+            industry_code=row.industry_code,
+            pipeline_mode=row.pipeline_mode,
+            confidence_score=row.confidence_score,
+            evidence_count=row.evidence_count,
+            summary=row.summary,
+            payload=row.payload or {},
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+@router.get("/gm-policies", response_model=list[GmPolicyItem])
+def list_gm_policies(
+    status: str | None = Query(default=None),
+    scope: str | None = Query(default=None),
+    product_code: str | None = Query(default=None),
+    industry_code: str | None = Query(default=None),
+    pipeline_mode: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> list[GmPolicyItem]:
+    query = select(GmPolicyVersion).order_by(desc(GmPolicyVersion.created_at))
+    if status:
+        query = query.where(GmPolicyVersion.status == status)
+    if scope:
+        query = query.where(GmPolicyVersion.target_scope == scope)
+    if product_code:
+        query = query.where(GmPolicyVersion.product_code == product_code)
+    if industry_code:
+        query = query.where(GmPolicyVersion.industry_code == industry_code)
+    if pipeline_mode:
+        query = query.where(GmPolicyVersion.pipeline_mode == pipeline_mode)
+    rows = db.scalars(query.limit(limit)).all()
+    return [
+        GmPolicyItem(
+            id=row.id,
+            project_id=row.project_id,
+            version=row.version,
+            status=row.status,
+            target_scope=row.target_scope,
+            shop_id=row.shop_id,
+            product_code=row.product_code,
+            industry_code=row.industry_code,
+            pipeline_mode=row.pipeline_mode,
+            confidence_score=row.confidence_score,
+            evidence_count=row.evidence_count,
+            source_reflection_ids=row.source_reflection_ids or [],
+            content=row.content or {},
+            notes=row.notes,
+            created_at=row.created_at,
+            activated_at=row.activated_at,
+        )
+        for row in rows
+    ]
+
+
+@router.post("/gm-policies/{policy_id}/promote", response_model=GmPolicyItem)
+def post_gm_policy_promote(
+    policy_id: str,
+    payload: GmPolicyPromoteRequest,
+    db: Session = Depends(get_db),
+) -> GmPolicyItem:
+    try:
+        row = promote_gm_policy(db, policy_id=policy_id, changed_by=payload.changed_by, notes=payload.notes)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return GmPolicyItem(
+        id=row.id,
+        project_id=row.project_id,
+        version=row.version,
+        status=row.status,
+        target_scope=row.target_scope,
+        shop_id=row.shop_id,
+        product_code=row.product_code,
+        industry_code=row.industry_code,
+        pipeline_mode=row.pipeline_mode,
+        confidence_score=row.confidence_score,
+        evidence_count=row.evidence_count,
+        source_reflection_ids=row.source_reflection_ids or [],
+        content=row.content or {},
+        notes=row.notes,
+        created_at=row.created_at,
+        activated_at=row.activated_at,
+    )
+
+
 @router.post("/runs", response_model=RunView)
 def create_pipeline_run(payload: RunCreateRequest, db: Session = Depends(get_db)) -> RunView:
     try:
@@ -4801,6 +4930,14 @@ def post_variant_review(
             comment=payload.comment,
             tags=payload.tags,
         )
+        compile_operator_review_reflection(
+            db,
+            run_id=run_id,
+            variant_id=variant_id,
+            action=payload.action,
+            tags=payload.tags,
+            comment=payload.comment,
+        )
         db.commit()
         data = next(item for item in run_variants(db, run_id)["items"] if item["variant_id"] == variant.variant_id)
     except (ValueError, StopIteration) as exc:
@@ -4825,12 +4962,28 @@ def post_variant_select(
                 action="set_winner",
                 comment=payload.comment,
             )
+            compile_operator_review_reflection(
+                db,
+                run_id=run_id,
+                variant_id=variant_id,
+                action="set_winner",
+                tags=[],
+                comment=payload.comment,
+            )
         elif payload.shortlist:
             review_variant(
                 db,
                 run_id=run_id,
                 variant_id=variant_id,
                 action="shortlist_variant",
+                comment=payload.comment,
+            )
+            compile_operator_review_reflection(
+                db,
+                run_id=run_id,
+                variant_id=variant_id,
+                action="shortlist_variant",
+                tags=[],
                 comment=payload.comment,
             )
         else:
@@ -5003,6 +5156,7 @@ def import_feedback(payload: FeedbackImportRequest, db: Session = Depends(get_db
         rows=payload.rows,
         file_name=payload.file_name,
     )
+    compile_feedback_import_reflections(db, import_record=import_record, rows=payload.rows)
     db.commit()
     return FeedbackImportResponse(
         import_id=import_record.id,

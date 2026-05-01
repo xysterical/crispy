@@ -51,6 +51,7 @@ from app.services.creative_specs import (
 )
 from app.services.marketplace_qa import MARKETPLACE_REVIEW_TAGS, is_marketplace_main_image
 from app.services.personas import get_persona
+from app.services.gm_evolution import compile_run_outcome_reflection, resolve_active_gm_policy
 from app.services.visual_qa import inspect_visual_asset
 
 
@@ -632,6 +633,7 @@ def _analytics_insights(db: Session, run: PipelineRun) -> list[dict]:
 def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
     product = db.get(Product, run.product_id)
     campaign = db.get(Campaign, run.campaign_id)
+    gm_policy = resolve_active_gm_policy(db, run, stage_name=task.stage_name)
     base = {
         "run_id": run.id,
         "product_name": product.name if product else "unknown_product",
@@ -649,6 +651,7 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
         "manual_research_brief": run.manual_research_brief or "",
         "business_context": run.business_context or {},
         "category_tags": run.category_tags or [],
+        "gm_policy": gm_policy,
     }
     if task.stage_name == "intake":
         return base
@@ -1289,6 +1292,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 run.id,
                 intake,
                 gm_lessons=task.input_payload.get("gm_lessons", []),
+                gm_policy=task.input_payload.get("gm_policy", {}),
                 enable_research=bool(task.input_payload.get("enable_research")),
                 provider=provider_name,
                 model=model_name,
@@ -1300,6 +1304,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 run.id,
                 planning,
                 variant_count=run.variant_count,
+                gm_policy=task.input_payload.get("gm_policy", {}),
                 provider=provider_name,
                 model=model_name,
                 runtime_config=runtime_config,
@@ -1420,6 +1425,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 intake=task.input_payload.get("intake", {}),
                 business_context=task.input_payload.get("business_context", {}),
                 creative_specs=task.input_payload.get("creative_specs", {}),
+                gm_policy=task.input_payload.get("gm_policy", {}),
                 provider=provider_name,
                 model=model_name,
                 runtime_config=runtime_config,
@@ -1440,6 +1446,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 model=model_name,
                 creative_specs=task.input_payload.get("creative_specs", {}),
                 pipeline_mode=run.pipeline_mode,
+                gm_policy=task.input_payload.get("gm_policy", {}),
                 runtime_config=runtime_config,
             )
         else:
@@ -1516,6 +1523,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                     "recommended_action": output.forecast.recommended_action,
                 },
             )
+            compile_run_outcome_reflection(db, run.id)
 
         task.status = TaskStatus.WAITING_REVIEW.value
         run.status = RunStatus.WAITING_REVIEW.value

@@ -474,30 +474,36 @@ class AgentsRuntime:
         intake: ProductIntake,
         *,
         gm_lessons: list[dict],
+        gm_policy: dict | None = None,
         enable_research: bool,
         provider: str,
         model: str,
         runtime_config: dict | None = None,
     ) -> StageOutput:
         mode = "online_research_enabled" if enable_research else "manual_research_only"
+        gm_policy = gm_policy or {}
+        policy_excerpt = gm_policy.get("stage_guidance") or {}
         prompt = (
             f"{self._business_strategy_system_prompt('Planning Agent')} "
             f"Build planning brief in {mode}. intake={intake.model_dump()} "
-            f"gm_lessons={gm_lessons[:3]}. Return concise strategy, constraints, hypotheses, risk boundaries, "
+            f"gm_lessons={gm_lessons[:3]}. gm_policy={policy_excerpt}. Return concise strategy, constraints, hypotheses, risk boundaries, "
             "and reviewer decision questions."
         )
         summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         value_props = intake.business_context.get("key_value_props", [])
-        strategic_angles = value_props[:3] or [
+        strategic_angles = (gm_policy.get("angle_priorities") or [])[:3] or value_props[:3] or [
             "time-saving daily workflow",
             "visible before/after proof",
             "risk-free practical messaging",
         ]
-        constraints = intake.business_context.get("prohibited_claims", [])
+        constraints = list(intake.business_context.get("prohibited_claims", []))
+        constraints.extend(str(item) for item in (gm_policy.get("hard_constraints") or [])[:5])
+        constraints = list(dict.fromkeys(item for item in constraints if str(item).strip()))
+        shop_thesis = gm_policy.get("shop_thesis") or {}
         planning = PlanningBrief(
             strategic_angles=strategic_angles,
             audience_priorities=[intake.business_context.get("target_audience", "general pet owners")],
-            positioning=intake.business_context.get("positioning", "practical premium utility"),
+            positioning=shop_thesis.get("positioning") or intake.business_context.get("positioning", "practical premium utility"),
             constraints=constraints,
             gm_lessons=gm_lessons[:5],
         )
@@ -526,7 +532,12 @@ class AgentsRuntime:
                 "angle_portfolio": planning.strategic_angles,
                 "claim_boundaries": planning.constraints,
                 "memory_applied_count": len(gm_lessons[:5]),
+                "active_gm_policy": {
+                    "policy_version_ids": gm_policy.get("policy_version_ids", []),
+                    "applied_scopes": gm_policy.get("applied_scopes", []),
+                },
             },
+            "active_gm_policy": gm_policy,
         }
         uri = self.media.write_text_artifact(run_id, "planning_brief.json", planning.model_dump_json(indent=2))
         return StageOutput(
@@ -542,19 +553,25 @@ class AgentsRuntime:
         planning: PlanningBrief,
         *,
         variant_count: int,
+        gm_policy: dict | None = None,
         provider: str,
         model: str,
         runtime_config: dict | None = None,
     ) -> StageOutput:
+        gm_policy = gm_policy or {}
+        policy_excerpt = gm_policy.get("stage_guidance") or {}
         prompt = (
             f"{self._business_strategy_system_prompt('Variant Strategy Agent')} "
             f"Generate diverse variants from planning: {planning.model_dump()}. "
+            f"gm_policy={policy_excerpt}. "
             "Each variant must test a distinct commercial hypothesis with non-overlapping hook logic."
         )
         summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         variants = []
+        preferred_angles = (gm_policy.get("angle_priorities") or [])[: max(1, variant_count)]
         for i in range(variant_count):
-            angle = planning.strategic_angles[i % max(1, len(planning.strategic_angles))]
+            angle_pool = preferred_angles or planning.strategic_angles
+            angle = angle_pool[i % max(1, len(angle_pool))]
             variant_id = f"V{i + 1}"
             variants.append(
                 VariantCandidate(
@@ -580,6 +597,7 @@ class AgentsRuntime:
             **variant_set.model_dump(),
             "llm_summary": summary,
             "experiment_matrix": experiment_matrix,
+            "active_gm_policy": gm_policy,
             "strategy_handoff": self._business_strategy_handoff(
                 stage="divergence",
                 decisions=[f"created {len(variants)} variant hypotheses", "kept variants bound to distinct test axes"],
@@ -1382,6 +1400,7 @@ class AgentsRuntime:
         intake: dict | None = None,
         business_context: dict | None = None,
         creative_specs: dict | None = None,
+        gm_policy: dict | None = None,
         provider: str,
         model: str,
         runtime_config: dict | None = None,
@@ -1393,6 +1412,7 @@ class AgentsRuntime:
         intake = intake or {}
         business_context = business_context or {}
         creative_specs = creative_specs or {}
+        gm_policy = gm_policy or {}
         marketplace_goal = is_marketplace_main_image(creative_specs)
         visual_identity = dict(intake.get("visual_identity") or {}) if isinstance(intake, dict) else {}
 
@@ -1594,7 +1614,8 @@ class AgentsRuntime:
             f"intake_facts={json.dumps(intake, ensure_ascii=False)[:3000]}\n"
             f"business_context={json.dumps(business_context, ensure_ascii=False)[:1800]}\n"
             f"qa_records={json.dumps(summaries, ensure_ascii=False)[:5000]}\n"
-            f"attached_media_manifest={json.dumps(model_media_manifest, ensure_ascii=False)[:3000]}"
+            f"attached_media_manifest={json.dumps(model_media_manifest, ensure_ascii=False)[:3000]}\n"
+            f"gm_policy={json.dumps(gm_policy.get('stage_guidance') or {}, ensure_ascii=False)[:2000]}"
         )
         model_summary = ""
         model_used = model
@@ -1620,6 +1641,7 @@ class AgentsRuntime:
                 "video_count": len(model_video_inputs),
                 "manifest": model_media_manifest,
             },
+            "active_gm_policy": gm_policy,
             "strategy_handoff": self._business_strategy_handoff(
                 stage="visual_quality_assessment",
                 decisions=[f"checked visual quality for {len(summaries)} variants", "blocked or downgraded incomplete and visually risky assets before evaluation"],
@@ -1648,12 +1670,17 @@ class AgentsRuntime:
         model: str,
         creative_specs: dict | None = None,
         pipeline_mode: str | None = None,
+        gm_policy: dict | None = None,
         runtime_config: dict | None = None,
     ) -> StageOutput:
         creative_specs = creative_specs or {}
+        gm_policy = gm_policy or {}
         is_tiktok_shop = pipeline_mode == "tiktok_shop_video"
         tiktok_style = str(creative_specs.get("tiktok_video_style") or "ugc_demo")
-        prompt = f"Evaluate and select best variants: {variant_set.model_dump()}"
+        prompt = (
+            f"Evaluate and select best variants: {variant_set.model_dump()}. "
+            f"gm_policy={gm_policy.get('stage_guidance') or {}}"
+        )
         _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         copy_by_variant = {item.variant_id: item for item in copy_bundle.copy_variants}
         video_by_variant = {item.variant_id: item for item in video_bundle.videos}
@@ -1861,6 +1888,7 @@ class AgentsRuntime:
             "evaluation_result": evaluation.model_dump(),
             "selected_deliverables": selected.model_dump(),
             "variants": variant_set.model_dump(),
+            "active_gm_policy": gm_policy,
         }
         uri = self.media.write_text_artifact(run_id, "evaluation_selection.json", str(payload))
         return StageOutput(

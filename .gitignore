@@ -19,4 +19,27 @@ assets/
 .superpowers/
 
 # Else
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+/.claude
+
+# Virtual environments
+.venv
+
+# Local runtime artifacts
+assets/
+*.db
+
+# Worktrees and superpowers
+.worktrees/
+.superpowers/
+
+# Else
 .DS_Store
+.*
+

@@ -428,6 +428,59 @@ class GmInstructionVersion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class GmReflection(Base):
+    __tablename__ = "gm_reflection"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), nullable=False)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("pipeline_run.id"), nullable=True)
+    feedback_import_id: Mapped[str | None] = mapped_column(ForeignKey("feedback_import.id"), nullable=True)
+    reflection_type: Mapped[str] = mapped_column(String(32), default="run_outcome")
+    target_scope: Mapped[str] = mapped_column(String(32), default="product")
+    shop_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    product_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    industry_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pipeline_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evidence_count: Mapped[int] = mapped_column(Integer, default=0)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    payload: Mapped[dict] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class GmPolicyVersion(Base):
+    __tablename__ = "gm_policy_version"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="candidate")
+    target_scope: Mapped[str] = mapped_column(String(32), default="product")
+    shop_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    product_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    industry_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pipeline_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evidence_count: Mapped[int] = mapped_column(Integer, default=0)
+    source_reflection_ids: Mapped[list[str]] = mapped_column(json_type(), default=list)
+    content: Mapped[dict] = mapped_column(json_type(), default=dict)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class GmPolicyPromotion(Base):
+    __tablename__ = "gm_policy_promotion"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), nullable=False)
+    gm_policy_version_id: Mapped[str] = mapped_column(ForeignKey("gm_policy_version.id"), nullable=False)
+    action: Mapped[str] = mapped_column(String(16), default="promote")
+    changed_by: Mapped[str] = mapped_column(String(64), default="system")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AgentApiConfig(Base):
     __tablename__ = "agent_api_config"
     __table_args__ = (UniqueConstraint("agent_name", name="uq_agent_api_config_agent_name"),)

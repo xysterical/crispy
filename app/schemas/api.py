@@ -406,6 +406,48 @@ class GmMemoryItem(BaseModel):
     created_at: datetime
 
 
+class GmReflectionItem(BaseModel):
+    id: str
+    project_id: str
+    run_id: str | None = None
+    feedback_import_id: str | None = None
+    reflection_type: str
+    target_scope: str
+    shop_id: str | None = None
+    product_code: str | None = None
+    industry_code: str | None = None
+    pipeline_mode: str | None = None
+    confidence_score: float | None = None
+    evidence_count: int = 0
+    summary: str = ""
+    payload: dict = Field(default_factory=dict)
+    created_at: datetime
+
+
+class GmPolicyItem(BaseModel):
+    id: str
+    project_id: str
+    version: int
+    status: str
+    target_scope: str
+    shop_id: str | None = None
+    product_code: str | None = None
+    industry_code: str | None = None
+    pipeline_mode: str | None = None
+    confidence_score: float | None = None
+    evidence_count: int = 0
+    source_reflection_ids: list[str] = Field(default_factory=list)
+    content: dict = Field(default_factory=dict)
+    notes: str | None = None
+    created_at: datetime
+    activated_at: datetime | None = None
+
+
+class GmPolicyPromoteRequest(BaseModel):
+    changed_by: str = Field(default="dashboard")
+    notes: str | None = None
+
+
 class RunPreflightRequest(BaseModel):
     pipeline_mode: PipelineMode = "full_multimodal"
     has_image_inputs: bool = False
