@@ -1,0 +1,365 @@
+from __future__ import annotations
+
+from app.dashboard.layout import SHARED_STYLES
+
+
+def render_gm_review_page() -> str:
+    return f"""
+    <html>
+      <head>
+        <title>Crispy GM Review Console</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style>
+          {SHARED_STYLES}
+          .gm-shell {{ width: min(1360px, calc(100% - 24px)); margin: 20px auto 32px auto; }}
+          .hero {{
+            display:flex; justify-content:space-between; align-items:flex-end; gap:12px; margin-bottom:16px;
+          }}
+          .hero-actions {{ display:flex; gap:8px; flex-wrap:wrap; }}
+          .filter-grid {{
+            display:grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap:10px;
+          }}
+          .stat-grid {{
+            display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px;
+          }}
+          .stat-card {{ border:1px solid var(--line); border-radius:14px; background:#fff; padding:14px; }}
+          .stat-value {{ font-size:24px; font-weight:800; color:var(--accent-dark); }}
+          .stat-label {{ font-size:12px; color:var(--muted); margin-top:4px; text-transform:uppercase; letter-spacing:.04em; }}
+          .panel-grid {{ display:grid; grid-template-columns: 1.2fr 1fr; gap:16px; }}
+          .panel-grid-3 {{ display:grid; grid-template-columns: repeat(3, 1fr); gap:16px; }}
+          .section-head {{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }}
+          .badge {{ display:inline-block; padding:3px 8px; border-radius:999px; font-size:11px; font-weight:700; }}
+          .badge-ok {{ background:#ecfdf5; color:#065f46; }}
+          .badge-warn {{ background:#fff7ed; color:#9a3412; }}
+          .badge-muted {{ background:#f1f5f9; color:#475569; }}
+          .list {{ display:flex; flex-direction:column; gap:8px; }}
+          .list-item {{ border:1px solid var(--line); border-radius:12px; padding:12px; background:#fff; }}
+          .list-item h3 {{ margin:0 0 6px 0; font-size:14px; }}
+          .mono {{ font-family: var(--mono); font-size:12px; }}
+          .kv {{ display:grid; grid-template-columns: 140px 1fr; gap:8px; font-size:13px; }}
+          .empty {{ padding:16px; border:1px dashed var(--line); border-radius:12px; color:var(--muted); background:#fff; }}
+          .action-item {{ border-left:4px solid var(--accent); padding:10px 12px; background:#fff; border-radius:0 12px 12px 0; }}
+          .narrative {{ white-space:pre-wrap; line-height:1.6; }}
+          .pill-row {{ display:flex; flex-wrap:wrap; gap:6px; }}
+          .pill {{ display:inline-block; padding:5px 10px; border-radius:999px; background:var(--soft); font-size:12px; }}
+          @media (max-width: 1100px) {{
+            .filter-grid {{ grid-template-columns: repeat(2, minmax(120px, 1fr)); }}
+            .panel-grid, .panel-grid-3 {{ grid-template-columns: 1fr; }}
+          }}
+        </style>
+      </head>
+      <body>
+        <main class="gm-shell">
+          <header class="hero">
+            <div>
+              <h1>GM Review Console</h1>
+              <div class="subtitle">Operator-facing GM retrospective, policy state, and next-step guidance for recent learning cycles.</div>
+            </div>
+            <div class="hero-actions">
+              <button class="primary" onclick="generateReview()">Generate Review</button>
+              <button onclick="exportMarkdown()">Export Markdown</button>
+              <a class="nav-link" href="/dashboard">Back to Dashboard</a>
+            </div>
+          </header>
+
+          <section class="card" style="margin-bottom:16px;">
+            <div class="filter-grid">
+              <div>
+                <label>Workspace</label>
+                <select id="gm-ws" onchange="onWorkspaceChange()"><option value="">Loading...</option></select>
+              </div>
+              <div>
+                <label>Project</label>
+                <select id="gm-project"><option value="">Select project</option></select>
+              </div>
+              <div>
+                <label>Window</label>
+                <select id="gm-window" onchange="toggleCustomWindow()">
+                  <option value="7" selected>Last 7d</option>
+                  <option value="30">Last 30d</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+              <div>
+                <label>Pipeline Mode</label>
+                <select id="gm-mode">
+                  <option value="">All</option>
+                  <option value="copy_image_only">copy_image_only</option>
+                  <option value="video_only">video_only</option>
+                  <option value="full_multimodal">full_multimodal</option>
+                  <option value="marketplace_main_image">marketplace_main_image</option>
+                  <option value="tiktok_shop_video">tiktok_shop_video</option>
+                </select>
+              </div>
+              <div>
+                <label>Product Code</label>
+                <input id="gm-product" placeholder="Optional product code" />
+              </div>
+              <div>
+                <label>Narrative</label>
+                <select id="gm-narrative">
+                  <option value="true" selected>Include short summary</option>
+                  <option value="false">Facts only</option>
+                </select>
+              </div>
+              <div id="custom-from-wrap" style="display:none;">
+                <label>Date From</label>
+                <input id="gm-date-from" type="date" />
+              </div>
+              <div id="custom-to-wrap" style="display:none;">
+                <label>Date To</label>
+                <input id="gm-date-to" type="date" />
+              </div>
+            </div>
+            <div id="gm-msg" class="status-msg muted" style="min-height:18px;margin-top:10px;"></div>
+          </section>
+
+          <section class="card" style="margin-bottom:16px;">
+            <div class="section-head">
+              <h2>Executive Summary</h2>
+              <span id="narrative-status" class="badge badge-muted">No report yet</span>
+            </div>
+            <div id="gm-headline" style="font-size:18px;font-weight:700;margin-bottom:10px;">Generate a review to see the latest GM conclusion.</div>
+            <div id="gm-narrative" class="narrative muted">Narrative summary will appear here.</div>
+          </section>
+
+          <section class="card" style="margin-bottom:16px;">
+            <h2>Operating Snapshot</h2>
+            <div class="stat-grid" id="stat-grid">
+              <div class="empty">No review generated yet.</div>
+            </div>
+          </section>
+
+          <section class="panel-grid" style="margin-bottom:16px;">
+            <section class="card">
+              <h2>Learning Snapshot</h2>
+              <div class="kv"><div class="muted">Winning angles</div><div id="winning-angles">-</div></div>
+              <div class="kv"><div class="muted">Avoid patterns</div><div id="avoid-patterns">-</div></div>
+              <div class="kv"><div class="muted">Hard constraints</div><div id="hard-constraints">-</div></div>
+              <div class="kv"><div class="muted">Regen reasons</div><div id="regen-reasons">-</div></div>
+              <div style="margin-top:14px;">
+                <h3>Recent Reflections</h3>
+                <div id="recent-reflections" class="list"><div class="empty">No reflections yet.</div></div>
+              </div>
+            </section>
+
+            <section class="card">
+              <h2>Policy Board</h2>
+              <div class="kv"><div class="muted">Replay counts</div><div id="replay-counts">-</div></div>
+              <div style="margin-top:14px;">
+                <h3>Active Policies</h3>
+                <div id="active-policies" class="list"><div class="empty">No active policies.</div></div>
+              </div>
+              <div style="margin-top:14px;">
+                <h3>Candidate Policies</h3>
+                <div id="candidate-policies" class="list"><div class="empty">No candidate policies.</div></div>
+              </div>
+              <div style="margin-top:14px;">
+                <h3>Recent Policy Events</h3>
+                <div id="policy-events" class="list"><div class="empty">No policy events.</div></div>
+              </div>
+            </section>
+          </section>
+
+          <section class="panel-grid-3" style="margin-bottom:16px;">
+            <section class="card">
+              <h2>Business Signals</h2>
+              <div id="performance-summary" class="list"><div class="empty">No performance summary yet.</div></div>
+            </section>
+            <section class="card">
+              <h2>Top Creatives</h2>
+              <div id="leaderboard" class="list"><div class="empty">No leaderboard yet.</div></div>
+            </section>
+            <section class="card">
+              <h2>Score Trend</h2>
+              <div id="score-trend" class="list"><div class="empty">No score trend yet.</div></div>
+            </section>
+          </section>
+
+          <section class="card" style="margin-bottom:16px;">
+            <h2>GM Action List</h2>
+            <div id="action-list" class="list"><div class="empty">No actions yet.</div></div>
+          </section>
+
+          <section class="card">
+            <h2>Evidence Refs</h2>
+            <div id="evidence-refs" class="pill-row"><span class="pill">No evidence refs yet.</span></div>
+          </section>
+        </main>
+
+        <script>
+          function esc(v) {{ return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;"); }}
+          async function api(path) {{
+            const res = await fetch(path);
+            if (!res.ok) throw new Error(await res.text());
+            return res.json();
+          }}
+          function setMsg(msg, type="muted") {{
+            const el = document.getElementById("gm-msg");
+            el.textContent = msg || "";
+            el.style.color = type === "error" ? "var(--danger)" : type === "ok" ? "var(--accent-dark)" : "var(--muted)";
+          }}
+          async function loadWorkspaces() {{
+            const data = await api("/shops?limit=50");
+            const shops = data.shops || data.items || [];
+            const sel = document.getElementById("gm-ws");
+            sel.innerHTML = '<option value="">Select workspace</option>' + shops.map((item) => `<option value="${{esc(item.name)}}">${{esc(item.name)}}</option>`).join("");
+          }}
+          async function onWorkspaceChange() {{
+            const ws = document.getElementById("gm-ws").value;
+            const sel = document.getElementById("gm-project");
+            sel.innerHTML = '<option value="">Select project</option>';
+            if (!ws) return;
+            try {{
+              const data = await api(`/projects?workspace_name=${{encodeURIComponent(ws)}}`);
+              sel.innerHTML = '<option value="">Select project</option>' + data.map((item) => `<option value="${{esc(item.name)}}">${{esc(item.name)}}</option>`).join("");
+            }} catch (err) {{
+              setMsg("Failed to load projects: " + err.message, "error");
+            }}
+          }}
+          function toggleCustomWindow() {{
+            const isCustom = document.getElementById("gm-window").value === "custom";
+            document.getElementById("custom-from-wrap").style.display = isCustom ? "block" : "none";
+            document.getElementById("custom-to-wrap").style.display = isCustom ? "block" : "none";
+          }}
+          function queryString() {{
+            const params = new URLSearchParams();
+            params.set("workspace_name", document.getElementById("gm-ws").value);
+            params.set("project_name", document.getElementById("gm-project").value);
+            params.set("include_narrative", document.getElementById("gm-narrative").value);
+            const mode = document.getElementById("gm-mode").value;
+            const product = document.getElementById("gm-product").value.trim();
+            if (mode) params.set("pipeline_mode", mode);
+            if (product) params.set("product_code", product);
+            const windowValue = document.getElementById("gm-window").value;
+            if (windowValue === "custom") {{
+              if (document.getElementById("gm-date-from").value) params.set("date_from", document.getElementById("gm-date-from").value);
+              if (document.getElementById("gm-date-to").value) params.set("date_to", document.getElementById("gm-date-to").value);
+              params.set("days", "7");
+            }} else {{
+              params.set("days", windowValue);
+            }}
+            return params.toString();
+          }}
+          function renderList(id, items, renderer, emptyText) {{
+            const el = document.getElementById(id);
+            if (!items || !items.length) {{
+              el.innerHTML = `<div class="empty">${{esc(emptyText)}}</div>`;
+              return;
+            }}
+            el.innerHTML = items.map(renderer).join("");
+          }}
+          function renderSummary(data) {{
+            document.getElementById("gm-headline").textContent = data.executive_summary.headline || "-";
+            document.getElementById("gm-narrative").textContent = data.executive_summary.narrative || "Narrative unavailable or disabled for this report.";
+            const ns = document.getElementById("narrative-status");
+            const nsVal = data.executive_summary.narrative_status || "unknown";
+            ns.textContent = nsVal;
+            ns.className = "badge " + (nsVal === "available" ? "badge-ok" : nsVal === "disabled" ? "badge-muted" : "badge-warn");
+
+            const op = data.operating_snapshot || {{}};
+            const modeCounts = Object.entries(op.pipeline_mode_counts || {{}}).map(([k,v]) => `${{esc(k)}}: ${{v}}`).join("<br>") || "-";
+            document.getElementById("stat-grid").innerHTML = `
+              <div class="stat-card"><div class="stat-value">${{op.run_count ?? 0}}</div><div class="stat-label">Runs</div></div>
+              <div class="stat-card"><div class="stat-value">${{op.winner_count ?? 0}}</div><div class="stat-label">Winners</div></div>
+              <div class="stat-card"><div class="stat-value">${{op.shortlisted_count ?? 0}}</div><div class="stat-label">Shortlisted</div></div>
+              <div class="stat-card"><div class="stat-value">${{op.regen_request_count ?? 0}}</div><div class="stat-label">Regen Requests</div></div>
+              <div class="stat-card"><div class="stat-value">${{((op.manual_review_pressure_rate || 0) * 100).toFixed(1)}}%</div><div class="stat-label">Manual Review Pressure</div></div>
+              <div class="stat-card"><div class="stat-value">${{op.average_scorecard ?? "n/a"}}</div><div class="stat-label">Avg Scorecard</div></div>
+              <div class="stat-card" style="grid-column: span 2;"><div class="stat-label">Pipeline Mode Distribution</div><div style="margin-top:8px;">${{modeCounts}}</div></div>
+            `;
+
+            const learning = data.learning_snapshot || {{}};
+            document.getElementById("winning-angles").textContent = (learning.top_winning_angles || []).join(", ") || "-";
+            document.getElementById("avoid-patterns").textContent = (learning.top_avoid_patterns || []).join(", ") || "-";
+            document.getElementById("hard-constraints").textContent = (learning.top_hard_constraints || []).join(", ") || "-";
+            document.getElementById("regen-reasons").textContent = (learning.top_regen_reasons || []).join(", ") || "-";
+            renderList(
+              "recent-reflections",
+              learning.recent_reflections || [],
+              (item) => `<div class="list-item"><h3>${{esc(item.reflection_type)}} · ${{esc(item.target_scope)}}</h3><div>${{esc(item.summary)}}</div><div class="muted" style="margin-top:6px;">${{esc(item.created_at)}} · evidence=${{item.evidence_count}}</div></div>`,
+              "No reflections in this window."
+            );
+
+            const policy = data.policy_board || {{}};
+            document.getElementById("replay-counts").textContent = Object.entries(policy.replay_status_counts || {{}}).map(([k,v]) => `${{k}}:${{v}}`).join(", ") || "-";
+            renderList(
+              "active-policies",
+              policy.active_policies || [],
+              (item) => `<div class="list-item"><h3>v${{item.version}} <span class="badge badge-ok">${{esc(item.replay_status)}}</span></h3><div>${{esc(item.replay_summary || "")}}</div></div>`,
+              "No active policies."
+            );
+            renderList(
+              "candidate-policies",
+              policy.candidate_policies || [],
+              (item) => `<div class="list-item"><h3>v${{item.version}} <span class="badge ${{item.replay_status === "passed" ? "badge-ok" : "badge-warn"}}">${{esc(item.replay_status)}}</span></h3><div>${{esc(item.replay_summary || "")}}</div></div>`,
+              "No candidate policies."
+            );
+            renderList(
+              "policy-events",
+              policy.recent_policy_events || [],
+              (item) => `<div class="list-item"><h3>${{esc(item.event_type)}}</h3><div>${{esc(item.summary)}}</div><div class="muted" style="margin-top:6px;">${{esc(item.created_at)}}</div></div>`,
+              "No recent policy events."
+            );
+
+            const biz = data.business_signals || {{}};
+            const perf = biz.performance_summary || {{}};
+            document.getElementById("performance-summary").innerHTML = `
+              <div class="list-item"><div class="kv"><div>Snapshots</div><div>${{perf.snapshot_count ?? 0}}</div></div><div class="kv"><div>Spend</div><div>$${{perf.total_spend ?? 0}}</div></div><div class="kv"><div>Revenue</div><div>$${{perf.total_revenue ?? 0}}</div></div><div class="kv"><div>ROAS</div><div>${{perf.overall_roas ?? 0}}x</div></div><div class="kv"><div>CTR</div><div>${{perf.overall_ctr ?? 0}}%</div></div><div class="muted" style="margin-top:8px;">Flags: ${{(biz.insufficient_data_flags || []).join(", ") || "none"}}</div></div>
+            `;
+            renderList(
+              "leaderboard",
+              biz.leaderboard || [],
+              (item) => `<div class="list-item"><h3>${{esc(item.creative_key)}}</h3><div>weighted score=${{item.weighted_score}} · count=${{item.count}}</div></div>`,
+              "No leaderboard in this window."
+            );
+            renderList(
+              "score-trend",
+              biz.score_trend || [],
+              (item) => `<div class="list-item"><h3>${{esc(item.date)}}</h3><div>avg weighted score=${{item.avg_weighted_score}}</div></div>`,
+              "No score trend in this window."
+            );
+
+            renderList(
+              "action-list",
+              data.action_list || [],
+              (item) => `<div class="action-item"><strong>${{esc(item.title)}}</strong><div style="margin-top:6px;">${{esc(item.rationale)}}</div><div class="muted" style="margin-top:6px;">${{(item.evidence_refs || []).join(", ")}}</div></div>`,
+              "No actions suggested."
+            );
+
+            const refs = data.evidence_refs || [];
+            document.getElementById("evidence-refs").innerHTML = refs.length
+              ? refs.map((item) => `<span class="pill mono">${{esc(item)}}</span>`).join("")
+              : '<span class="pill">No evidence refs yet.</span>';
+          }}
+          async function generateReview() {{
+            const ws = document.getElementById("gm-ws").value;
+            const project = document.getElementById("gm-project").value;
+            if (!ws || !project) {{
+              setMsg("Select workspace and project first.", "error");
+              return;
+            }}
+            setMsg("Generating review...");
+            try {{
+              const data = await api("/gm-review/summary?" + queryString());
+              renderSummary(data);
+              setMsg("Review generated.", "ok");
+            }} catch (err) {{
+              setMsg("Failed to generate review: " + err.message, "error");
+            }}
+          }}
+          function exportMarkdown() {{
+            const ws = document.getElementById("gm-ws").value;
+            const project = document.getElementById("gm-project").value;
+            if (!ws || !project) {{
+              setMsg("Select workspace and project first.", "error");
+              return;
+            }}
+            window.location.href = "/gm-review/report.md?" + queryString();
+          }}
+          loadWorkspaces();
+          toggleCustomWindow();
+        </script>
+      </body>
+    </html>
+    """

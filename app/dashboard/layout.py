@@ -657,6 +657,7 @@ def render_shell_top() -> str:
           <a class="nav-link" href="/dashboard/agent-apis">API &amp; Integration Configs</a>
           <a class="nav-link" href="/dashboard/shop-analysis">Shop Analysis</a>
           <a class="nav-link" href="/dashboard/data">Data Dashboard</a>
+          <a class="nav-link" href="/dashboard/gm-review">GM Review</a>
           <a class="nav-link" href="/dashboard/calendar">Content Calendar</a>
           <a class="nav-link" href="/dashboard/assets">Asset Library</a>
           <a class="nav-link" href="/dashboard/personas">Personas</a>

@@ -6,7 +6,7 @@ import uuid
 import mimetypes
 import asyncio
 import zipfile
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -105,6 +105,7 @@ from app.services.gm_evolution import (
     evaluate_gm_policy,
     promote_gm_policy,
 )
+from app.services.gm_review import build_gm_review_summary, render_gm_review_markdown
 from app.services.intake_assets import process_uploaded_payloads
 from app.services.marketplace_qa import is_marketplace_main_image
 from app.services.personas import get_persona, list_persona_catalog, persona_info, update_persona
@@ -3764,6 +3765,13 @@ def dashboard_data_page() -> str:
     return _data_dashboard_html()
 
 
+@router.get("/dashboard/gm-review", response_class=HTMLResponse)
+def dashboard_gm_review_page() -> str:
+    from app.dashboard.gm_review_page import render_gm_review_page
+
+    return render_gm_review_page()
+
+
 @router.get("/dashboard/personas", response_class=HTMLResponse)
 def dashboard_personas_page() -> str:
     return _personas_dashboard_html()
@@ -5668,6 +5676,70 @@ def list_projects(
         select(Project).where(Project.workspace_id == workspace.id).order_by(Project.name)
     ).all()
     return [{"id": r.id, "name": r.name, "metric_weights": r.metric_weights} for r in rows]
+
+
+@router.get("/gm-review/summary")
+def gm_review_summary(
+    workspace_name: str = Query(...),
+    project_name: str = Query(...),
+    days: int = Query(default=7, ge=1, le=365),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    pipeline_mode: str | None = Query(default=None),
+    product_code: str | None = Query(default=None),
+    include_narrative: bool = Query(default=True),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        return build_gm_review_summary(
+            db,
+            workspace_name=workspace_name,
+            project_name=project_name,
+            days=days,
+            date_from=date_from,
+            date_to=date_to,
+            pipeline_mode=pipeline_mode,
+            product_code=product_code,
+            include_narrative=include_narrative,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/gm-review/report.md")
+def gm_review_markdown_report(
+    workspace_name: str = Query(...),
+    project_name: str = Query(...),
+    days: int = Query(default=7, ge=1, le=365),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    pipeline_mode: str | None = Query(default=None),
+    product_code: str | None = Query(default=None),
+    include_narrative: bool = Query(default=True),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    try:
+        summary = build_gm_review_summary(
+            db,
+            workspace_name=workspace_name,
+            project_name=project_name,
+            days=days,
+            date_from=date_from,
+            date_to=date_to,
+            pipeline_mode=pipeline_mode,
+            product_code=product_code,
+            include_narrative=include_narrative,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    markdown = render_gm_review_markdown(summary)
+    filename = f"gm-review-{workspace_name}-{project_name}.md".replace("/", "-")
+    return StreamingResponse(
+        io.BytesIO(markdown.encode("utf-8")),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ── Data Dashboard Endpoints ────────────────────────────────────────────────
