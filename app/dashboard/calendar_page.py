@@ -157,8 +157,8 @@ CALENDAR_PAGE_HTML = """
   font-size:11px; padding:3px 8px; border-radius:999px;
   font-weight:600;
 }
-.notion-badge.connected { background:#eaf7ee; color:#21633d; border:1px solid #bde0c8; }
-.notion-badge.disconnected { background:#fdeeee; color:#8a2d2d; border:1px solid #efc2c2; }
+.notion-badge.connected { background:#ecfdf5; color:#065f46; border:1px solid #a7f3d0; }
+.notion-badge.disconnected { background:#fef2f2; color:#991b1b; border:1px solid #fecaca; }
 
 .add-schedule-btn {
   width:100%; padding:6px; border:1px dashed var(--line); border-radius:8px;

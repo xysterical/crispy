@@ -1425,13 +1425,13 @@ def _shop_analysis_page_html() -> str:
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <style>
           :root {
-            --bg: #f4f7f2;
-            --bg-alt: #e8f2f8;
-            --card: rgba(255, 255, 255, 0.92);
-            --text: #183329;
-            --muted: #5e6e66;
-            --line: #d8e5dc;
-            --accent: #1f7a62;
+            --bg: #f8fafc;
+            --bg-alt: #f1f5f9;
+            --card: #ffffff;
+            --text: #0f172a;
+            --muted: #64748b;
+            --line: #e2e8f0;
+            --accent: #059669;
             --radius: 16px;
             --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
           }
@@ -1441,8 +1441,8 @@ def _shop_analysis_page_html() -> str:
             color: var(--text);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
             background:
-              radial-gradient(circle at 10% -20%, #d9ede6 0%, transparent 40%),
-              radial-gradient(circle at 90% -20%, #d8e9f6 0%, transparent 42%),
+              radial-gradient(circle at 10% -20%, #d1fae5 0%, transparent 40%),
+              radial-gradient(circle at 90% -20%, #e0e7ff 0%, transparent 42%),
               linear-gradient(180deg, var(--bg-alt), var(--bg) 30%);
           }
           .app-shell { width: min(1100px, calc(100% - 24px)); margin: 22px auto 30px auto; }
@@ -1452,7 +1452,7 @@ def _shop_analysis_page_html() -> str:
           h2 { font-size: 19px; margin-bottom: 10px; }
           .subtitle { margin-top: 6px; color: var(--muted); font-size: 14px; }
           .muted { color: var(--muted); font-size: 12px; }
-          a { color: #135f4c; text-decoration: none; }
+          a { color: #047857; text-decoration: none; }
           a:hover { text-decoration: underline; }
           .nav-link {
             border: 1px solid var(--line);
@@ -1494,9 +1494,9 @@ def _shop_analysis_page_html() -> str:
             font-weight: 600;
             transition: background 0.15s;
           }
-          button:hover { background: #f0f5f2; }
+          button:hover { background: #f1f5f9; }
           button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-          button.primary:hover { background: #145746; }
+          button.primary:hover { background: #047857; }
           button:disabled { opacity: 0.5; cursor: not-allowed; }
           .form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
           .form-row > div { flex: 1; min-width: 200px; }
@@ -1505,7 +1505,7 @@ def _shop_analysis_page_html() -> str:
             border: 1px solid var(--line);
             border-radius: 12px;
             padding: 16px;
-            background: #fafdfb;
+            background: #f8fafc;
             max-height: 600px;
             overflow-y: auto;
           }
@@ -1527,7 +1527,7 @@ def _shop_analysis_page_html() -> str:
           .history-item:last-child { border-bottom: none; }
           #shop-mgmt-card {
             padding: 16px 18px;
-            background: #f7fbf9;
+            background: #f8fafc;
             box-shadow: 0 3px 12px rgba(30, 62, 50, 0.045);
           }
           .shop-manager-head {
@@ -1614,9 +1614,9 @@ def _shop_analysis_page_html() -> str:
             font-size: 11px;
             font-weight: 700;
           }
-          .status-badge.completed { background: #eaf7ee; color: #21633d; }
-          .status-badge.failed { background: #fdeeee; color: #8a2d2d; }
-          .status-badge.running { background: #fff7e6; color: #8a5d1c; }
+          .status-badge.completed { background: #ecfdf5; color: #065f46; }
+          .status-badge.failed { background: #fef2f2; color: #991b1b; }
+          .status-badge.running { background: #fffbeb; color: #92400e; }
           .loading { text-align: center; padding: 32px; color: var(--muted); }
           .loading .spinner {
             display: inline-block;
@@ -1722,7 +1722,7 @@ def _shop_analysis_page_html() -> str:
                 <div class="result-panel" id="profile-panel">
                   <div class="loading" id="profile-loading"><div class="spinner"></div><div>Analyzing store...</div></div>
                   <pre id="profile-content" style="display:none;"></pre>
-                  <div id="profile-error" class="muted" style="display:none;color:#be3b3b;"></div>
+                  <div id="profile-error" class="muted" style="display:none;color:#dc2626;"></div>
                 </div>
               </div>
               <div>
@@ -1730,7 +1730,7 @@ def _shop_analysis_page_html() -> str:
                 <div class="result-panel" id="competitor-panel">
                   <div class="loading" id="competitor-loading"><div class="spinner"></div><div>Researching competitors...</div></div>
                   <div id="competitor-content" style="display:none;"></div>
-                  <div id="competitor-error" class="muted" style="display:none;color:#be3b3b;"></div>
+                  <div id="competitor-error" class="muted" style="display:none;color:#dc2626;"></div>
                 </div>
               </div>
             </div>
@@ -2074,14 +2074,14 @@ def _personas_dashboard_html() -> str:
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <style>
           :root {
-            --bg: #f4f7f2;
-            --bg-alt: #e8f2f8;
-            --card: rgba(255, 255, 255, 0.92);
-            --text: #183329;
-            --muted: #5e6e66;
-            --line: #d8e5dc;
-            --accent: #1f7a62;
-            --accent-soft: #e7f6ef;
+            --bg: #f8fafc;
+            --bg-alt: #f1f5f9;
+            --card: #ffffff;
+            --text: #0f172a;
+            --muted: #64748b;
+            --line: #e2e8f0;
+            --accent: #059669;
+            --accent-soft: #d1fae5;
             --radius: 16px;
             --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
           }
@@ -2091,8 +2091,8 @@ def _personas_dashboard_html() -> str:
             color: var(--text);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
             background:
-              radial-gradient(circle at 10% -20%, #d9ede6 0%, transparent 40%),
-              radial-gradient(circle at 90% -20%, #d8e9f6 0%, transparent 42%),
+              radial-gradient(circle at 10% -20%, #d1fae5 0%, transparent 40%),
+              radial-gradient(circle at 90% -20%, #e0e7ff 0%, transparent 42%),
               linear-gradient(180deg, var(--bg-alt), var(--bg) 30%);
           }
           .app-shell { width: min(1460px, calc(100% - 24px)); margin: 20px auto 30px auto; }
@@ -2122,7 +2122,7 @@ def _personas_dashboard_html() -> str:
             border-radius: 999px;
             font-size: 13px;
             font-weight: 600;
-            color: #135f4c;
+            color: #047857;
             text-decoration: none;
             white-space: nowrap;
           }
@@ -2132,12 +2132,12 @@ def _personas_dashboard_html() -> str:
             grid-template-columns: 1.4fr 1fr;
             gap: 10px;
           }
-          label { display: block; font-size: 12px; color: #3f5c52; margin-bottom: 5px; font-weight: 600; }
+          label { display: block; font-size: 12px; color: #334155; margin-bottom: 5px; font-weight: 600; }
           input, select, textarea {
             width: 100%;
             padding: 9px 10px;
             border-radius: 10px;
-            border: 1px solid #c8d8ce;
+            border: 1px solid #e2e8f0;
             background: #fff;
             color: var(--text);
             font-size: 14px;
@@ -2162,9 +2162,9 @@ def _personas_dashboard_html() -> str:
             padding-bottom: 6px;
           }
           .board-column {
-            border: 1px solid #dce9df;
+            border: 1px solid #e2e8f0;
             border-radius: 12px;
-            background: #f8fbf9;
+            background: #f8fafc;
             padding: 10px;
             min-height: 380px;
           }
@@ -2179,14 +2179,14 @@ def _personas_dashboard_html() -> str:
             font-size: 12px;
             text-transform: uppercase;
             letter-spacing: 0.04em;
-            color: #356353;
+            color: #1e293b;
             font-weight: 700;
           }
           .count-pill {
-            border: 1px solid #c8ddd0;
+            border: 1px solid #e2e8f0;
             border-radius: 999px;
-            background: #f2faf5;
-            color: #356353;
+            background: #f8fafc;
+            color: #1e293b;
             font-size: 11px;
             padding: 1px 8px;
             font-weight: 700;
@@ -2197,7 +2197,7 @@ def _personas_dashboard_html() -> str:
             gap: 8px;
           }
           .persona-card {
-            border: 1px solid #cfe0d5;
+            border: 1px solid #e2e8f0;
             border-radius: 10px;
             background: #fff;
             width: 100%;
@@ -2205,9 +2205,9 @@ def _personas_dashboard_html() -> str:
             padding: 10px;
             cursor: pointer;
           }
-          .persona-card:hover { background: #f7fcf9; }
+          .persona-card:hover { background: #f8fafc; }
           .persona-card.active {
-            border-color: #7cb89f;
+            border-color: #34d399;
             box-shadow: 0 0 0 2px rgba(31, 122, 98, 0.12);
             background: var(--accent-soft);
           }
@@ -2247,13 +2247,13 @@ def _personas_dashboard_html() -> str:
           button {
             padding: 8px 12px;
             border-radius: 10px;
-            border: 1px solid #bfd0c5;
-            background: #f4faf5;
-            color: #20473a;
+            border: 1px solid #e2e8f0;
+            background: #f8fafc;
+            color: #1e293b;
             font-weight: 600;
             cursor: pointer;
           }
-          button:hover { background: #eaf6ee; }
+          button:hover { background: #f1f5f9; }
           button.primary {
             background: linear-gradient(135deg, var(--accent), #2d9d79);
             border-color: #1b735b;
@@ -2264,9 +2264,9 @@ def _personas_dashboard_html() -> str:
             opacity: 0.6;
           }
           .status-msg { font-size: 13px; font-weight: 600; }
-          .status-ok { color: #1f7a62; }
-          .status-error { color: #b64040; }
-          .status-warn { color: #8a6a28; font-weight: 500; }
+          .status-ok { color: #059669; }
+          .status-error { color: #dc2626; }
+          .status-warn { color: #d97706; font-weight: 500; }
           @media (max-width: 1120px) {
             .workspace { grid-template-columns: 1fr; }
             .board { grid-auto-columns: minmax(220px, 1fr); }
@@ -2523,13 +2523,13 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <style>
           :root {{
-            --bg: #f4f7f2;
-            --bg-alt: #e8f2f8;
-            --card: rgba(255, 255, 255, 0.92);
-            --text: #183329;
-            --muted: #5e6e66;
-            --line: #d8e5dc;
-            --accent: #1f7a62;
+            --bg: #f8fafc;
+            --bg-alt: #f1f5f9;
+            --card: #ffffff;
+            --text: #0f172a;
+            --muted: #64748b;
+            --line: #e2e8f0;
+            --accent: #059669;
             --radius: 16px;
             --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
           }}
@@ -2539,8 +2539,8 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             color: var(--text);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
             background:
-              radial-gradient(circle at 10% -20%, #d9ede6 0%, transparent 40%),
-              radial-gradient(circle at 90% -20%, #d8e9f6 0%, transparent 42%),
+              radial-gradient(circle at 10% -20%, #d1fae5 0%, transparent 40%),
+              radial-gradient(circle at 90% -20%, #e0e7ff 0%, transparent 42%),
               linear-gradient(180deg, var(--bg-alt), var(--bg) 30%);
           }}
           .app-shell {{ width: min(1320px, calc(100% - 24px)); margin: 22px auto 30px auto; }}
@@ -2561,7 +2561,7 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           h2 {{ font-size: 19px; margin-bottom: 10px; }}
           .subtitle {{ margin-top: 6px; color: var(--muted); font-size: 14px; }}
           .muted {{ color: var(--muted); font-size: 12px; }}
-          a {{ color: #135f4c; text-decoration: none; }}
+          a {{ color: #047857; text-decoration: none; }}
           a:hover {{ text-decoration: underline; }}
           .nav-link {{
             border: 1px solid var(--line);
@@ -2580,7 +2580,7 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             backdrop-filter: blur(4px);
           }}
           .secondary-btn {{
-            background: #f8fbf8;
+            background: #f8fafc;
           }}
           .toast-wrap {{
             position: fixed;
@@ -2594,9 +2594,9 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             max-width: 320px;
             padding: 10px 12px;
             border-radius: 10px;
-            border: 1px solid #9fd0b7;
-            background: #ecfaf2;
-            color: #1d4a3b;
+            border: 1px solid #6ee7b7;
+            background: #ecfdf5;
+            color: #064e3b;
             box-shadow: 0 8px 20px rgba(28, 68, 52, 0.16);
             font-size: 13px;
             font-weight: 700;
@@ -2610,8 +2610,8 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           }}
           .table-wrap {{ overflow: auto; border: 1px solid var(--line); border-radius: 12px; }}
           table {{ width: 100%; border-collapse: collapse; font-size: 13px; min-width: 920px; }}
-          th, td {{ border-bottom: 1px solid #e8eee8; padding: 9px 10px; text-align: left; vertical-align: top; }}
-          thead th {{ background: #f8fbf8; font-weight: 700; color: #295345; }}
+          th, td {{ border-bottom: 1px solid #e2e8f0; padding: 9px 10px; text-align: left; vertical-align: top; }}
+          thead th {{ background: #f8fafc; font-weight: 700; color: #1e293b; }}
           .advanced-col {{
             min-width: 120px;
             max-width: 220px;
@@ -2631,7 +2631,7 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
             width: 100%;
             padding: 8px 9px;
             border-radius: 9px;
-            border: 1px solid #c8d8ce;
+            border: 1px solid #e2e8f0;
             box-sizing: border-box;
             background: #fff;
             color: var(--text);
@@ -2644,9 +2644,9 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           button {{
             padding: 7px 10px;
             border-radius: 10px;
-            border: 1px solid #bfd0c5;
-            background: #f4faf5;
-            color: #20473a;
+            border: 1px solid #e2e8f0;
+            background: #f8fafc;
+            color: #1e293b;
             font-weight: 600;
             cursor: pointer;
           }}
@@ -2655,8 +2655,8 @@ def _agent_api_dashboard_html(personas_json: str, configs_json: str, env_vars_js
           .row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
           .badge {{
             display: inline-block;
-            border: 1px solid #c6dbc5;
-            background: #f5faf5;
+            border: 1px solid #e2e8f0;
+            background: #f8fafc;
             border-radius: 999px;
             font-size: 11px;
             font-weight: 600;
@@ -2966,13 +2966,13 @@ def _assets_dashboard_html() -> str:
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <style>
           :root {
-            --bg: #f4f7f2;
-            --bg-alt: #e8f2f8;
-            --card: rgba(255, 255, 255, 0.92);
-            --text: #183329;
-            --muted: #5e6e66;
-            --line: #d8e5dc;
-            --accent: #1f7a62;
+            --bg: #f8fafc;
+            --bg-alt: #f1f5f9;
+            --card: #ffffff;
+            --text: #0f172a;
+            --muted: #64748b;
+            --line: #e2e8f0;
+            --accent: #059669;
             --radius: 16px;
             --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
           }
@@ -2982,8 +2982,8 @@ def _assets_dashboard_html() -> str:
             color: var(--text);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
             background:
-              radial-gradient(circle at 10% -20%, #d9ede6 0%, transparent 40%),
-              radial-gradient(circle at 90% -20%, #d8e9f6 0%, transparent 42%),
+              radial-gradient(circle at 10% -20%, #d1fae5 0%, transparent 40%),
+              radial-gradient(circle at 90% -20%, #e0e7ff 0%, transparent 42%),
               linear-gradient(180deg, var(--bg-alt), var(--bg) 30%);
           }
           .app-shell { width: min(1380px, calc(100% - 24px)); margin: 22px auto 30px auto; }
@@ -3008,7 +3008,7 @@ def _assets_dashboard_html() -> str:
           }
           .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:12px; }
           .asset-card {
-            border:1px solid #dce8df;
+            border:1px solid #e2e8f0;
             border-radius:12px;
             padding:10px;
             background:#fff;
@@ -3019,7 +3019,7 @@ def _assets_dashboard_html() -> str:
             width: 100%;
             padding: 9px 10px;
             border-radius: 10px;
-            border: 1px solid #c8d8ce;
+            border: 1px solid #e2e8f0;
             box-sizing: border-box;
             background: #fff;
             color: var(--text);
@@ -3032,13 +3032,13 @@ def _assets_dashboard_html() -> str:
           button {
             padding: 8px 12px;
             border-radius: 10px;
-            border: 1px solid #bfd0c5;
-            background: #f4faf5;
-            color: #20473a;
+            border: 1px solid #e2e8f0;
+            background: #f8fafc;
+            color: #1e293b;
             font-weight: 600;
             cursor: pointer;
           }
-          button:hover { background: #eaf6ee; }
+          button:hover { background: #f1f5f9; }
           .muted { color: var(--muted); font-size: 12px; }
           .img-preview {
             width: 100%;
@@ -3079,7 +3079,7 @@ def _assets_dashboard_html() -> str:
             border-radius: 999px;
             font-size: 13px;
             font-weight: 600;
-            color: #135f4c;
+            color: #047857;
             text-decoration: none;
             white-space: nowrap;
           }
@@ -3253,8 +3253,8 @@ def _data_dashboard_html() -> str:
         <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
         <style>
           :root {
-            --bg: #f4f7f2; --bg-alt: #e8f2f8; --card: rgba(255,255,255,0.92);
-            --text: #183329; --muted: #5e6e66; --line: #d8e5dc; --accent: #1f7a62;
+            --bg: #f8fafc; --bg-alt: #f1f5f9; --card: rgba(255,255,255,0.92);
+            --text: #0f172a; --muted: #64748b; --line: #e2e8f0; --accent: #059669;
             --radius: 16px; --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
           }
           * { box-sizing: border-box; }
@@ -3281,19 +3281,19 @@ def _data_dashboard_html() -> str:
           .muted { color: var(--muted); font-size: 12px; }
           .nav-link {
             border: 1px solid var(--line); background: #fff; padding: 8px 12px;
-            border-radius: 999px; font-size: 13px; font-weight: 600; color: #135f4c;
+            border-radius: 999px; font-size: 13px; font-weight: 600; color: #047857;
             text-decoration: none; white-space: nowrap;
           }
           select, input {
             width: 100%; padding: 8px 10px; border-radius: 10px;
-            border: 1px solid #c8d8ce; background: #fff; color: var(--text); font-size: 13px;
+            border: 1px solid #e2e8f0; background: #fff; color: var(--text); font-size: 13px;
           }
           select:focus, input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(31,122,98,0.16); }
           button {
             padding: 8px 14px; border-radius: 10px; border: 1px solid #bfd0c5;
             background: #f4faf5; color: #20473a; font-weight: 600; cursor: pointer; font-size: 13px;
           }
-          button:hover { background: #eaf6ee; }
+          button:hover { background: #f1f5f9; }
           button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
           button.primary:hover { background: #18694f; }
           button.danger { background: #fff0f0; border-color: #e0c0c0; color: #a04040; }
@@ -3321,11 +3321,11 @@ def _data_dashboard_html() -> str:
           .product-item.selected { border-color: var(--accent); background: #eef7f2; }
           .thumbs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; width: 40px; height: 40px; flex-shrink: 0; border-radius: 6px; overflow: hidden; }
           .thumbs img { width: 100%; height: 100%; object-fit: cover; }
-          .thumbs .placeholder { background: #e8efe9; }
+          .thumbs .placeholder { background: #e2e8f0; }
           .sync-status { display: flex; align-items: center; gap: 6px; font-size: 12px; }
           .status-dot { width: 8px; height: 8px; border-radius: 50%; }
-          .status-dot.ok { background: #2ecc71; }
-          .status-dot.warn { background: #f39c12; }
+          .status-dot.ok { background: #10b981; }
+          .status-dot.warn { background: #f59e0b; }
           .status-dot.off { background: #ccc; }
           .chart-wrap { position: relative; height: 220px; margin-bottom: 16px; }
           .table-wrap { overflow-x: auto; }
@@ -3509,7 +3509,7 @@ def _data_dashboard_html() -> str:
               const trend=data.daily_trend||[];
               destroyChart("revenue");
               const ctx=document.getElementById("revenue-chart").getContext("2d");
-              charts.revenue=new Chart(ctx,{type:"line",data:{labels:trend.map(t=>t.date),datasets:[{label:"Revenue",data:trend.map(t=>t.revenue),borderColor:"#1f7a62",backgroundColor:"rgba(31,122,98,0.08)",fill:true,tension:0.3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
+              charts.revenue=new Chart(ctx,{type:"line",data:{labels:trend.map(t=>t.date),datasets:[{label:"Revenue",data:trend.map(t=>t.revenue),borderColor:"#059669",backgroundColor:"rgba(31,122,98,0.08)",fill:true,tension:0.3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
             }catch(e){ console.error(e); }
           }
           async function refreshStoreTab(){
