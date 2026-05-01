@@ -241,6 +241,7 @@ def build_candidate_policy(
     ).all()
     if not reflections:
         return None
+    evidence_total = sum(max(1, int(row.evidence_count or 0)) for row in reflections)
 
     winning_angles: Counter[str] = Counter()
     avoid_angles: Counter[str] = Counter()
@@ -296,12 +297,12 @@ def build_candidate_policy(
     )
     serialized = _serialize_content(content)
     if latest and _serialize_content(latest.content or {}) == serialized:
-        latest.evidence_count = len(reflections)
-        latest.confidence_score = round(min(0.95, 0.45 + 0.03 * len(reflections)), 2)
+        latest.evidence_count = evidence_total
+        latest.confidence_score = round(min(0.95, 0.45 + 0.02 * evidence_total), 2)
         latest.source_reflection_ids = [row.id for row in reflections[:12]]
         db.add(latest)
         db.flush()
-        return latest
+        return evaluate_gm_policy(db, latest.id)
 
     policy = GmPolicyVersion(
         project_id=project_id,
@@ -320,11 +321,105 @@ def build_candidate_policy(
         product_code=product_code,
         industry_code=industry_code,
         pipeline_mode=pipeline_mode,
-        confidence_score=round(min(0.95, 0.45 + 0.03 * len(reflections)), 2),
-        evidence_count=len(reflections),
+        confidence_score=round(min(0.95, 0.45 + 0.02 * evidence_total), 2),
+        evidence_count=evidence_total,
         source_reflection_ids=[row.id for row in reflections[:12]],
         content=content,
     )
+    db.add(policy)
+    db.flush()
+    return evaluate_gm_policy(db, policy.id)
+
+
+def evaluate_gm_policy(db: Session, policy_id: str) -> GmPolicyVersion:
+    policy = db.get(GmPolicyVersion, policy_id)
+    if not policy:
+        raise ValueError("gm policy not found")
+    reflections = db.scalars(
+        select(GmReflection)
+        .where(GmReflection.id.in_(policy.source_reflection_ids or []))
+        .order_by(desc(GmReflection.created_at))
+    ).all()
+    if not reflections:
+        reflections = db.scalars(
+            select(GmReflection)
+            .where(
+                GmReflection.project_id == policy.project_id,
+                GmReflection.target_scope == policy.target_scope,
+                GmReflection.shop_id == policy.shop_id if policy.shop_id else GmReflection.shop_id.is_(None),
+                GmReflection.product_code == policy.product_code if policy.product_code else GmReflection.product_code.is_(None),
+                GmReflection.industry_code == policy.industry_code if policy.industry_code else GmReflection.industry_code.is_(None),
+                GmReflection.pipeline_mode == policy.pipeline_mode if policy.pipeline_mode else GmReflection.pipeline_mode.is_(None),
+            )
+            .order_by(desc(GmReflection.created_at))
+            .limit(24)
+        ).all()
+
+    content = policy.content or {}
+    policy_angles = set(str(item) for item in (content.get("angle_priorities") or []) if str(item).strip())
+    avoid_patterns = set(str(item) for item in (content.get("avoid_patterns") or []) if str(item).strip())
+    hard_constraints = set(str(item) for item in (content.get("hard_constraints") or []) if str(item).strip())
+    selection_biases = set(str(item) for item in (content.get("selection_biases") or []) if str(item).strip())
+    regeneration_rules = set(str(item) for item in (content.get("regeneration_rules") or []) if str(item).strip())
+
+    checks: list[dict] = []
+    support = 0
+    total = 0
+    for row in reflections:
+        payload = row.payload or {}
+        winning = set(str(item) for item in (payload.get("winning_angles") or []) if str(item).strip())
+        avoid = set(str(item) for item in (payload.get("avoid_angles") or []) if str(item).strip())
+        constraints = set(str(item) for item in (payload.get("hard_constraints") or []) if str(item).strip())
+        selection = set(str(item) for item in (payload.get("selection_biases") or []) if str(item).strip())
+        regen = set(str(item) for item in (payload.get("regeneration_rules") or []) if str(item).strip())
+
+        if winning:
+            total += 1
+            hit = bool(policy_angles.intersection(winning))
+            support += 1 if hit else 0
+            checks.append({"reflection_id": row.id, "check": "winning_angles", "passed": hit, "matched": sorted(policy_angles.intersection(winning))})
+        if avoid:
+            total += 1
+            hit = bool(avoid_patterns.intersection(avoid))
+            support += 1 if hit else 0
+            checks.append({"reflection_id": row.id, "check": "avoid_patterns", "passed": hit, "matched": sorted(avoid_patterns.intersection(avoid))})
+        if constraints:
+            total += 1
+            hit = bool(hard_constraints.intersection(constraints))
+            support += 1 if hit else 0
+            checks.append({"reflection_id": row.id, "check": "hard_constraints", "passed": hit, "matched": sorted(hard_constraints.intersection(constraints))})
+        if selection and selection_biases:
+            total += 1
+            hit = bool(selection_biases.intersection(selection))
+            support += 1 if hit else 0
+            checks.append({"reflection_id": row.id, "check": "selection_biases", "passed": hit, "matched": sorted(selection_biases.intersection(selection))})
+        if regen and regeneration_rules:
+            total += 1
+            hit = bool(regeneration_rules.intersection(regen))
+            support += 1 if hit else 0
+            checks.append({"reflection_id": row.id, "check": "regeneration_rules", "passed": hit, "matched": sorted(regeneration_rules.intersection(regen))})
+
+    replay_score = round((support / total), 2) if total else 0.0
+    if policy.evidence_count >= 2 and total >= 2 and replay_score >= 0.6:
+        replay_status = "passed"
+    elif total == 0 or policy.evidence_count < 2:
+        replay_status = "needs_review"
+    else:
+        replay_status = "failed"
+
+    policy.replay_status = replay_status
+    policy.replay_score = replay_score
+    policy.replay_summary = (
+        f"Replay {replay_status}: {support}/{total} checks aligned with historical reflections "
+        f"across {len(reflections)} evidence rows."
+    )
+    policy.replay_details = {
+        "support_checks": support,
+        "total_checks": total,
+        "reflection_count": len(reflections),
+        "checks": checks[:24],
+    }
+    policy.last_evaluated_at = utcnow()
     db.add(policy)
     db.flush()
     return policy
@@ -498,7 +593,7 @@ def compile_feedback_import_reflections(
         top = ranked[:3]
         bottom = ranked[-3:]
         shop_ids = [item[3] for item in ranked if item[3]]
-        shop_id = shop_ids[0] if shop_ids else None
+        shop_id = shop_ids[0] if target_scope == "product" and shop_ids else None
         payload = {
             "winning_angles": [item[2].get("angle") for item in top if item[2].get("angle")],
             "avoid_angles": [item[2].get("angle") for item in bottom if item[2].get("angle")],
@@ -597,6 +692,9 @@ def promote_gm_policy(
     policy = db.get(GmPolicyVersion, policy_id)
     if not policy:
         raise ValueError("gm policy not found")
+    policy = evaluate_gm_policy(db, policy_id)
+    if policy.replay_status != "passed":
+        raise ValueError("gm policy replay gate must pass before promotion")
     active_rows = db.scalars(
         select(GmPolicyVersion).where(
             *_policy_version_filters(

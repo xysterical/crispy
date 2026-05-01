@@ -102,6 +102,7 @@ from app.services.feedback import import_feedback_rows, project_leaderboard
 from app.services.gm_evolution import (
     compile_feedback_import_reflections,
     compile_operator_review_reflection,
+    evaluate_gm_policy,
     promote_gm_policy,
 )
 from app.services.intake_assets import process_uploaded_payloads
@@ -157,6 +158,32 @@ DEFAULT_GENERATED_ARTIFACT_TYPES = {
     "visual_quality_report",
     "evaluation_selection",
 }
+
+
+def _serialize_gm_policy(row: GmPolicyVersion) -> GmPolicyItem:
+    return GmPolicyItem(
+        id=row.id,
+        project_id=row.project_id,
+        version=row.version,
+        status=row.status,
+        target_scope=row.target_scope,
+        shop_id=row.shop_id,
+        product_code=row.product_code,
+        industry_code=row.industry_code,
+        pipeline_mode=row.pipeline_mode,
+        confidence_score=row.confidence_score,
+        evidence_count=row.evidence_count,
+        replay_status=row.replay_status,
+        replay_score=row.replay_score,
+        replay_summary=row.replay_summary,
+        replay_details=row.replay_details or {},
+        source_reflection_ids=row.source_reflection_ids or [],
+        content=row.content or {},
+        notes=row.notes,
+        created_at=row.created_at,
+        activated_at=row.activated_at,
+        last_evaluated_at=row.last_evaluated_at,
+    )
 
 
 def _load_json_list(raw: str | None, field_name: str) -> list:
@@ -4531,27 +4558,21 @@ def list_gm_policies(
     if pipeline_mode:
         query = query.where(GmPolicyVersion.pipeline_mode == pipeline_mode)
     rows = db.scalars(query.limit(limit)).all()
-    return [
-        GmPolicyItem(
-            id=row.id,
-            project_id=row.project_id,
-            version=row.version,
-            status=row.status,
-            target_scope=row.target_scope,
-            shop_id=row.shop_id,
-            product_code=row.product_code,
-            industry_code=row.industry_code,
-            pipeline_mode=row.pipeline_mode,
-            confidence_score=row.confidence_score,
-            evidence_count=row.evidence_count,
-            source_reflection_ids=row.source_reflection_ids or [],
-            content=row.content or {},
-            notes=row.notes,
-            created_at=row.created_at,
-            activated_at=row.activated_at,
-        )
-        for row in rows
-    ]
+    return [_serialize_gm_policy(row) for row in rows]
+
+
+@router.post("/gm-policies/{policy_id}/evaluate", response_model=GmPolicyItem)
+def post_gm_policy_evaluate(
+    policy_id: str,
+    db: Session = Depends(get_db),
+) -> GmPolicyItem:
+    try:
+        row = evaluate_gm_policy(db, policy_id)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _serialize_gm_policy(row)
 
 
 @router.post("/gm-policies/{policy_id}/promote", response_model=GmPolicyItem)
@@ -4565,25 +4586,8 @@ def post_gm_policy_promote(
         db.commit()
     except ValueError as exc:
         db.rollback()
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return GmPolicyItem(
-        id=row.id,
-        project_id=row.project_id,
-        version=row.version,
-        status=row.status,
-        target_scope=row.target_scope,
-        shop_id=row.shop_id,
-        product_code=row.product_code,
-        industry_code=row.industry_code,
-        pipeline_mode=row.pipeline_mode,
-        confidence_score=row.confidence_score,
-        evidence_count=row.evidence_count,
-        source_reflection_ids=row.source_reflection_ids or [],
-        content=row.content or {},
-        notes=row.notes,
-        created_at=row.created_at,
-        activated_at=row.activated_at,
-    )
+        raise HTTPException(status_code=409 if "replay gate" in str(exc) else 404, detail=str(exc)) from exc
+    return _serialize_gm_policy(row)
 
 
 @router.post("/runs", response_model=RunView)

@@ -462,11 +462,16 @@ class GmPolicyVersion(Base):
     pipeline_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
     confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     evidence_count: Mapped[int] = mapped_column(Integer, default=0)
+    replay_status: Mapped[str] = mapped_column(String(16), default="needs_review")
+    replay_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    replay_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    replay_details: Mapped[dict] = mapped_column(json_type(), default=dict)
     source_reflection_ids: Mapped[list[str]] = mapped_column(json_type(), default=list)
     content: Mapped[dict] = mapped_column(json_type(), default=dict)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class GmPolicyPromotion(Base):

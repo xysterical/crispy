@@ -436,11 +436,16 @@ class GmPolicyItem(BaseModel):
     pipeline_mode: str | None = None
     confidence_score: float | None = None
     evidence_count: int = 0
+    replay_status: str = "needs_review"
+    replay_score: float | None = None
+    replay_summary: str | None = None
+    replay_details: dict = Field(default_factory=dict)
     source_reflection_ids: list[str] = Field(default_factory=list)
     content: dict = Field(default_factory=dict)
     notes: str | None = None
     created_at: datetime
     activated_at: datetime | None = None
+    last_evaluated_at: datetime | None = None
 
 
 class GmPolicyPromoteRequest(BaseModel):
