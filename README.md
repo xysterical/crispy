@@ -4,6 +4,22 @@ Semi-automated multi-agent pipeline for ad creative generation — copy, image, 
 
 **Generate creatives → Review & schedule via Notion → Import performance data → Strategy auto-improves for the next run.**
 
+## Key Features
+
+**Multi-agent pipeline** — Each stage has a specialized AI persona: orchestrator for intake, ideation agent for strategy, generation agent for creative production, scoring agent for evaluation.
+
+**Self-improving memory** — Performance feedback is stored as product-level and industry-level memory. The planning agent automatically references past winners and avoids past failures.
+
+**Human-in-the-loop** — Every creative stage can pause for review. Promote variants, request regeneration, or set winners before publishing.
+
+**Notion calendar sync** — Schedule approved creatives to a Notion database. Channel, date, status, and crispy links are synced bidirectionally.
+
+**Multi-modal input** — Upload product images and videos as reference. The intake stage analyzes them and feeds visual context to all downstream agents.
+
+**Visual QA** — Generated images are automatically checked for common issues (placeholder detection, aspect ratio, resolution). Marketplace mode adds white background and product fill checks.
+
+**Data source switching** — Switch between SQLite databases at runtime. Useful for separating test data from production data.
+
 ## Quick Start
 
 ### 1. Install
@@ -30,7 +46,9 @@ export CRISPY_API_KEY_NOTION_DATABASE="your-database-id"
 
 All keys use the `CRISPY_API_KEY_*` prefix and are auto-discovered.
 
-> To connect to Notion, add an [Internal Connection](https://www.notion.so/profile/integrations/internal), copy its *Installation access token* as Notion api key. Give content access to a database, of which the link between *notion.so/* and *?v* is the Notion database key.
+> 1. To connect to Notion, add an [Internal Connection](https://www.notion.so/profile/integrations/internal), copy its Installation Access Token as Notion api key. The internal connection will be showed as a user-like bot. Give it content access to a database you choose. Extract the code between `notion.so/` and `?v` in the database's website link. This code is the Notion database key.
+> 2. To connect to Meta
+> 3. To connect to Shopify
 
 Apply and verify:
 
@@ -44,7 +62,7 @@ env | grep CRISPY_API_KEY | sort
 ### 3. Start
 
 ```bash
-uv run uvicorn app.main:app
+uv run uvicorn app.main:app reload
 ```
 
 Open **http://localhost:8000** in your browser.
@@ -89,21 +107,7 @@ Your database is automatically backed up to `~/.crispy/backups/` every time the 
 - **Restore**: Click "Restore DB", pick a backup from the list
 - **Recovery**: `cp ~/.crispy/backups/crispy-YYYY-MM-DD-HHmmss.db crispy.db`
 
-## Key Features
 
-**Multi-agent pipeline** — Each stage has a specialized AI persona: orchestrator for intake, ideation agent for strategy, generation agent for creative production, scoring agent for evaluation.
-
-**Self-improving memory** — Performance feedback is stored as product-level and industry-level memory. The planning agent automatically references past winners and avoids past failures.
-
-**Human-in-the-loop** — Every creative stage can pause for review. Promote variants, request regeneration, or set winners before publishing.
-
-**Notion calendar sync** — Schedule approved creatives to a Notion database. Channel, date, status, and crispy links are synced bidirectionally.
-
-**Multi-modal input** — Upload product images and videos as reference. The intake stage analyzes them and feeds visual context to all downstream agents.
-
-**Visual QA** — Generated images are automatically checked for common issues (placeholder detection, aspect ratio, resolution). Marketplace mode adds white background and product fill checks.
-
-**Data source switching** — Switch between SQLite databases at runtime. Useful for separating test data from production data.
 
 ## Technical Details
 
