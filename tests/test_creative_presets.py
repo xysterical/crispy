@@ -27,6 +27,18 @@ def test_tiktok_shop_conversion_preset_is_available(client):
     assert preset["platform_targets"] == ["tiktok", "tiktok_shop"]
 
 
+def test_dtc_site_image_preset_is_available(client):
+    resp = client.get("/creative-presets?workspace_name=test_ws")
+    assert resp.status_code == 200
+    system = {p["key"]: p for p in resp.json()["system"]}
+
+    preset = system["dtc_site_image_pack"]
+    assert preset["image_size"] == "4:5"
+    assert preset["resolution"] == "1600px"
+    assert preset["video_duration_seconds"] == 5
+    assert preset["platform_targets"] == ["shopify"]
+
+
 def test_create_and_list_user_preset(client):
     resp = client.post(
         "/creative-presets",

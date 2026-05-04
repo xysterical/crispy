@@ -18,6 +18,7 @@ from app.providers.llm import (
     decode_placeholder_png,
 )
 from app.providers.media import LocalMediaProvider
+from app.services.creative_specs import get_dtc_site_review_hints, get_dtc_site_surface_strategy
 from app.services.marketplace_qa import (
     infer_visual_identity,
     inspect_marketplace_image,
@@ -376,6 +377,23 @@ class AgentsRuntime:
             "handoff_standard": "commercial-pilot-v2",
         }
 
+    def _dtc_site_surface_strategy(self, creative_specs: dict | None) -> dict:
+        return get_dtc_site_surface_strategy(creative_specs)
+
+    def _dtc_surface_prompt_block(self, creative_specs: dict | None) -> str:
+        strategy = self._dtc_site_surface_strategy(creative_specs)
+        if not strategy:
+            return ""
+        return (
+            f"This asset is for the DTC website {strategy['display_name']} surface. "
+            f"Composition focus: {strategy['composition_focus']}. "
+            f"Framing guidance: {strategy['framing_guidance']} "
+            f"Negative space rule: {strategy['negative_space_policy']}. "
+            f"Product visibility rule: {strategy['product_visibility_rule']} "
+            f"Backdrop style: {strategy['backdrop_style']}. "
+            f"Avoid: {', '.join(strategy['forbidden_elements'])}. "
+        )
+
     def _local_media_qa(self, *, asset_type: str, uri: str | None, payload: dict | None = None, expected_ratio: str | None = None) -> dict:
         return inspect_visual_asset(asset_type=asset_type, uri=uri, payload=payload or {}, expected_ratio=expected_ratio)
 
@@ -475,6 +493,7 @@ class AgentsRuntime:
         *,
         gm_lessons: list[dict],
         gm_policy: dict | None = None,
+        creative_specs: dict | None = None,
         enable_research: bool,
         provider: str,
         model: str,
@@ -482,11 +501,13 @@ class AgentsRuntime:
     ) -> StageOutput:
         mode = "online_research_enabled" if enable_research else "manual_research_only"
         gm_policy = gm_policy or {}
+        creative_specs = creative_specs or {}
         policy_excerpt = gm_policy.get("stage_guidance") or {}
+        surface_strategy = self._dtc_site_surface_strategy(creative_specs)
         prompt = (
             f"{self._business_strategy_system_prompt('Planning Agent')} "
             f"Build planning brief in {mode}. intake={intake.model_dump()} "
-            f"gm_lessons={gm_lessons[:3]}. gm_policy={policy_excerpt}. Return concise strategy, constraints, hypotheses, risk boundaries, "
+            f"gm_lessons={gm_lessons[:3]}. gm_policy={policy_excerpt}. dtc_surface_strategy={surface_strategy}. Return concise strategy, constraints, hypotheses, risk boundaries, "
             "and reviewer decision questions."
         )
         summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
@@ -498,6 +519,13 @@ class AgentsRuntime:
         ]
         constraints = list(intake.business_context.get("prohibited_claims", []))
         constraints.extend(str(item) for item in (gm_policy.get("hard_constraints") or [])[:5])
+        if surface_strategy:
+            constraints.append(
+                f"{surface_strategy['display_name']}: {surface_strategy['product_visibility_rule']}"
+            )
+            constraints.append(
+                f"{surface_strategy['display_name']}: {surface_strategy['negative_space_policy']}"
+            )
         constraints = list(dict.fromkeys(item for item in constraints if str(item).strip()))
         shop_thesis = gm_policy.get("shop_thesis") or {}
         planning = PlanningBrief(
@@ -506,6 +534,7 @@ class AgentsRuntime:
             positioning=shop_thesis.get("positioning") or intake.business_context.get("positioning", "practical premium utility"),
             constraints=constraints,
             gm_lessons=gm_lessons[:5],
+            surface_strategy=surface_strategy,
         )
         strategy_handoff = self._business_strategy_handoff(
             stage="planning",
@@ -513,6 +542,7 @@ class AgentsRuntime:
                 f"positioning={planning.positioning}",
                 f"primary_audience={planning.audience_priorities[0] if planning.audience_priorities else 'general'}",
                 f"angle_count={len(planning.strategic_angles)}",
+                f"site_surface={surface_strategy.get('site_surface') or 'none'}",
             ],
             risks=[str(item) for item in constraints] or ["No explicit prohibited claims supplied."],
             review_questions=[
@@ -526,12 +556,14 @@ class AgentsRuntime:
             "planning_mode": mode,
             "llm_summary": summary,
             "strategy_handoff": strategy_handoff,
+            "surface_strategy": surface_strategy,
             "commercial_strategy": {
                 "audience": planning.audience_priorities,
                 "positioning": planning.positioning,
                 "angle_portfolio": planning.strategic_angles,
                 "claim_boundaries": planning.constraints,
                 "memory_applied_count": len(gm_lessons[:5]),
+                "surface_strategy": surface_strategy,
                 "active_gm_policy": {
                     "policy_version_ids": gm_policy.get("policy_version_ids", []),
                     "applied_scopes": gm_policy.get("applied_scopes", []),
@@ -829,6 +861,8 @@ class AgentsRuntime:
         creative_specs = creative_specs or {}
         image_size = str(creative_specs.get("image_size") or "1:1")
         resolution = str(creative_specs.get("resolution") or "720p")
+        surface_strategy = self._dtc_site_surface_strategy(creative_specs)
+        is_dtc_site = bool(surface_strategy)
         visual_summary = (
             intake.asset_media_summary.strip()
             if intake and intake.asset_media_summary
@@ -858,21 +892,27 @@ class AgentsRuntime:
 
         copy_prompt = (
             f"{self._business_strategy_system_prompt('Copy Image Agent')} "
-            f"Generate concise Meta ad copy variants for US {locale}. "
-            f"business_context={business_context}, product_visual_summary={visual_summary}, variants={variant_set.model_dump()}. "
-            "Keep copy specific, conversion-oriented, and claim-safe. Do not invent certifications or guarantees."
+            + (
+                f"Generate concise DTC website creative copy cues for {market} {locale}. "
+                if is_dtc_site
+                else f"Generate concise Meta ad copy variants for US {locale}. "
+            )
+            + f"dtc_surface_strategy={surface_strategy}. "
+            + f"business_context={business_context}, product_visual_summary={visual_summary}, variants={variant_set.model_dump()}. "
+            + "Keep copy specific, conversion-oriented, and claim-safe. Do not invent certifications or guarantees."
         )
         try:
             copy_hint, text_model_used, copy_cost = self._chat_complete(provider, model, copy_prompt, runtime_config)
             estimated_cost += copy_cost
         except Exception:
-            copy_hint = "focus on practical outdoor use and comfort control."
+            copy_hint = "focus on clear product value, premium presentation, and buyer confidence."
 
         value_props = business_context.get("key_value_props", [])
         value_line = ", ".join(value_props[:3]) if value_props else "comfort control, durable material, daily reliability"
         price = business_context.get("price", "$35")
         audience = business_context.get("target_audience", "dog owners")
         cta = business_context.get("primary_cta", "Shop Now")
+        product_name = intake.product_name if intake and intake.product_name else str(business_context.get("product_name") or "the product")
 
         copies: list[CopyVariant] = []
         images: list[ImageAssetRef] = []
@@ -885,21 +925,26 @@ class AgentsRuntime:
                     variant_id=item.variant_id,
                     primary_text=(
                         f"{item.variant_id}: Built for {audience}. "
-                        f"Outdoor-ready leash support with {value_line}. Price {price}."
+                        f"{product_name} with {value_line}. Price {price}."
                     ),
-                    headline=f"{item.variant_id}: Outdoor Walks, Better Control",
+                    headline=f"{item.variant_id}: {product_name} for Everyday Use",
                     description=f"Angle: {item.angle}. Hint: {copy_hint[:140]}",
                     call_to_action=cta,
                 )
             )
             image_prompt = (
-                f"Create a social media ad image for North American market ({market}, {locale}). "
-                "Show a Labrador outdoors wearing/using the dog leash product naturally. "
-                "Keep product details aligned with this summary: "
-                f"{visual_summary}. "
-                f"Style: realistic, brand-safe, no text overlay, sharp product visibility, conversion-oriented. "
-                f"Use aspect ratio {image_size}, target resolution {resolution}. "
-                "Visual QA gate: product must be clearly inspectable, physically plausible, not malformed, and not a generic pet stock image."
+                (
+                    f"Create a DTC website product image for North American market ({market}, {locale}). "
+                    if is_dtc_site
+                    else f"Create a social media ad image for North American market ({market}, {locale}). "
+                )
+                + f"{self._dtc_surface_prompt_block(creative_specs)}"
+                + "Show the product in a realistic commercial composition that matches the intended use case. "
+                + "Keep product details aligned with this summary: "
+                + f"{visual_summary}. "
+                + f"Style: realistic, brand-safe, no text overlay, sharp product visibility, conversion-oriented. "
+                + f"Use aspect ratio {image_size}, target resolution {resolution}. "
+                + "Visual QA gate: product must be clearly inspectable, physically plausible, not malformed, and not a generic pet stock image."
             )
             image_uri = ""
             image_source = "placeholder"
@@ -971,7 +1016,11 @@ class AgentsRuntime:
             "image_assets": [artifact["payload"] for artifact in artifacts if artifact["type"] == "generated_image"],
             "strategy_handoff": self._business_strategy_handoff(
                 stage="copy_image_generation",
-                decisions=[f"generated copy/image candidates for {len(copies)} variants", "kept no-text-overlay image prompts"],
+                decisions=[
+                    f"generated copy/image candidates for {len(copies)} variants",
+                    "kept no-text-overlay image prompts",
+                    f"site_surface={surface_strategy.get('site_surface') or 'none'}",
+                ],
                 risks=["Image provider may still introduce malformed product details; visual QA and human review required."],
                 review_questions=["Is the product visibly correct?", "Does copy avoid unsupported claims?", "Which image has strongest product-forward composition?"],
             ),
@@ -1414,6 +1463,7 @@ class AgentsRuntime:
         creative_specs = creative_specs or {}
         gm_policy = gm_policy or {}
         marketplace_goal = is_marketplace_main_image(creative_specs)
+        review_hints = get_dtc_site_review_hints(creative_specs)
         visual_identity = dict(intake.get("visual_identity") or {}) if isinstance(intake, dict) else {}
 
         def _asset_items(payload: dict, key: str) -> list[dict]:
@@ -1591,6 +1641,7 @@ class AgentsRuntime:
                 "platform_readiness": platform_readiness,
                 "export_ready": export_ready,
                 "script_hook": script.get("hook"),
+                "review_hints": review_hints,
             }
             reports.append(report)
             summaries.append(
@@ -1603,6 +1654,7 @@ class AgentsRuntime:
                     "issues": report["blocking_issues"],
                     "platform_readiness": platform_readiness,
                     "export_ready": export_ready,
+                    "review_hints": review_hints,
                 }
             )
 

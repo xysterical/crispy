@@ -295,11 +295,14 @@ def test_pipeline_modes_endpoint(client):
     assert resp.status_code == 200
     modes = {item["mode"]: item for item in resp.json()}
     assert "copy_image_only" in modes
+    assert "dtc_site_image" in modes
     assert "video_only" in modes
     assert "full_multimodal" in modes
     assert "marketplace_main_image" in modes
     assert "tiktok_shop_video" in modes
     assert modes["copy_image_only"]["agent_count"] >= 1
+    assert modes["dtc_site_image"]["display_name"] == "DTC Site Image"
+    assert modes["dtc_site_image"]["stages"] == modes["copy_image_only"]["stages"]
     assert modes["marketplace_main_image"]["display_name"] == "Studio Main Image"
     assert modes["marketplace_main_image"]["stages"] == modes["copy_image_only"]["stages"]
     assert modes["tiktok_shop_video"]["display_name"] == "TikTok Shop Video"
@@ -414,6 +417,191 @@ def test_pipeline_mode_tiktok_shop_video_materializes_defaults(client):
     assert run["creative_specs"]["platform_targets"] == ["tiktok", "tiktok_shop"]
     assert run["enable_research"] is False
     assert [task["stage_name"] for task in run["stage_tasks"]] == stage_plan_for("tiktok_shop_video")
+
+
+def test_pipeline_mode_dtc_site_image_materializes_defaults(client):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-dtc",
+            "project_name": "p-dtc",
+            "product_name": "pet carrier",
+            "product_code": "DTC-001",
+            "industry_code": "pet_accessories",
+            "campaign_name": "dtc-site-image",
+            "pipeline_mode": "dtc_site_image",
+            "creative_preset": "custom",
+            "creative_specs": {
+                "image_size": "4:5",
+                "resolution": "1600px",
+            },
+            "enable_research": True,
+        },
+    )
+    assert create_resp.status_code == 200
+    run = create_resp.json()
+    assert run["pipeline_mode"] == "dtc_site_image"
+    assert run["creative_preset"] == "dtc_site_image_pack"
+    assert run["creative_specs"]["asset_goal"] == "dtc_site_image"
+    assert run["creative_specs"]["image_size"] == "4:5"
+    assert run["creative_specs"]["resolution"] == "1600px"
+    assert run["creative_specs"]["site_surface"] == "pdp_primary"
+    assert run["creative_specs"]["platform_targets"] == ["shopify"]
+    assert run["enable_research"] is True
+    assert [task["stage_name"] for task in run["stage_tasks"]] == stage_plan_for("dtc_site_image")
+
+
+def test_pipeline_mode_dtc_site_image_accepts_site_surface_override(client):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-dtc-hero",
+            "project_name": "p-dtc-hero",
+            "product_name": "pet carrier",
+            "product_code": "DTC-002",
+            "industry_code": "pet_accessories",
+            "campaign_name": "dtc-site-hero",
+            "pipeline_mode": "dtc_site_image",
+            "creative_preset": "custom",
+            "creative_specs": {
+                "image_size": "4:5",
+                "resolution": "1600px",
+                "site_surface": "homepage_hero",
+            },
+        },
+    )
+    assert create_resp.status_code == 200
+    run = create_resp.json()
+    assert run["creative_specs"]["site_surface"] == "homepage_hero"
+
+
+def test_dtc_site_surface_changes_planning_and_image_prompt(client):
+    def create_run_for_surface(surface: str, code: str) -> dict:
+        resp = client.post(
+            "/runs",
+            json={
+                "workspace_name": f"w-dtc-surface-{surface}",
+                "project_name": f"p-dtc-surface-{surface}",
+                "product_name": f"pet carrier {surface}",
+                "product_code": code,
+                "industry_code": "pet_accessories",
+                "campaign_name": f"dtc-{surface}",
+                "pipeline_mode": "dtc_site_image",
+                "creative_preset": "custom",
+                "variant_count": 1,
+                "creative_specs": {
+                    "image_size": "4:5",
+                    "resolution": "1600px",
+                    "site_surface": surface,
+                },
+                "business_context": {
+                    "target_audience": "urban dog owners",
+                    "key_value_props": ["airline-friendly form", "comfortable ventilation"],
+                    "primary_cta": "Shop Now",
+                },
+            },
+        )
+        assert resp.status_code == 200
+        run_id = resp.json()["id"]
+        for stage in ["intake", "planning", "divergence", "copy_image_generation"]:
+            _run_worker_once()
+            run_payload = client.get(f"/runs/{run_id}").json()
+            if stage != "copy_image_generation":
+                approve = client.post(f"/runs/{run_id}/advance", json={"notes": "ok"})
+                assert approve.status_code == 200
+        return client.get(f"/runs/{run_id}").json()
+
+    hero_run = create_run_for_surface("homepage_hero", "DTC-SURFACE-HERO")
+    pdp_run = create_run_for_surface("pdp_primary", "DTC-SURFACE-PDP")
+
+    hero_planning = next(task for task in hero_run["stage_tasks"] if task["stage_name"] == "planning")["output_payload"]
+    pdp_planning = next(task for task in pdp_run["stage_tasks"] if task["stage_name"] == "planning")["output_payload"]
+    hero_image = next(task for task in hero_run["stage_tasks"] if task["stage_name"] == "copy_image_generation")["output_payload"]["image_assets"][0]
+    pdp_image = next(task for task in pdp_run["stage_tasks"] if task["stage_name"] == "copy_image_generation")["output_payload"]["image_assets"][0]
+
+    assert hero_planning["surface_strategy"]["site_surface"] == "homepage_hero"
+    assert hero_planning["surface_strategy"]["composition_focus"] == "brand_story_scene"
+    assert "homepage hero" in hero_image["prompt"].lower()
+    assert "headline-safe negative space" in hero_image["prompt"].lower()
+    assert "social media ad image" not in hero_image["prompt"].lower()
+
+    assert pdp_planning["surface_strategy"]["site_surface"] == "pdp_primary"
+    assert pdp_planning["surface_strategy"]["composition_focus"] == "product_dominant_detail"
+    assert "pdp primary" in pdp_image["prompt"].lower()
+    assert "product should dominate the frame" in pdp_image["prompt"].lower()
+    assert "social media ad image" not in pdp_image["prompt"].lower()
+
+
+def test_dtc_site_surface_adds_surface_specific_review_hints(client):
+    def create_run_to_visual_qa(surface: str, code: str) -> tuple[dict, dict]:
+        resp = client.post(
+            "/runs",
+            json={
+                "workspace_name": f"w-dtc-review-{surface}",
+                "project_name": f"p-dtc-review-{surface}",
+                "product_name": f"pet carrier review {surface}",
+                "product_code": code,
+                "industry_code": "pet_accessories",
+                "campaign_name": f"dtc-review-{surface}",
+                "pipeline_mode": "dtc_site_image",
+                "creative_preset": "custom",
+                "variant_count": 1,
+                "creative_specs": {
+                    "image_size": "4:5",
+                    "resolution": "1600px",
+                    "site_surface": surface,
+                },
+            },
+        )
+        assert resp.status_code == 200
+        run_id = resp.json()["id"]
+        for stage in ["intake", "planning", "divergence", "copy_image_generation", "visual_quality_assessment"]:
+            _run_worker_once()
+            if stage != "visual_quality_assessment":
+                approve = client.post(f"/runs/{run_id}/advance", json={"notes": "ok"})
+                assert approve.status_code == 200
+        run_payload = client.get(f"/runs/{run_id}").json()
+        variants_payload = client.get(f"/runs/{run_id}/variants").json()
+        return run_payload, variants_payload
+
+    hero_run, hero_variants = create_run_to_visual_qa("homepage_hero", "DTC-REVIEW-HERO")
+    pdp_run, pdp_variants = create_run_to_visual_qa("pdp_primary", "DTC-REVIEW-PDP")
+
+    hero_summary = next(task for task in hero_run["stage_tasks"] if task["stage_name"] == "visual_quality_assessment")["output_payload"]["variant_summaries"][0]
+    pdp_summary = next(task for task in pdp_run["stage_tasks"] if task["stage_name"] == "visual_quality_assessment")["output_payload"]["variant_summaries"][0]
+    hero_quality = hero_variants["items"][0]["quality_summary"]
+    pdp_quality = pdp_variants["items"][0]["quality_summary"]
+
+    assert any("headline-safe space" in hint.lower() for hint in hero_summary["review_hints"])
+    assert any("brand atmosphere" in hint.lower() for hint in hero_summary["review_hints"])
+    assert any("headline-safe space" in hint.lower() for hint in hero_quality["review_hints"])
+
+    assert any("product occupies enough of the frame" in hint.lower() for hint in pdp_summary["review_hints"])
+    assert any("material or structure details" in hint.lower() for hint in pdp_summary["review_hints"])
+    assert any("product occupies enough of the frame" in hint.lower() for hint in pdp_quality["review_hints"])
+
+
+def test_dtc_site_image_rejects_unknown_site_surface(client):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-dtc-invalid-surface",
+            "project_name": "p-dtc-invalid-surface",
+            "product_name": "pet carrier invalid surface",
+            "product_code": "DTC-INVALID-SURFACE",
+            "industry_code": "pet_accessories",
+            "campaign_name": "dtc-invalid-surface",
+            "pipeline_mode": "dtc_site_image",
+            "creative_preset": "custom",
+            "creative_specs": {
+                "image_size": "4:5",
+                "resolution": "1600px",
+                "site_surface": "story_card",
+            },
+        },
+    )
+    assert create_resp.status_code == 400
+    assert "creative_specs.site_surface" in create_resp.text
 
 
 def test_runs_preflight_reports_video_generation_incompatibility(client):

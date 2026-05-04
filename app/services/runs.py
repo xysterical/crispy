@@ -45,8 +45,10 @@ from app.schemas.contracts import (
 )
 from app.services.agent_api_configs import resolve_agent_config, resolve_agent_runtime
 from app.services.creative_specs import (
+    DTC_SITE_IMAGE_PRESET,
     TIKTOK_SHOP_VIDEO_DEFAULT_STYLE,
     TIKTOK_SHOP_VIDEO_PRESET,
+    get_dtc_site_review_hints,
     resolve_creative_specs,
 )
 from app.services.marketplace_qa import MARKETPLACE_REVIEW_TAGS, is_marketplace_main_image
@@ -283,7 +285,15 @@ def create_run(db: Session, payload: RunCreateRequest) -> PipelineRun:
         objective=payload.objective,
     )
     creative_preset = payload.creative_preset
+    if payload.pipeline_mode == "dtc_site_image":
+        creative_preset = DTC_SITE_IMAGE_PRESET
     creative_specs = resolve_creative_specs(creative_preset, payload.creative_specs)
+    if payload.pipeline_mode == "dtc_site_image":
+        defaults = resolve_creative_specs(DTC_SITE_IMAGE_PRESET)
+        defaults.update(creative_specs)
+        defaults["asset_goal"] = "dtc_site_image"
+        defaults.setdefault("platform_targets", ["shopify"])
+        creative_specs = defaults
     if payload.pipeline_mode == "marketplace_main_image" and not is_marketplace_main_image(creative_specs):
         creative_preset = "marketplace_main_image_pack"
         defaults = resolve_creative_specs(creative_preset)
@@ -1293,6 +1303,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 intake,
                 gm_lessons=task.input_payload.get("gm_lessons", []),
                 gm_policy=task.input_payload.get("gm_policy", {}),
+                creative_specs=task.input_payload.get("creative_specs", {}),
                 enable_research=bool(task.input_payload.get("enable_research")),
                 provider=provider_name,
                 model=model_name,
@@ -1665,6 +1676,7 @@ def _variant_quality_summary(
     reviews: list[VariantReview],
     scores: list[VariantScore],
 ) -> dict:
+    review_hints = get_dtc_site_review_hints(run.creative_specs if run else None)
     asset_counts = Counter(asset.asset_type for asset in assets)
     asset_status_counts = Counter(_asset_payload_status(asset) for asset in assets)
     required_asset_types = _required_asset_types_for_run(run)
@@ -1772,6 +1784,7 @@ def _variant_quality_summary(
     return {
         "quality_status": quality_status,
         "quality_flags": sorted(set(quality_flags)),
+        "review_hints": review_hints,
         "asset_counts": dict(asset_counts),
         "asset_status_counts": dict(asset_status_counts),
         "required_asset_types": sorted(required_asset_types),

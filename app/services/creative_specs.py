@@ -9,6 +9,48 @@ from app.data.models import CreativePreset
 TIKTOK_SHOP_VIDEO_STYLES = {"ugc_demo", "direct_response_ad", "shop_account_content"}
 TIKTOK_SHOP_VIDEO_DEFAULT_STYLE = "ugc_demo"
 TIKTOK_SHOP_VIDEO_PRESET = "tiktok_shop_conversion_12s"
+DTC_SITE_IMAGE_PRESET = "dtc_site_image_pack"
+
+DTC_SITE_SURFACE_LIBRARY: dict[str, dict] = {
+    "homepage_hero": {
+        "site_surface": "homepage_hero",
+        "display_name": "Homepage Hero",
+        "composition_focus": "brand_story_scene",
+        "framing_guidance": "Use a premium lifestyle scene with the product integrated naturally and the subject anchored away from center when possible.",
+        "negative_space_policy": "headline-safe negative space",
+        "product_visibility_rule": "The product must remain clearly recognizable without filling the entire frame.",
+        "backdrop_style": "editorial, immersive, premium environment",
+        "forbidden_elements": [
+            "dense retail collage",
+            "tiny illegible product",
+            "tight crop with no room for homepage headline treatment",
+        ],
+        "review_hints": [
+            "Check that there is headline-safe space for a homepage message or CTA.",
+            "Check that the frame feels like brand atmosphere, not a cramped product tile.",
+            "Check that the product is still clearly recognizable within the wider story scene.",
+        ],
+    },
+    "pdp_primary": {
+        "site_surface": "pdp_primary",
+        "display_name": "PDP Primary",
+        "composition_focus": "product_dominant_detail",
+        "framing_guidance": "Keep the product front-loaded, cleanly framed, and easy to inspect at a glance.",
+        "negative_space_policy": "avoid oversized hero-banner empty space",
+        "product_visibility_rule": "Product should dominate the frame with clearly inspectable details.",
+        "backdrop_style": "clean, ecommerce-first, low distraction backdrop",
+        "forbidden_elements": [
+            "busy lifestyle scene",
+            "small product in oversized environment",
+            "heavy atmospheric storytelling that hides details",
+        ],
+        "review_hints": [
+            "Check that the product occupies enough of the frame for a PDP first image.",
+            "Check that material or structure details are easy to inspect at a glance.",
+            "Check that the background stays clean and does not compete with the product.",
+        ],
+    },
+}
 
 CREATIVE_PRESETS: dict[str, dict] = {
     "meta_square_5s": {
@@ -38,6 +80,15 @@ CREATIVE_PRESETS: dict[str, dict] = {
         "platform_targets": ["tiktok_shop", "shopify", "alibaba", "amazon"],
         "export_size_px": 2000,
         "background_policy": "pure_white",
+    },
+    DTC_SITE_IMAGE_PRESET: {
+        "image_size": "4:5",
+        "video_size": "4:5",
+        "resolution": "1600px",
+        "video_duration_seconds": 5,
+        "asset_goal": "dtc_site_image",
+        "site_surface": "pdp_primary",
+        "platform_targets": ["shopify"],
     },
     TIKTOK_SHOP_VIDEO_PRESET: {
         "image_size": "9:16",
@@ -111,6 +162,19 @@ def delete_creative_preset(db: Session, preset_id: str) -> None:
     db.flush()
 
 
+def get_dtc_site_surface_strategy(creative_specs: dict | None) -> dict:
+    specs = creative_specs or {}
+    if str(specs.get("asset_goal") or "").strip() != "dtc_site_image":
+        return {}
+    surface = str(specs.get("site_surface") or "pdp_primary").strip().lower()
+    return deepcopy(DTC_SITE_SURFACE_LIBRARY.get(surface) or DTC_SITE_SURFACE_LIBRARY["pdp_primary"])
+
+
+def get_dtc_site_review_hints(creative_specs: dict | None) -> list[str]:
+    strategy = get_dtc_site_surface_strategy(creative_specs)
+    return list(strategy.get("review_hints") or [])
+
+
 def resolve_creative_specs(creative_preset: str, creative_specs: dict | None = None) -> dict:
     preset = (creative_preset or "").strip()
     custom = dict(creative_specs or {})
@@ -134,6 +198,12 @@ def resolve_creative_specs(creative_preset: str, creative_specs: dict | None = N
     if duration_int <= 0 or duration_int > 60:
         raise ValueError("creative_specs.video_duration_seconds must be within 1..60")
     resolved["video_duration_seconds"] = duration_int
+
+    if resolved.get("asset_goal") == "dtc_site_image" or "site_surface" in resolved:
+        surface = str(resolved.get("site_surface") or "").strip().lower()
+        if surface not in DTC_SITE_SURFACE_LIBRARY:
+            supported = ", ".join(sorted(DTC_SITE_SURFACE_LIBRARY.keys()))
+            raise ValueError(f"creative_specs.site_surface must be one of: {supported}")
     return resolved
 
 

@@ -7,6 +7,7 @@ from app.data.models import StageName
 
 class PipelineMode(StrEnum):
     COPY_IMAGE_ONLY = "copy_image_only"
+    DTC_SITE_IMAGE = "dtc_site_image"
     VIDEO_ONLY = "video_only"
     FULL_MULTIMODAL = "full_multimodal"
     MARKETPLACE_MAIN_IMAGE = "marketplace_main_image"
@@ -15,6 +16,14 @@ class PipelineMode(StrEnum):
 
 PIPELINE_STAGE_PLANS: dict[str, list[str]] = {
     PipelineMode.COPY_IMAGE_ONLY.value: [
+        StageName.INTAKE.value,
+        StageName.PLANNING.value,
+        StageName.DIVERGENCE.value,
+        StageName.COPY_IMAGE_GENERATION.value,
+        StageName.VISUAL_QUALITY_ASSESSMENT.value,
+        StageName.EVALUATION_SELECTION.value,
+    ],
+    PipelineMode.DTC_SITE_IMAGE.value: [
         StageName.INTAKE.value,
         StageName.PLANNING.value,
         StageName.DIVERGENCE.value,
