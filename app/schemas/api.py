@@ -9,6 +9,7 @@ from app.schemas.contracts import ConversionForecast, FeedbackRow, ScoreCard, St
 
 PipelineMode = Literal[
     "copy_image_only",
+    "dtc_site_image",
     "video_only",
     "full_multimodal",
     "marketplace_main_image",

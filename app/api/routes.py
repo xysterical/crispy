@@ -422,6 +422,7 @@ def _sse_event(event_name: str, payload: dict, event_id: str | None = None) -> s
 def _pipeline_mode_views() -> list[PipelineModeView]:
     labels = {
         PipelineMode.COPY_IMAGE_ONLY.value: "Copy + Image",
+        PipelineMode.DTC_SITE_IMAGE.value: "DTC Site Image",
         PipelineMode.VIDEO_ONLY.value: "Copy + Video",
         PipelineMode.FULL_MULTIMODAL.value: "Full Multimodal",
         PipelineMode.MARKETPLACE_MAIN_IMAGE.value: "Studio Main Image",
@@ -617,6 +618,7 @@ def _dashboard_shared_js() -> str:
             if (m === "full_multimodal") return "Full";
             if (m === "video_only") return "Copy + Video";
             if (m === "copy_image_only") return "Image";
+            if (m === "dtc_site_image") return "DTC Site Image";
             if (m === "marketplace_main_image") return "Studio Main Image";
             return m;
           }
@@ -918,6 +920,14 @@ def _dashboard_shared_js() -> str:
                 ${script ? `<div style="margin-top:8px;"><b>Script</b>: ${esc(script.hook || "-")}<div class="muted">${esc(script.script || "-")}</div></div>` : ''}
                 <div class="muted" style="margin-top:6px;">CTA: ${esc(copy?.call_to_action || "-")} | action: ${esc(evaluation?.recommended_action || "-")}</div>
               </div>
+              ${(qSummary.review_hints || []).length ? `
+                <div style="margin-top:12px;">
+                  <div><b>Review Hints</b></div>
+                  <div class="muted" style="display:flex;flex-direction:column;gap:4px;margin-top:6px;">
+                    ${(qSummary.review_hints || []).map((hint) => `<div>- ${esc(hint)}</div>`).join("")}
+                  </div>
+                </div>
+              ` : ''}
               <div class="variant-detail-actions">
                 <button onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/review', {action:'approve_variant', comment:'approved from dashboard'})">Approve</button>
                 <button onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/review', {action:'reject_variant', comment:'rejected from dashboard'})">Reject</button>
@@ -3349,6 +3359,7 @@ def _assets_dashboard_html() -> str:
               <select id="pipeline_mode">
                 <option value="">All</option>
                 <option value="copy_image_only">copy_image_only</option>
+                <option value="dtc_site_image">dtc_site_image</option>
                 <option value="video_only">video_only</option>
                 <option value="full_multimodal">full_multimodal</option>
               </select>

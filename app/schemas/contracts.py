@@ -189,6 +189,7 @@ class PlanningBrief(BaseModel):
     positioning: str = ""
     constraints: list[str] = Field(default_factory=list)
     gm_lessons: list[dict] = Field(default_factory=list)
+    surface_strategy: dict = Field(default_factory=dict)
 
 
 class VariantCandidate(BaseModel):

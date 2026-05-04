@@ -153,7 +153,14 @@ def test_dashboard_create_run_labels_pipeline_and_specs_clearly(client):
     assert "Creative Template:" not in html
     assert "Creative Specs Preset" in html
     assert "'copy_image_only': ['field-image-size']" in html
+    assert "'dtc_site_image': ['field-image-size', 'field-dtc-site-surface']" in html
     assert "'marketplace_main_image': ['field-image-size']" in html
+    assert "DTC Site Image" in html
+    assert "dtc_site_image_pack" in html
+    assert 'id="dtc_site_surface"' in html
+    assert "DTC Site Surface" in html
+    assert "homepage_hero" in html
+    assert "pdp_primary" in html
     assert "Studio Main Image" in html
     assert "marketplace_main_image_pack" in html
     assert 'if (m === "marketplace_main_image") return "Studio Main Image";' in html
@@ -162,6 +169,15 @@ def test_dashboard_create_run_labels_pipeline_and_specs_clearly(client):
     assert "Meta Ads" in html
 
     modes = {item["mode"]: item for item in client.get("/pipeline-modes").json()}
+    assert modes["dtc_site_image"]["display_name"] == "DTC Site Image"
     assert modes["video_only"]["display_name"] == "Copy + Video"
     assert modes["full_multimodal"]["display_name"] == "Full Multimodal"
     assert modes["marketplace_main_image"]["display_name"] == "Studio Main Image"
+
+
+def test_dashboard_variant_detail_renders_review_hints_section(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "Review Hints" in html
+    assert "qSummary.review_hints" in html
