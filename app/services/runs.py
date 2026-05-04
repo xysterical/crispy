@@ -49,6 +49,16 @@ from app.services.creative_specs import (
     TIKTOK_SHOP_VIDEO_PRESET,
     resolve_creative_specs,
 )
+from app.services.execution_memory import (
+    append_execution_memory_payload,
+    build_variant_execution_summary,
+    resolve_execution_memory,
+    write_regeneration_memory,
+    write_stage_approval_memory,
+    write_stage_completion_memory,
+    write_stage_rejection_memory,
+    write_variant_review_memory,
+)
 from app.services.marketplace_qa import MARKETPLACE_REVIEW_TAGS, is_marketplace_main_image
 from app.services.personas import get_persona
 from app.services.gm_evolution import compile_run_outcome_reflection, resolve_active_gm_policy
@@ -429,6 +439,7 @@ def approve_stage(db: Session, run_id: str, notes: str = "") -> PipelineRun:
         message=f"Human approved stage {run.current_stage}.",
         payload={"notes": notes},
     )
+    write_stage_approval_memory(db, run=run, task=task, notes=notes)
 
     nxt = next_stage(run.current_stage, run.pipeline_mode)
     if nxt is None:
@@ -504,6 +515,7 @@ def reject_stage(db: Session, run_id: str, notes: str = "") -> PipelineRun:
         message=f"Human rejected stage {run.current_stage}; it was queued for rerun.",
         payload={"notes": notes},
     )
+    write_stage_rejection_memory(db, run=run, task=task, notes=notes)
     run.status = RunStatus.RUNNING.value
     run.updated_at = utcnow()
     db.flush()
@@ -653,31 +665,30 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
         "category_tags": run.category_tags or [],
         "gm_policy": gm_policy,
     }
-    if task.stage_name == "intake":
-        return base
+    payload = base
     if task.stage_name == "planning":
         gm_lessons = _recent_gm_lessons(db, run) + _analytics_insights(db, run)
-        return {**base, "intake": _stage_output_optional(db, run.id, "intake"), "gm_lessons": gm_lessons}
-    if task.stage_name == "divergence":
-        return {**base, "planning": _stage_output_optional(db, run.id, "planning")}
-    if task.stage_name == "copy_image_generation":
-        return {
+        payload = {**base, "intake": _stage_output_optional(db, run.id, "intake"), "gm_lessons": gm_lessons}
+    elif task.stage_name == "divergence":
+        payload = {**base, "planning": _stage_output_optional(db, run.id, "planning")}
+    elif task.stage_name == "copy_image_generation":
+        payload = {
             **base,
             "variants": _stage_output_optional(db, run.id, "divergence"),
             "intake": _stage_output_optional(db, run.id, "intake"),
         }
-    if task.stage_name == "video_scripting":
-        return {
+    elif task.stage_name == "video_scripting":
+        payload = {
             **base,
             "variants": _stage_output_optional(db, run.id, "divergence"),
             "intake": _stage_output_optional(db, run.id, "intake"),
         }
-    if task.stage_name == "storyboard_image_generation":
-        return {**base, "video_scripts": _stage_output_optional(db, run.id, "video_scripting")}
-    if task.stage_name == "video_generation":
-        return {**base, "video_scripts": _stage_output_optional(db, run.id, "video_scripting")}
-    if task.stage_name == "visual_quality_assessment":
-        return {
+    elif task.stage_name == "storyboard_image_generation":
+        payload = {**base, "video_scripts": _stage_output_optional(db, run.id, "video_scripting")}
+    elif task.stage_name == "video_generation":
+        payload = {**base, "video_scripts": _stage_output_optional(db, run.id, "video_scripting")}
+    elif task.stage_name == "visual_quality_assessment":
+        payload = {
             **base,
             "variants": _stage_output_optional(db, run.id, "divergence"),
             "intake": _stage_output_optional(db, run.id, "intake"),
@@ -686,8 +697,8 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
             "storyboards": _stage_output_optional(db, run.id, "storyboard_image_generation"),
             "videos": _stage_output_optional(db, run.id, "video_generation"),
         }
-    if task.stage_name == "evaluation_selection":
-        return {
+    elif task.stage_name == "evaluation_selection":
+        payload = {
             **base,
             "variants": _stage_output_optional(db, run.id, "divergence"),
             "copy_images": _stage_output_optional(db, run.id, "copy_image_generation"),
@@ -695,7 +706,13 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
             "videos": _stage_output_optional(db, run.id, "video_generation"),
             "visual_quality": _stage_output_optional(db, run.id, "visual_quality_assessment"),
         }
-    return base
+    if task.rejected_at or task.failure_category == TaskFailureCategory.HUMAN_REJECT.value:
+        payload = append_execution_memory_payload(
+            payload,
+            bucket="run",
+            memory=resolve_execution_memory(db, run_id=run.id, stage_name=task.stage_name),
+        )
+    return payload
 
 
 def _single_variant_set(db: Session, run_id: str, variant_id: str) -> VariantSet:
@@ -1475,6 +1492,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
             )
 
         _variant_library_sync(db, run, task, output.payload)
+        write_stage_completion_memory(db, run=run, task=task)
         add_agent_trace_event(
             db,
             run_id=run.id,
@@ -1854,6 +1872,7 @@ def _serialize_run_variant(db: Session, row: RunVariant, run: PipelineRun | None
         "regenerate_requested": row.regenerate_requested,
         "metadata_json": row.metadata_json or {},
         "strategy_brief": (row.metadata_json or {}).get("strategy_brief", {}),
+        "execution_summary": build_variant_execution_summary(db, row.run_id, row.variant_id),
         "quality_summary": quality_summary,
         "assets": [
             {
@@ -2068,6 +2087,7 @@ def regenerate_variant_assets(
     target_stage: str | None = None,
 ) -> RunVariant:
     run = get_run(db, run_id)
+    variant = get_run_variant(db, run_id, variant_id)
     variant = review_variant(
         db,
         run_id=run_id,
@@ -2095,6 +2115,15 @@ def regenerate_variant_assets(
     model_name = resolved["model_name"]
     scope = f"regen-{utcnow().strftime('%Y%m%d%H%M%S%f')}"
     asset_suffix = f"_{scope}"
+    write_regeneration_memory(
+        db,
+        run_id=run.id,
+        variant=variant,
+        stage_name=stage_name,
+        reason=reason,
+        scope=scope,
+        status="requested",
+    )
     runtime_config = {
         **runtime_config,
         "force_regenerate": True,
@@ -2112,6 +2141,11 @@ def regenerate_variant_assets(
         runtime_config = {**runtime_config, "image": resolve_agent_runtime(image_resolved).get("image") or {}}
 
     task.input_payload = _build_task_input(db, run, task)
+    task.input_payload = append_execution_memory_payload(
+        task.input_payload,
+        bucket="variant",
+        memory=resolve_execution_memory(db, run_id=run.id, stage_name=stage_name, variant_id=variant_id),
+    )
     task.metadata_json = {
         **(task.metadata_json or {}),
         "agent_name": lead_agent,
@@ -2255,6 +2289,15 @@ def regenerate_variant_assets(
             "completed_at": utcnow().isoformat(),
         },
     }
+    write_regeneration_memory(
+        db,
+        run_id=run.id,
+        variant=variant,
+        stage_name=stage_name,
+        reason=reason,
+        scope=scope,
+        status="completed",
+    )
     run.budget_used = float(run.budget_used or 0.0) + output.estimated_cost
     run.updated_at = utcnow()
     db.flush()
@@ -2346,6 +2389,15 @@ def review_variant(
         event_type=action,
         message=f"Human review action {action} applied to variant {variant_id}.",
         payload={"variant_id": variant_id, "comment": comment, "tags": tags, "metadata": metadata},
+    )
+    write_variant_review_memory(
+        db,
+        run_id=run_id,
+        variant=variant,
+        action=action,
+        comment=comment,
+        tags=tags,
+        metadata=metadata,
     )
     db.flush()
     return variant

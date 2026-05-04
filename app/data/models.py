@@ -79,6 +79,28 @@ class VariantReviewAction(StrEnum):
     REQUEST_REGENERATION = "request_regeneration"
 
 
+class ExecutionMemoryScope(StrEnum):
+    RUN = "run"
+    VARIANT = "variant"
+    STAGE_HANDOFF = "stage_handoff"
+    REVIEW = "review"
+    REGENERATION = "regeneration"
+
+
+class ExecutionMemoryStatus(StrEnum):
+    ACTIVE = "active"
+    RESOLVED = "resolved"
+    SUPERSEDED = "superseded"
+
+
+class ExecutionMemorySource(StrEnum):
+    SYSTEM_STAGE = "system_stage"
+    HUMAN_REVIEW = "human_review"
+    VISUAL_QA = "visual_qa"
+    EVALUATION = "evaluation"
+    REGENERATION = "regeneration"
+
+
 class Workspace(Base):
     __tablename__ = "workspace"
 
@@ -223,6 +245,24 @@ class StageTask(Base):
     run: Mapped[PipelineRun] = relationship(back_populates="stage_tasks")
     scorecards: Mapped[list["ScoreCard"]] = relationship(back_populates="stage_task")
     trace_events: Mapped[list["AgentTraceEvent"]] = relationship(back_populates="stage_task")
+
+
+class ExecutionMemoryEntry(Base):
+    __tablename__ = "execution_memory_entry"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(ForeignKey("pipeline_run.id"), nullable=False)
+    stage_task_id: Mapped[str | None] = mapped_column(ForeignKey("stage_task.id"), nullable=True)
+    run_variant_id: Mapped[str | None] = mapped_column(ForeignKey("run_variant.id"), nullable=True)
+    stage_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    memory_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    memory_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default=ExecutionMemoryStatus.ACTIVE.value)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    payload: Mapped[dict] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AgentTraceEvent(Base):

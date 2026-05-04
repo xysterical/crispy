@@ -332,12 +332,21 @@ class RunVariantView(BaseModel):
     regenerate_requested: bool = False
     metadata_json: dict = Field(default_factory=dict)
     strategy_brief: dict = Field(default_factory=dict)
+    execution_summary: dict = Field(default_factory=dict)
     quality_summary: dict = Field(default_factory=dict)
     assets: list[VariantAssetView] = Field(default_factory=list)
     scores: list[VariantScoreView] = Field(default_factory=list)
     reviews: list[VariantReviewView] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+
+
+class ExecutionMemoryLedgerResponse(BaseModel):
+    run_ledger: dict = Field(default_factory=dict)
+    stage_handoffs: list[dict] = Field(default_factory=list)
+    variant_ledgers: list[dict] = Field(default_factory=list)
+    recent_reviews: list[dict] = Field(default_factory=list)
+    active_regeneration_goals: list[dict] = Field(default_factory=list)
 
 
 class VariantsResponse(BaseModel):

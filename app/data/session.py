@@ -260,6 +260,25 @@ def apply_runtime_migrations(target_engine) -> None:
                 ")"
             )
         )
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS execution_memory_entry ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "run_id VARCHAR(36) NOT NULL, "
+                "stage_task_id VARCHAR(36), "
+                "run_variant_id VARCHAR(36), "
+                "stage_name VARCHAR(64), "
+                "memory_scope VARCHAR(32) NOT NULL, "
+                "memory_key VARCHAR(64) NOT NULL, "
+                "status VARCHAR(16) DEFAULT 'active', "
+                "source VARCHAR(32) NOT NULL, "
+                "summary TEXT, "
+                "payload JSON, "
+                "created_at DATETIME, "
+                "resolved_at DATETIME"
+                ")"
+            )
+        )
         conn.execute(text("UPDATE product SET product_code = 'legacy_' || id WHERE product_code IS NULL OR product_code = ''"))
         conn.execute(
             text(
@@ -305,6 +324,10 @@ def apply_runtime_migrations(target_engine) -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_trace_run_id ON agent_trace_event(run_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_trace_stage_task ON agent_trace_event(stage_task_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_trace_created_at ON agent_trace_event(created_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_execution_memory_run_created ON execution_memory_entry(run_id, created_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_execution_memory_variant_created ON execution_memory_entry(run_variant_id, created_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_execution_memory_scope_status_run ON execution_memory_entry(memory_scope, status, run_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_execution_memory_stage_task_created ON execution_memory_entry(stage_task_id, created_at)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stage_task_queue ON stage_task(status, priority, created_at)"))
         conn.execute(text("UPDATE stage_task SET priority = 2 WHERE priority IS NULL"))
         conn.execute(text("UPDATE stage_task SET max_retries = 3 WHERE max_retries IS NULL"))

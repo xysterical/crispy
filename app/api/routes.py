@@ -37,6 +37,7 @@ from app.schemas.api import (
     DataSourceListResponse,
     DataSourceSelectRequest,
     DeliverablesResponse,
+    ExecutionMemoryLedgerResponse,
     FeedbackImportRequest,
     FeedbackImportResponse,
     GmMemoryItem,
@@ -99,6 +100,7 @@ from app.services.agent_api_configs import (
     upsert_agent_config,
 )
 from app.services.feedback import import_feedback_rows, project_leaderboard
+from app.services.execution_memory import build_run_execution_ledger
 from app.services.gm_evolution import (
     compile_feedback_import_reflections,
     compile_operator_review_reflection,
@@ -1054,6 +1056,10 @@ def _dashboard_shared_js() -> str:
               const evaluation = latestScore(item, "evaluation");
               const score = evaluation?.total_score;
               const qSummary = qualitySummary(item);
+              const execSummary = item.execution_summary || {};
+              const lastDecision = execSummary.last_decision?.summary || "-";
+              const blocker = execSummary.active_blockers?.[0]?.summary || "-";
+              const regenGoal = execSummary.active_regen_goal?.summary || "-";
               return `
                 <article class="variant-score-card" data-variant-id="${esc(item.variant_id)}" onclick="toggleVariantDetail('${runId}', '${item.variant_id}')">
                   <div class="rank-badge">${idx + 1}</div>
@@ -1066,6 +1072,9 @@ def _dashboard_shared_js() -> str:
                     ${item.shortlisted && !item.is_winner ? '<span class="quality-chip good">Shortlisted</span>' : ''}
                     <span class="quality-chip ${qualityChipClass(qSummary.quality_status)}">${esc(qSummary.quality_status || "-")}</span>
                   </div>
+                  <div class="muted" style="font-size:11px;margin-top:6px;">Decision: ${esc(lastDecision)}</div>
+                  <div class="muted" style="font-size:11px;">Blocker: ${esc(blocker)}</div>
+                  <div class="muted" style="font-size:11px;">Regen Goal: ${esc(regenGoal)}</div>
                   <div class="quick-actions">
                     <button class="primary" onclick="event.stopPropagation();variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/select', {winner:true, comment:'winner chosen from dashboard'})">Set Winner</button>
                     <button onclick="event.stopPropagation();variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/select', {shortlist:true, comment:'shortlisted from dashboard'})">Shortlist</button>
@@ -1160,6 +1169,37 @@ def _dashboard_shared_js() -> str:
               </div>
             `;
           }
+          function executionSummaries(rows, emptyText){
+            if (!rows || !rows.length) return `<div class="muted">${esc(emptyText)}</div>`;
+            return rows.slice(0, 4).map((item) => `<div class="pill">${esc(item.summary || item.memory_key || "-")}</div>`).join("");
+          }
+          function renderExecutionMemory(executionMemory){
+            const data = executionMemory || {};
+            const runLedger = data.run_ledger || {};
+            return `
+              <div class="card" style="margin:12px 0;">
+                <h3>Execution Memory</h3>
+                <div class="panel-grid-3">
+                  <section>
+                    <div class="muted" style="margin-bottom:6px;">Locked Facts</div>
+                    <div class="pill-row">${executionSummaries(runLedger.locked_facts, "No locked facts yet.")}</div>
+                  </section>
+                  <section>
+                    <div class="muted" style="margin-bottom:6px;">Active Constraints</div>
+                    <div class="pill-row">${executionSummaries(runLedger.active_constraints, "No active constraints yet.")}</div>
+                  </section>
+                  <section>
+                    <div class="muted" style="margin-bottom:6px;">Open Regen Goals</div>
+                    <div class="pill-row">${executionSummaries(data.active_regeneration_goals, "No open regen goals.")}</div>
+                  </section>
+                </div>
+                <div style="margin-top:10px;">
+                  <div class="muted" style="margin-bottom:6px;">Recent Human Decisions</div>
+                  <div class="pill-row">${executionSummaries(data.recent_reviews, "No human review memory yet.")}</div>
+                </div>
+              </div>
+            `;
+          }
           function isNearTraceLeftEdge(container){
             if (!container) return true;
             return container.scrollLeft <= 48;
@@ -1247,9 +1287,10 @@ def _dashboard_shared_js() -> str:
             const traceBoard = document.getElementById("agent-trace-board");
             const traceScrollLeft = traceBoard ? traceBoard.scrollLeft : 0;
 
-            const [deliverables, variants] = await Promise.all([
+            const [deliverables, variants, executionMemory] = await Promise.all([
               api(`/runs/${run.id}/deliverables`).catch(() => ({ run_id: run.id, deliverables: {}, score: {} })),
-              api(`/runs/${run.id}/variants`).catch(() => ({ run_id: run.id, items: [], summary: {}, variants: [], ranked: [] }))
+              api(`/runs/${run.id}/variants`).catch(() => ({ run_id: run.id, items: [], summary: {}, variants: [], ranked: [] })),
+              api(`/runs/${run.id}/execution-memory`).catch(() => ({ run_ledger: {}, stage_handoffs: [], variant_ledgers: [], recent_reviews: [], active_regeneration_goals: [] }))
             ]);
 
             // Merge: keep SSE-streamed events not yet on server, add server events on top
@@ -1259,7 +1300,7 @@ def _dashboard_shared_js() -> str:
             run.trace_events = currentTraceEvents;
 
             expandedVariantId = wasExpandedVariantId;
-            document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables, variants);
+            document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables, variants, executionMemory);
 
             if (wasCollapsed) {
               const body = document.getElementById("variant-board-body");
@@ -1281,7 +1322,7 @@ def _dashboard_shared_js() -> str:
             bindTracePayloadToggles();
           }
 
-          function renderRunDetail(run, deliverables, variants){
+          function renderRunDetail(run, deliverables, variants, executionMemory){
             const score = run.latest_scorecard ? `<pre>${esc(JSON.stringify(run.latest_scorecard, null, 2))}</pre>` : `<span class="muted">No score yet.</span>`;
             return `
               <div style="margin-bottom:12px;">
@@ -1293,6 +1334,7 @@ def _dashboard_shared_js() -> str:
                 <div class="muted">variant_summary: ${esc(JSON.stringify(run.variant_summary || {}))}</div>
                 <div style="margin-top:8px;"><button onclick="refreshAsyncAssets('${run.id}')">Refresh async assets</button></div>
               </div>
+              ${renderExecutionMemory(executionMemory)}
               ${renderDeliverables(deliverables)}
               ${renderVariantBoard(run.id, variants)}
               <h3 style="margin-top:14px;">Agent Trace</h3>
@@ -1309,14 +1351,15 @@ def _dashboard_shared_js() -> str:
             expandedVariantId = null;
             document.getElementById('fab-advance').classList.add('visible');
             document.getElementById('fab-reject').classList.add('visible');
-            const [run, deliverables, variants] = await Promise.all([
+            const [run, deliverables, variants, executionMemory] = await Promise.all([
               api(`/runs/${runId}`),
               api(`/runs/${runId}/deliverables`).catch(() => ({ run_id: runId, deliverables: {}, score: {} })),
-              api(`/runs/${runId}/variants`).catch(() => ({ run_id: runId, items: [], summary: {}, variants: [], ranked: [] }))
+              api(`/runs/${runId}/variants`).catch(() => ({ run_id: runId, items: [], summary: {}, variants: [], ranked: [] })),
+              api(`/runs/${runId}/execution-memory`).catch(() => ({ run_ledger: {}, stage_handoffs: [], variant_ledgers: [], recent_reviews: [], active_regeneration_goals: [] }))
             ]);
             currentTraceEvents = run.trace_events || [];
             runDetailLastUpdated = run.updated_at;
-            document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables, variants);
+            document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables, variants, executionMemory);
             bindTracePayloadToggles();
             requestAnimationFrame(() => scrollTraceToLeft("auto"));
             connectRunEvents(runId);
@@ -4902,6 +4945,16 @@ def get_run_variants(
         items=[RunVariantView(**item) for item in data.get("items", [])],
         summary=data.get("summary", {}),
     )
+
+
+@router.get("/runs/{run_id}/execution-memory", response_model=ExecutionMemoryLedgerResponse)
+def get_run_execution_memory(run_id: str, db: Session = Depends(get_db)) -> ExecutionMemoryLedgerResponse:
+    try:
+        get_run(db, run_id)
+        data = build_run_execution_ledger(db, run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ExecutionMemoryLedgerResponse(**data)
 
 
 @router.post("/runs/{run_id}/videos/refresh")
