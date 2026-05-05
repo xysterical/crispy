@@ -62,7 +62,7 @@ env | grep CRISPY_API_KEY | sort
 ### 3. Start
 
 ```bash
-uv run uvicorn app.main:app reload
+uv run uvicorn app.main:app
 ```
 
 Open **http://localhost:8000** in your browser.
