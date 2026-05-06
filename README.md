@@ -1,8 +1,8 @@
 # Crispy
 
-Semi-automated multi-agent pipeline for ad creative generation — copy, image, and video — with a self-improving feedback loop. Built for e-commerce teams who run paid ads across Meta, TikTok, and Shopify.
+![Crispy](image_task_01KQXWA2114JC5QJ3N92E8A4Z5_0.png)
 
-**Generate creatives → Review & schedule via Notion → Import performance data → Strategy auto-improves for the next run.**
+CRISPY is a semi-automated multi-agent pipeline for ad creative generation — copy, image, and video — with a self-improving feedback loop. Built for e-commerce teams who run paid ads across Meta, TikTok, and Shopify.
 
 ## Key Features
 
@@ -24,12 +24,12 @@ Semi-automated multi-agent pipeline for ad creative generation — copy, image, 
 
 ### 1. Install
 
+Requires `uv` and Python 3.11+.
+
 ```bash
-git clone <repo-url> && cd crispy
+git clone https://github.com/xolarvill/crispy && cd crispy
 uv sync
 ```
-
-Requires Python 3.11+.
 
 ### 2. Add your API keys
 
@@ -81,9 +81,9 @@ Open **http://localhost:8000** in your browser.
 
 ## Core Workflow
 
-1. **Configure agents** — Go to API & Integration Configs, pick providers/models for each agent
-2. **Add useful background information** -- Use Shop Analysis to acquire basic information strategy-wise.
-3. **Create a run** — Click the + button, fill in product info, upload reference images/videos
+1. **Configure agents** — Go to API & Integration Configs, pick providers/models for each agent![API configures](image.png)
+2. **Add useful background information** -- Use Shop Analysis to acquire basic information strategy-wise.![Shop Analysis](iShot_2026-05-06_13.27.44.png)
+3. **Create a run** — Click the + button, fill in product info, upload reference images/videos![Screenshot](iShot_2026-05-06_13.25.47.png)
 4. **Review outputs** — Each stage pauses for human approval (or use semi_auto/full_auto mode)
 5. **Schedule winners** — Push approved creatives to Notion Calendar with publish dates
 6. **Import feedback** — Upload CSV with ad performance data (impressions, clicks, spend, conversions, revenue). Or use API portals to automatically feedback.
