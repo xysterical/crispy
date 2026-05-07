@@ -152,9 +152,9 @@ def test_dashboard_create_run_labels_pipeline_and_specs_clearly(client):
     assert "Run Template:" in html
     assert "Creative Template:" not in html
     assert "Creative Specs Preset" in html
-    assert "'copy_image_only': ['field-image-size']" in html
-    assert "'dtc_site_image': ['field-image-size', 'field-dtc-site-surface']" in html
-    assert "'marketplace_main_image': ['field-image-size']" in html
+    assert "'copy_image_only': ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback']" in html
+    assert "'dtc_site_image': ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback', 'field-dtc-site-surface']" in html
+    assert "'marketplace_main_image': ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback']" in html
     assert "DTC Site Image" in html
     assert "dtc_site_image_pack" in html
     assert 'id="dtc_site_surface"' in html
@@ -167,6 +167,18 @@ def test_dashboard_create_run_labels_pipeline_and_specs_clearly(client):
     assert 'if (typeof refreshPipelineFields === "function") refreshPipelineFields();' in html
     assert '<select id="channel"' in html
     assert "Meta Ads" in html
+    assert 'id="generate_audio"' in html
+    assert 'id="return_last_frame"' in html
+    assert 'id="seed"' in html
+    assert 'id="video_reference_urls"' in html
+    assert 'id="audio_reference_urls"' in html
+    assert 'id="video_first_frame_url"' in html
+    assert 'id="video_last_frame_url"' in html
+    assert "4-15 seconds for Seedance-compatible video runs" in html
+    assert "Up to 9 reference images" in html
+    assert "First/last frame mode cannot be combined with video or audio references" in html
+    assert "validateCreateRunForm" in html
+    assert "buildImageWithRoles" in html
 
     modes = {item["mode"]: item for item in client.get("/pipeline-modes").json()}
     assert modes["dtc_site_image"]["display_name"] == "DTC Site Image"

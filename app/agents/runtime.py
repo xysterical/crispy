@@ -140,6 +140,7 @@ class AgentsRuntime:
         reference_image_urls: list[str] | None = None,
         mode: str = "generate",
         input_fidelity: str | None = None,
+        official_fallback: bool | None = None,
     ):
         runtime = runtime_config or {}
         image_runtime = runtime.get("image") or {}
@@ -156,6 +157,7 @@ class AgentsRuntime:
                 reference_image_urls=reference_image_urls or [],
                 mode=mode,
                 input_fidelity=input_fidelity,
+                official_fallback=official_fallback,
             ),
             api_base_url=image_runtime.get("api_base_url") or runtime.get("api_base_url"),
             api_key=image_runtime.get("api_key") or runtime.get("api_key"),
@@ -408,6 +410,8 @@ class AgentsRuntime:
             "resolution": str(creative_specs.get("resolution") or "720p"),
             "duration": int(creative_specs.get("video_duration_seconds") or 8),
         }
+        if creative_specs.get("video_image_urls") and not creative_specs.get("image_urls"):
+            spec["image_urls"] = creative_specs.get("video_image_urls")
         for key in (
             "generate_audio",
             "return_last_frame",
@@ -845,6 +849,7 @@ class AgentsRuntime:
                         reference_image_urls=reference_inputs,
                         mode="edit" if reference_inputs else "generate",
                         input_fidelity="high" if reference_inputs else None,
+                        official_fallback=creative_specs.get("official_fallback"),
                     )
                     estimated_cost += image_result.estimated_cost
                     image_models_used.add(image_result.model_used or image_model)
@@ -971,6 +976,9 @@ class AgentsRuntime:
         estimated_cost = 0.0
         text_model_used = model
         reference_inputs = self._reference_image_inputs(intake)
+        spec_reference_inputs = [str(item).strip() for item in (creative_specs.get("reference_image_urls") or []) if str(item).strip()]
+        if spec_reference_inputs:
+            reference_inputs = [*reference_inputs, *spec_reference_inputs]
         if reference_inputs:
             vision_prompt = (
                 "Analyze uploaded product sample image(s). Return concise product facts for ad generation: "
@@ -1070,6 +1078,10 @@ class AgentsRuntime:
                         prompt=image_prompt,
                         size=image_size,
                         runtime_config=runtime_config,
+                        reference_image_urls=reference_inputs,
+                        mode="edit" if reference_inputs else "generate",
+                        input_fidelity="high" if reference_inputs else None,
+                        official_fallback=creative_specs.get("official_fallback"),
                     )
                     estimated_cost += image_result.estimated_cost
                     image_models_used.add(image_result.model_used or image_model)

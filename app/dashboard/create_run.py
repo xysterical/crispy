@@ -116,10 +116,51 @@ CREATE_RUN_HTML = """
                         <button onclick="manageCreativePresets()" title="Manage presets">&#9881;</button>
                       </div>
                       <div class="spec-row">
-                        <div class="spec-field" id="field-image-size"><label>Image Size</label><input id="image_size" value="1:1" placeholder="1:1" /></div>
-                        <div class="spec-field" id="field-video-size"><label>Video Size</label><input id="video_size" value="1:1" placeholder="1:1" /></div>
-                        <div class="spec-field"><label>Resolution</label><input id="resolution" value="720p" placeholder="720p" /></div>
-                        <div class="spec-field" id="field-video-duration"><label>Duration (s)</label><input id="video_duration_seconds" type="number" min="1" max="60" value="5" /></div>
+                        <div class="spec-field" id="field-image-size">
+                          <label>Image Size</label>
+                          <select id="image_size">
+                            <option value="1:1" selected>1:1</option>
+                            <option value="16:9">16:9</option>
+                            <option value="9:16">9:16</option>
+                            <option value="4:3">4:3</option>
+                            <option value="3:4">3:4</option>
+                            <option value="3:2">3:2</option>
+                            <option value="2:3">2:3</option>
+                            <option value="5:4">5:4</option>
+                            <option value="4:5">4:5</option>
+                            <option value="2:1">2:1</option>
+                            <option value="1:2">1:2</option>
+                            <option value="21:9">21:9</option>
+                            <option value="9:21">9:21</option>
+                          </select>
+                        </div>
+                        <div class="spec-field" id="field-video-size">
+                          <label>Video Size</label>
+                          <select id="video_size">
+                            <option value="16:9">16:9</option>
+                            <option value="9:16">9:16</option>
+                            <option value="1:1" selected>1:1</option>
+                            <option value="4:3">4:3</option>
+                            <option value="3:4">3:4</option>
+                            <option value="21:9">21:9</option>
+                            <option value="adaptive">adaptive</option>
+                          </select>
+                        </div>
+                        <div class="spec-field">
+                          <label>Resolution</label>
+                          <select id="resolution">
+                            <option value="480p">480p</option>
+                            <option value="720p" selected>720p</option>
+                            <option value="1080p">1080p</option>
+                            <option value="1600px">1600px</option>
+                            <option value="2000px">2000px</option>
+                          </select>
+                        </div>
+                        <div class="spec-field" id="field-video-duration">
+                          <label>Duration (s)</label>
+                          <input id="video_duration_seconds" type="number" min="4" max="15" value="5" />
+                          <div class="hint muted">4-15 seconds for Seedance-compatible video runs.</div>
+                        </div>
                         <div class="spec-field" id="field-dtc-site-surface" style="display:none;">
                           <label>DTC Site Surface</label>
                           <select id="dtc_site_surface">
@@ -134,6 +175,58 @@ CREATE_RUN_HTML = """
                             <option value="direct_response_ad">Direct Response Ad</option>
                             <option value="shop_account_content">Shop Account Content</option>
                           </select>
+                        </div>
+                      </div>
+                      <div class="spec-row">
+                        <div class="spec-field" id="field-image-reference-urls">
+                          <label>Image Reference URLs</label>
+                          <textarea id="image_reference_urls" rows="3" placeholder="https://example.com/ref-a.png&#10;data:image/png;base64,..."></textarea>
+                          <div class="hint muted">Up to 16 reference images for GPT-Image-2. One per line.</div>
+                        </div>
+                        <div class="spec-field" id="field-image-official-fallback">
+                          <label>Image Official Fallback</label>
+                          <label style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+                            <input id="image_official_fallback" type="checkbox" />
+                            <span>Allow apimart official fallback for GPT-Image-2.</span>
+                          </label>
+                        </div>
+                      </div>
+                      <div id="field-video-advanced" style="display:none;margin-top:8px;">
+                        <div class="spec-row">
+                          <div class="spec-field">
+                            <label>Video Audio Options</label>
+                            <label style="display:flex;align-items:center;gap:8px;margin-top:8px;"><input id="generate_audio" type="checkbox" /> <span>Generate audio</span></label>
+                            <label style="display:flex;align-items:center;gap:8px;margin-top:8px;"><input id="return_last_frame" type="checkbox" /> <span>Return last frame</span></label>
+                          </div>
+                          <div class="spec-field">
+                            <label>Seed</label>
+                            <input id="seed" type="number" step="1" placeholder="Optional integer seed" />
+                          </div>
+                        </div>
+                        <div class="spec-row">
+                          <div class="spec-field">
+                            <label>Video Image URLs</label>
+                            <textarea id="video_image_reference_urls" rows="3" placeholder="https://example.com/frame-a.png"></textarea>
+                            <div class="hint muted">Up to 9 reference images. Cannot be combined with first/last frame mode.</div>
+                          </div>
+                          <div class="spec-field">
+                            <label>First Frame URL</label>
+                            <input id="video_first_frame_url" type="url" placeholder="https://example.com/first-frame.png" />
+                            <label style="margin-top:8px;">Last Frame URL</label>
+                            <input id="video_last_frame_url" type="url" placeholder="https://example.com/last-frame.png" />
+                          </div>
+                        </div>
+                        <div class="spec-row">
+                          <div class="spec-field">
+                            <label>Reference Video URLs</label>
+                            <textarea id="video_reference_urls" rows="2" placeholder="https://example.com/reference.mp4"></textarea>
+                            <div class="hint muted">Up to 3 videos. Not allowed with first/last frame mode.</div>
+                          </div>
+                          <div class="spec-field">
+                            <label>Reference Audio URLs</label>
+                            <textarea id="audio_reference_urls" rows="2" placeholder="https://example.com/reference.wav"></textarea>
+                            <div class="hint muted">Up to 3 audio URLs. First/last frame mode cannot be combined with video or audio references.</div>
+                          </div>
                         </div>
                       </div>
                       <div id="marketplace-fields" style="display:none;margin-top:6px;">
@@ -293,12 +386,12 @@ CREATE_RUN_JS = """
 
   // -- Pipeline-Creative Coupling --
   const PIPELINE_FIELD_MAP = {
-    'full_multimodal': ['field-image-size', 'field-video-size', 'field-video-duration'],
-    'video_only': ['field-video-size', 'field-video-duration'],
-    'copy_image_only': ['field-image-size'],
-    'dtc_site_image': ['field-image-size', 'field-dtc-site-surface'],
-    'marketplace_main_image': ['field-image-size'],
-    'tiktok_shop_video': ['field-video-size', 'field-video-duration', 'field-tiktok-video-style'],
+    'full_multimodal': ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback', 'field-video-size', 'field-video-duration', 'field-video-advanced'],
+    'video_only': ['field-video-size', 'field-video-duration', 'field-video-advanced'],
+    'copy_image_only': ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback'],
+    'dtc_site_image': ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback', 'field-dtc-site-surface'],
+    'marketplace_main_image': ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback'],
+    'tiktok_shop_video': ['field-video-size', 'field-video-duration', 'field-tiktok-video-style', 'field-video-advanced'],
   };
 
   const DTC_SITE_IMAGE_SPEC = {
@@ -321,7 +414,7 @@ CREATE_RUN_JS = """
   function refreshPipelineFields() {
     const mode = document.getElementById('pipeline_mode').value;
     const visible = PIPELINE_FIELD_MAP[mode] || [];
-    ['field-image-size', 'field-video-size', 'field-video-duration', 'field-dtc-site-surface', 'field-tiktok-video-style'].forEach(id => {
+    ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback', 'field-video-size', 'field-video-duration', 'field-dtc-site-surface', 'field-tiktok-video-style', 'field-video-advanced'].forEach(id => {
       document.getElementById(id).style.display = visible.includes(id) ? 'block' : 'none';
     });
     if (mode === 'dtc_site_image') {
@@ -351,7 +444,21 @@ CREATE_RUN_JS = """
       document.getElementById('marketplace-fields').style.display = 'none';
     }
     // also call shared refreshModeHint to update the mode summary text
+    refreshModeSpecificConstraints();
     if (typeof refreshModeHint === 'function') refreshModeHint();
+  }
+
+  function refreshModeSpecificConstraints() {
+    const mode = document.getElementById('pipeline_mode').value;
+    const durationInput = document.getElementById('video_duration_seconds');
+    const isVideoMode = ['full_multimodal', 'video_only', 'tiktok_shop_video'].includes(mode);
+    durationInput.min = isVideoMode ? '4' : '1';
+    durationInput.max = isVideoMode ? '15' : '60';
+    if (isVideoMode) {
+      const current = parseInt(durationInput.value || '0', 10);
+      if (!Number.isFinite(current) || current < 4) durationInput.value = '4';
+      if (current > 15) durationInput.value = '15';
+    }
   }
 
   // -- Quick Fill Creative Specs --
@@ -480,6 +587,17 @@ CREATE_RUN_JS = """
       if (lastProductConfig.creative_specs.tiktok_video_style) {
         document.getElementById('tiktok_video_style').value = lastProductConfig.creative_specs.tiktok_video_style;
       }
+      document.getElementById('image_reference_urls').value = (lastProductConfig.creative_specs.reference_image_urls || []).join('\\n');
+      document.getElementById('image_official_fallback').checked = !!lastProductConfig.creative_specs.official_fallback;
+      document.getElementById('generate_audio').checked = !!lastProductConfig.creative_specs.generate_audio;
+      document.getElementById('return_last_frame').checked = !!lastProductConfig.creative_specs.return_last_frame;
+      document.getElementById('seed').value = lastProductConfig.creative_specs.seed || '';
+      document.getElementById('video_image_reference_urls').value = (lastProductConfig.creative_specs.video_image_urls || []).join('\\n');
+      const roles = lastProductConfig.creative_specs.image_with_roles || [];
+      document.getElementById('video_first_frame_url').value = (roles.find(r => r.role === 'first_frame') || {}).url || '';
+      document.getElementById('video_last_frame_url').value = (roles.find(r => r.role === 'last_frame') || {}).url || '';
+      document.getElementById('video_reference_urls').value = (lastProductConfig.creative_specs.video_urls || []).join('\\n');
+      document.getElementById('audio_reference_urls').value = (lastProductConfig.creative_specs.audio_urls || []).join('\\n');
     }
     refreshPipelineFields();
     document.getElementById('product-hint').style.display = 'none';
@@ -571,13 +689,15 @@ CREATE_RUN_JS = """
       'workspace_name', 'project_name', 'product_name', 'product_code', 'industry_code',
       'campaign_name', 'channel', 'objective', 'pipeline_mode', 'approval_mode',
       'variant_count', 'image_size', 'video_size', 'resolution', 'video_duration_seconds', 'tiktok_video_style',
+      'image_reference_urls', 'image_official_fallback', 'generate_audio', 'return_last_frame', 'seed',
+      'video_image_reference_urls', 'video_first_frame_url', 'video_last_frame_url', 'video_reference_urls', 'audio_reference_urls',
       'target_audience', 'price_range', 'key_value_props', 'primary_cta', 'campaign_goal',
       'category_tags', 'research_mode', 'manual_research_brief', 'url_references', 'business_context_extra',
     ];
     const config = {};
     fields.forEach(id => {
       const el = document.getElementById(id);
-      if (el) config[id] = el.value;
+      if (el) config[id] = el.type === 'checkbox' ? el.checked : el.value;
     });
     return config;
   }
@@ -612,12 +732,59 @@ CREATE_RUN_JS = """
   }
 
   // -- Form Submit --
+  function parseLineSeparatedUrls(value) {
+    return (value || '').split('\\n').map(v => v.trim()).filter(Boolean);
+  }
+
+  function buildImageWithRoles() {
+    const rows = [];
+    const first = document.getElementById('video_first_frame_url').value.trim();
+    const last = document.getElementById('video_last_frame_url').value.trim();
+    if (first) rows.push({ url: first, role: 'first_frame' });
+    if (last) rows.push({ url: last, role: 'last_frame' });
+    return rows;
+  }
+
+  function validateCreateRunForm() {
+    const mode = document.getElementById('pipeline_mode').value;
+    const isVideoMode = ['full_multimodal', 'video_only', 'tiktok_shop_video'].includes(mode);
+    const duration = parseInt(document.getElementById('video_duration_seconds').value || '0', 10);
+    const imageRefs = parseLineSeparatedUrls(document.getElementById('image_reference_urls').value);
+    const videoImageRefs = parseLineSeparatedUrls(document.getElementById('video_image_reference_urls').value);
+    const imageWithRoles = buildImageWithRoles();
+    const videoRefs = parseLineSeparatedUrls(document.getElementById('video_reference_urls').value);
+    const audioRefs = parseLineSeparatedUrls(document.getElementById('audio_reference_urls').value);
+
+    if (imageRefs.length > 16) return 'Image Reference URLs supports at most 16 entries.';
+    if (isVideoMode && (!Number.isFinite(duration) || duration < 4 || duration > 15)) {
+      return 'Duration must stay within 4-15 seconds for Seedance-compatible video runs.';
+    }
+    if (videoImageRefs.length > 9) return 'Video Image URLs supports at most 9 entries.';
+    if (videoRefs.length > 3) return 'Reference Video URLs supports at most 3 entries.';
+    if (audioRefs.length > 3) return 'Reference Audio URLs supports at most 3 entries.';
+    if (videoImageRefs.length && imageWithRoles.length) {
+      return 'Video Image URLs cannot be combined with first/last frame mode.';
+    }
+    if (imageWithRoles.length && (videoRefs.length || audioRefs.length)) {
+      return 'First/last frame mode cannot be combined with video or audio references.';
+    }
+    return '';
+  }
+
   function buildCreativeSpecsJSON() {
     const imageSize = document.getElementById('image_size').value.trim();
     const videoSize = document.getElementById('video_size').value.trim();
     const resolution = document.getElementById('resolution').value.trim();
     const duration = parseInt(document.getElementById('video_duration_seconds').value) || 5;
     const spec = { image_size: imageSize, video_size: videoSize, resolution, video_duration_seconds: duration };
+    const imageRefs = parseLineSeparatedUrls(document.getElementById('image_reference_urls').value);
+    const videoImageRefs = parseLineSeparatedUrls(document.getElementById('video_image_reference_urls').value);
+    const imageWithRoles = buildImageWithRoles();
+    const videoRefs = parseLineSeparatedUrls(document.getElementById('video_reference_urls').value);
+    const audioRefs = parseLineSeparatedUrls(document.getElementById('audio_reference_urls').value);
+    const seedRaw = document.getElementById('seed').value.trim();
+    if (imageRefs.length) spec.reference_image_urls = imageRefs;
+    if (document.getElementById('image_official_fallback').checked) spec.official_fallback = true;
     const isMarketplace = document.getElementById('pipeline_mode').value === 'marketplace_main_image'
       || document.getElementById('marketplace-fields').style.display === 'block';
     if (isMarketplace) {
@@ -632,6 +799,15 @@ CREATE_RUN_JS = """
       spec.tiktok_video_style = document.getElementById('tiktok_video_style').value || 'ugc_demo';
       spec.platform_targets = ['tiktok', 'tiktok_shop'];
     }
+    if (['full_multimodal', 'video_only', 'tiktok_shop_video'].includes(document.getElementById('pipeline_mode').value)) {
+      if (document.getElementById('generate_audio').checked) spec.generate_audio = true;
+      if (document.getElementById('return_last_frame').checked) spec.return_last_frame = true;
+      if (seedRaw) spec.seed = parseInt(seedRaw, 10);
+      if (videoImageRefs.length) spec.video_image_urls = videoImageRefs;
+      if (imageWithRoles.length) spec.image_with_roles = imageWithRoles;
+      if (videoRefs.length) spec.video_urls = videoRefs;
+      if (audioRefs.length) spec.audio_urls = audioRefs;
+    }
     if (document.getElementById('pipeline_mode').value === 'dtc_site_image') {
       spec.asset_goal = 'dtc_site_image';
       spec.site_surface = document.getElementById('dtc_site_surface').value || 'pdp_primary';
@@ -644,6 +820,13 @@ CREATE_RUN_JS = """
     const msg = document.getElementById('create-msg');
     msg.textContent = 'Creating run...';
     msg.className = 'status-msg';
+
+    const validationError = validateCreateRunForm();
+    if (validationError) {
+      msg.textContent = validationError;
+      msg.style.color = 'var(--danger)';
+      return;
+    }
 
     const creativeSpecs = buildCreativeSpecsJSON();
 
