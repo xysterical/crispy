@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 
+from app.agents.persona_contracts import render_persona_prompt
 from app.providers.llm import (
     GeneratedVideo,
     ImageGenRequest,
@@ -368,6 +369,26 @@ class AgentsRuntime:
             "handoff-ready decisions that another agent can audit. Never hide uncertainty."
         )
 
+    def _persona_contract_prompt(self, runtime_config: dict | None) -> str:
+        compiled_persona = (runtime_config or {}).get("compiled_persona")
+        return render_persona_prompt(compiled_persona)
+
+    def _compose_stage_prompt(
+        self,
+        *,
+        runtime_config: dict | None,
+        task_instruction: str,
+        agent_role: str | None = None,
+    ) -> str:
+        blocks: list[str] = []
+        persona_prompt = self._persona_contract_prompt(runtime_config)
+        if persona_prompt:
+            blocks.append(persona_prompt)
+        if agent_role:
+            blocks.append(self._business_strategy_system_prompt(agent_role))
+        blocks.append(task_instruction)
+        return "\n\n".join(block for block in blocks if block).strip()
+
     def _business_strategy_handoff(self, *, stage: str, decisions: list[str], risks: list[str], review_questions: list[str]) -> dict:
         return {
             "stage": stage,
@@ -457,13 +478,17 @@ class AgentsRuntime:
                 else:
                     media_summary = f"media_analysis_failed: {exc}"
 
-        prompt = (
-            "Normalize this product intake for ad creative generation in concise, execution-ready bullets. "
-            f"product_name={intake.product_name}; market={intake.market}; locale={intake.locale}; "
-            f"category_tags={intake.category_tags}; business_context={intake.business_context}; "
-            f"manual_research_brief={intake.manual_research_brief}; "
-            f"uploaded_assets={{'sku_count': {len(intake.sku_summary)}, 'image_count': {len(intake.image_references)}, "
-            f"'video_count': {len(intake.video_references)}}}; asset_media_summary={media_summary[:1200]}"
+        prompt = self._compose_stage_prompt(
+            runtime_config=runtime_config,
+            agent_role="GM Orchestrator",
+            task_instruction=(
+                "Normalize this product intake for ad creative generation in concise, execution-ready bullets. "
+                f"product_name={intake.product_name}; market={intake.market}; locale={intake.locale}; "
+                f"category_tags={intake.category_tags}; business_context={intake.business_context}; "
+                f"manual_research_brief={intake.manual_research_brief}; "
+                f"uploaded_assets={{'sku_count': {len(intake.sku_summary)}, 'image_count': {len(intake.image_references)}, "
+                f"'video_count': {len(intake.video_references)}}}; asset_media_summary={media_summary[:1200]}"
+            ),
         )
         summary, model_used, llm_cost = self._chat_complete(provider, model, prompt, runtime_config)
         estimated_cost += llm_cost
@@ -504,11 +529,14 @@ class AgentsRuntime:
         creative_specs = creative_specs or {}
         policy_excerpt = gm_policy.get("stage_guidance") or {}
         surface_strategy = self._dtc_site_surface_strategy(creative_specs)
-        prompt = (
-            f"{self._business_strategy_system_prompt('Planning Agent')} "
-            f"Build planning brief in {mode}. intake={intake.model_dump()} "
-            f"gm_lessons={gm_lessons[:3]}. gm_policy={policy_excerpt}. dtc_surface_strategy={surface_strategy}. Return concise strategy, constraints, hypotheses, risk boundaries, "
-            "and reviewer decision questions."
+        prompt = self._compose_stage_prompt(
+            runtime_config=runtime_config,
+            agent_role="Planning Agent",
+            task_instruction=(
+                f"Build planning brief in {mode}. intake={intake.model_dump()} "
+                f"gm_lessons={gm_lessons[:3]}. gm_policy={policy_excerpt}. dtc_surface_strategy={surface_strategy}. Return concise strategy, constraints, hypotheses, risk boundaries, "
+                "and reviewer decision questions."
+            ),
         )
         summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         value_props = intake.business_context.get("key_value_props", [])
@@ -592,11 +620,14 @@ class AgentsRuntime:
     ) -> StageOutput:
         gm_policy = gm_policy or {}
         policy_excerpt = gm_policy.get("stage_guidance") or {}
-        prompt = (
-            f"{self._business_strategy_system_prompt('Variant Strategy Agent')} "
-            f"Generate diverse variants from planning: {planning.model_dump()}. "
-            f"gm_policy={policy_excerpt}. "
-            "Each variant must test a distinct commercial hypothesis with non-overlapping hook logic."
+        prompt = self._compose_stage_prompt(
+            runtime_config=runtime_config,
+            agent_role="Variant Strategy Agent",
+            task_instruction=(
+                f"Generate diverse variants from planning: {planning.model_dump()}. "
+                f"gm_policy={policy_excerpt}. "
+                "Each variant must test a distinct commercial hypothesis with non-overlapping hook logic."
+            ),
         )
         summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         variants = []
@@ -890,16 +921,19 @@ class AgentsRuntime:
             except Exception as exc:
                 visual_summary = f"reference_analysis_failed: {exc}"
 
-        copy_prompt = (
-            f"{self._business_strategy_system_prompt('Copy Image Agent')} "
-            + (
-                f"Generate concise DTC website creative copy cues for {market} {locale}. "
-                if is_dtc_site
-                else f"Generate concise Meta ad copy variants for US {locale}. "
-            )
-            + f"dtc_surface_strategy={surface_strategy}. "
-            + f"business_context={business_context}, product_visual_summary={visual_summary}, variants={variant_set.model_dump()}. "
-            + "Keep copy specific, conversion-oriented, and claim-safe. Do not invent certifications or guarantees."
+        copy_prompt = self._compose_stage_prompt(
+            runtime_config=runtime_config,
+            agent_role="Copy Image Agent",
+            task_instruction=(
+                (
+                    f"Generate concise DTC website creative copy cues for {market} {locale}. "
+                    if is_dtc_site
+                    else f"Generate concise Meta ad copy variants for US {locale}. "
+                )
+                + f"dtc_surface_strategy={surface_strategy}. "
+                + f"business_context={business_context}, product_visual_summary={visual_summary}, variants={variant_set.model_dump()}. "
+                + "Keep copy specific, conversion-oriented, and claim-safe. Do not invent certifications or guarantees."
+            ),
         )
         try:
             copy_hint, text_model_used, copy_cost = self._chat_complete(provider, model, copy_prompt, runtime_config)
@@ -1071,12 +1105,15 @@ class AgentsRuntime:
         else:
             audience = "urban dog owners and weekend trail walkers"
         cta = str(business_context.get("primary_cta") or "Shop Now")
-        prompt = (
-            f"{self._business_strategy_system_prompt('Video Script Agent')} "
-            "Generate video hooks and scripts with the product context. "
-            f"product={product_name}, audience={audience}, value_props={value_props}, "
-            f"media_summary={media_summary}, variants={variant_set.model_dump()}. "
-            "Make every shot filmable, product-specific, and constrained by physical continuity."
+        prompt = self._compose_stage_prompt(
+            runtime_config=runtime_config,
+            agent_role="Video Script Agent",
+            task_instruction=(
+                "Generate video hooks and scripts with the product context. "
+                f"product={product_name}, audience={audience}, value_props={value_props}, "
+                f"media_summary={media_summary}, variants={variant_set.model_dump()}. "
+                "Make every shot filmable, product-specific, and constrained by physical continuity."
+            ),
         )
         _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         scripts = []
@@ -1187,10 +1224,13 @@ class AgentsRuntime:
     ) -> StageOutput:
         creative_specs = creative_specs or {}
         image_size = str(creative_specs.get("video_size") or creative_specs.get("image_size") or "9:16")
-        prompt = (
-            f"{self._business_strategy_system_prompt('Storyboard Agent')} "
-            f"Create storyboard frames from scripts: {script_pack.model_dump()}. "
-            "Treat storyboard as the visual QA plan before video generation: continuity, object logic, product visibility."
+        prompt = self._compose_stage_prompt(
+            runtime_config=runtime_config,
+            agent_role="Storyboard Agent",
+            task_instruction=(
+                f"Create storyboard frames from scripts: {script_pack.model_dump()}. "
+                "Treat storyboard as the visual QA plan before video generation: continuity, object logic, product visibility."
+            ),
         )
         estimated_cost = 0.0
         error_text = None
@@ -1658,16 +1698,19 @@ class AgentsRuntime:
                 }
             )
 
-        prompt = (
-            f"{self._business_strategy_system_prompt('Visual QA Agent')} "
-            "Review these structured visual QA records for ad-candidate risk. "
-            "Focus on product fidelity, physical plausibility, leash continuity if relevant, channel fit, and whether any candidate should be blocked before evaluation. "
-            "Return concise operator notes; do not choose the final winner.\n"
-            f"intake_facts={json.dumps(intake, ensure_ascii=False)[:3000]}\n"
-            f"business_context={json.dumps(business_context, ensure_ascii=False)[:1800]}\n"
-            f"qa_records={json.dumps(summaries, ensure_ascii=False)[:5000]}\n"
-            f"attached_media_manifest={json.dumps(model_media_manifest, ensure_ascii=False)[:3000]}\n"
-            f"gm_policy={json.dumps(gm_policy.get('stage_guidance') or {}, ensure_ascii=False)[:2000]}"
+        prompt = self._compose_stage_prompt(
+            runtime_config=runtime_config,
+            agent_role="Visual QA Agent",
+            task_instruction=(
+                "Review these structured visual QA records for ad-candidate risk. "
+                "Focus on product fidelity, physical plausibility, leash continuity if relevant, channel fit, and whether any candidate should be blocked before evaluation. "
+                "Return concise operator notes; do not choose the final winner.\n"
+                f"intake_facts={json.dumps(intake, ensure_ascii=False)[:3000]}\n"
+                f"business_context={json.dumps(business_context, ensure_ascii=False)[:1800]}\n"
+                f"qa_records={json.dumps(summaries, ensure_ascii=False)[:5000]}\n"
+                f"attached_media_manifest={json.dumps(model_media_manifest, ensure_ascii=False)[:3000]}\n"
+                f"gm_policy={json.dumps(gm_policy.get('stage_guidance') or {}, ensure_ascii=False)[:2000]}"
+            ),
         )
         model_summary = ""
         model_used = model
@@ -1729,9 +1772,13 @@ class AgentsRuntime:
         gm_policy = gm_policy or {}
         is_tiktok_shop = pipeline_mode == "tiktok_shop_video"
         tiktok_style = str(creative_specs.get("tiktok_video_style") or "ugc_demo")
-        prompt = (
-            f"Evaluate and select best variants: {variant_set.model_dump()}. "
-            f"gm_policy={gm_policy.get('stage_guidance') or {}}"
+        prompt = self._compose_stage_prompt(
+            runtime_config=runtime_config,
+            agent_role="Evaluation Agent",
+            task_instruction=(
+                f"Evaluate and select best variants: {variant_set.model_dump()}. "
+                f"gm_policy={gm_policy.get('stage_guidance') or {}}"
+            ),
         )
         _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         copy_by_variant = {item.variant_id: item for item in copy_bundle.copy_variants}

@@ -9,6 +9,7 @@ from pathlib import Path
 from sqlalchemy import desc, or_, select, update
 from sqlalchemy.orm import Session
 
+from app.agents.persona_contracts import build_compiled_persona
 from app.agents.registry import STAGE_CONTRACT_VERSION, stage_agent, stage_collaborators
 from app.agents.runtime import AgentsRuntime
 from app.data.models import (
@@ -1247,6 +1248,12 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
     try:
         lead_agent = stage_agent(task.stage_name)
         collaborators = list(stage_collaborators(task.stage_name))
+        persona_snapshots = _persona_snapshots(db, [lead_agent, *collaborators])
+        compiled_persona = build_compiled_persona(
+            persona_snapshots=persona_snapshots,
+            lead_agent=lead_agent,
+            collaborators=collaborators,
+        )
         resolved = resolve_agent_config(
             db,
             agent_name=lead_agent,
@@ -1262,7 +1269,8 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
             "collaborators": collaborators,
             "stage_contract_version": STAGE_CONTRACT_VERSION,
             "resolved_api": resolved,
-            "persona_snapshots": _persona_snapshots(db, [lead_agent, *collaborators]),
+            "persona_snapshots": persona_snapshots,
+            "compiled_persona": compiled_persona,
         }
         add_agent_trace_event(
             db,
@@ -1308,7 +1316,11 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
             )
             db.flush()
 
-        runtime_config = {**runtime_config, "trace_callback": trace_model_event}
+        runtime_config = {
+            **runtime_config,
+            "trace_callback": trace_model_event,
+            "compiled_persona": compiled_persona,
+        }
 
         output = None
         if task.stage_name == "intake":
@@ -2159,13 +2171,20 @@ def regenerate_variant_assets(
         bucket="variant",
         memory=resolve_execution_memory(db, run_id=run.id, stage_name=stage_name, variant_id=variant_id),
     )
+    persona_snapshots = _persona_snapshots(db, [lead_agent, *collaborators])
+    compiled_persona = build_compiled_persona(
+        persona_snapshots=persona_snapshots,
+        lead_agent=lead_agent,
+        collaborators=collaborators,
+    )
     task.metadata_json = {
         **(task.metadata_json or {}),
         "agent_name": lead_agent,
         "collaborators": collaborators,
         "stage_contract_version": STAGE_CONTRACT_VERSION,
         "resolved_api": resolved,
-        "persona_snapshots": _persona_snapshots(db, [lead_agent, *collaborators]),
+        "persona_snapshots": persona_snapshots,
+        "compiled_persona": compiled_persona,
         "regeneration_requests": [
             *((task.metadata_json or {}).get("regeneration_requests") or []),
             {
@@ -2177,6 +2196,7 @@ def regenerate_variant_assets(
             },
         ],
     }
+    runtime_config = {**runtime_config, "compiled_persona": compiled_persona}
     add_agent_trace_event(
         db,
         run_id=run.id,

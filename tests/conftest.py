@@ -17,9 +17,13 @@ from app.core.config import get_settings  # noqa: E402
 get_settings.cache_clear()
 
 from app.data import models  # noqa: E402,F401
+from app.data import session as data_session  # noqa: E402
 from app.data.base import Base  # noqa: E402
 from app.data.session import SessionLocal, engine  # noqa: E402
 from app.main import create_app  # noqa: E402
+
+data_session.BACKUP_DIR = Path("test_backups")
+data_session.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @pytest.fixture(autouse=True)
