@@ -22,8 +22,7 @@ For each variant, output:
 
 ## Quality Standards
 - Product must be inspectable and consistent with uploaded reference facts.
-- Dog leash ads must show one continuous, logical connection from handler to collar or harness when the leash is in use.
-- Clips, straps, handles, collars, and harness attachment points must be physically plausible.
+- Attachments, moving parts, and assembly points must remain physically plausible when the submitted product relies on them.
 - Images and videos must use the requested aspect ratio closely enough for the channel.
 - Text overlays should be absent unless explicitly requested and legible.
 - Processing or placeholder assets cannot pass as completed creative.

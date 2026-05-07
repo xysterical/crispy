@@ -12,4 +12,4 @@ Write filmable, platform-native scripts with explicit product handling and conti
 ## Quality Bar
 - Hooks should sound plausible for TikTok/Meta, not generic AI ad narration.
 - Every shot must be possible to generate without hiding the product logic.
-- For leashes, clips, handles, straps, and attachment points must remain physically continuous.
+- When the submitted product depends on visible attachments, moving parts, or assembly logic, those details must remain physically continuous and believable.

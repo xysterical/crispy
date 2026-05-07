@@ -148,17 +148,6 @@ def inspect_visual_asset(
             checks.append({"key": "video_header", "status": "warn", "message": "Video header could not be recognized as MP4/MOV."})
             flags.append("visual_qa_video_header_unverified")
             score -= 20
-        if payload.get("quality_constraints", {}).get("leash_connection_required"):
-            checks.append(
-                {
-                    "key": "leash_continuity",
-                    "status": "manual_review",
-                    "message": "Leash continuity requires frame-level model QA or human review.",
-                }
-            )
-            flags.append("visual_qa_needs_frame_review")
-            score -= 5
-
     if not checks:
         checks.append({"key": "basic_media", "status": "pass", "message": "Basic local media QA passed."})
     fail_count = sum(1 for check in checks if check["status"] == "fail")

@@ -50,8 +50,8 @@ CREATE_RUN_HTML = """
                     </div>
                     <div class="file-preview-grid" id="file-preview-grid"></div>
                     <div class="row" style="margin-top:10px;">
-                      <div><label>Product Code (required)</label><input id="product_code" value="DL-001" required onblur="checkProductHint()" /></div>
-                      <div><label>Product Name</label><input id="product_name" value="dog leash" /></div>
+                      <div><label>Product Code (required)</label><input id="product_code" value="PRD-001" required onblur="checkProductHint()" /></div>
+                      <div><label>Product Name</label><input id="product_name" value="sample product" /></div>
                     </div>
                     <div id="product-hint" class="hint" style="display:none;"></div>
                     <div class="row">
@@ -68,8 +68,8 @@ CREATE_RUN_HTML = """
                       </div>
                     </div>
                     <div class="row">
-                      <div><label>Campaign</label><input id="campaign_name" value="meta_dog_leash_1" /></div>
-                      <div><label>Industry Code (required)</label><input id="industry_code" value="pet_accessories" required /></div>
+                      <div><label>Campaign</label><input id="campaign_name" value="campaign_demo" /></div>
+                      <div><label>Industry Code (required)</label><input id="industry_code" value="general_merchandise" required /></div>
                     </div>
                     <div class="action-row" style="justify-content:flex-end;margin-top:8px;">
                       <button class="primary" onclick="nextStep(1)">Next &#8594;</button>

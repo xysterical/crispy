@@ -247,7 +247,7 @@ Act as the independent visual quality gate before final ranking. Inspect every g
 - Per-variant visual QA status: pass, warn, fail, or pending.
 - Asset-level issues for image, storyboard, and video outputs.
 - Product-fidelity notes tied to locked intake facts.
-- Physical plausibility checks, including leash continuity and attachment logic when relevant.
+- Physical plausibility checks, including attachment or assembly continuity when the submitted product requires it.
 - Recommended action: pass_to_evaluation, manual_review, wait_for_asset, or request_regeneration.
 
 ## Cannot Do

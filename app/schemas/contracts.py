@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -238,6 +239,8 @@ class VideoScriptItem(BaseModel):
 
 class VideoScriptPack(BaseModel):
     scripts: list[VideoScriptItem] = Field(default_factory=list)
+    product_context: dict[str, Any] = Field(default_factory=dict)
+    generation_spec: dict[str, Any] = Field(default_factory=dict)
 
 
 class StoryboardFrame(BaseModel):

@@ -171,11 +171,15 @@ class AgentsRuntime:
         size: str,
         resolution: str,
         duration_seconds: int,
+        video_payload: dict | None,
         runtime_config: dict | None,
     ):
         runtime = runtime_config or {}
         video_runtime = dict(runtime.get("video") or {})
         video_extra = dict(video_runtime.get("extra") or runtime.get("extra") or {})
+        if video_payload:
+            existing_payload = dict(video_extra.get("video_payload") or {})
+            video_extra["video_payload"] = {**existing_payload, **video_payload}
         video_extra["submit_only"] = True
         video_runtime["extra"] = video_extra
         submit_runtime = {**runtime, "video": video_runtime}
@@ -186,6 +190,7 @@ class AgentsRuntime:
             size=size,
             resolution=resolution,
             duration_seconds=duration_seconds,
+            video_payload=video_payload,
             runtime_config=submit_runtime,
         )
 
@@ -198,6 +203,7 @@ class AgentsRuntime:
         size: str,
         resolution: str,
         duration_seconds: int,
+        video_payload: dict | None,
         runtime_config: dict | None,
     ):
         runtime = runtime_config or {}
@@ -205,6 +211,10 @@ class AgentsRuntime:
         provider_name = video_runtime.get("provider_name") or fallback_provider
         model_name = video_runtime.get("model_name") or fallback_model
         llm = self.providers.get(provider_name)
+        extra = dict(video_runtime.get("extra") or runtime.get("extra") or {})
+        if video_payload:
+            existing_payload = dict(extra.get("video_payload") or {})
+            extra["video_payload"] = {**existing_payload, **video_payload}
         result = llm.generate_video(
             VideoGenRequest(
                 model=model_name,
@@ -216,7 +226,7 @@ class AgentsRuntime:
             ),
             api_base_url=video_runtime.get("api_base_url") or runtime.get("api_base_url"),
             api_key=video_runtime.get("api_key") or runtime.get("api_key"),
-            extra=video_runtime.get("extra") or runtime.get("extra"),
+            extra=extra,
         )
         return result, provider_name, model_name
 
@@ -352,13 +362,68 @@ class AgentsRuntime:
         path = Path(uri)
         return path.exists() and path.is_file() and path.stat().st_size > min_bytes
 
-    def _leash_physical_constraints(self) -> str:
+    def _normalize_text_list(self, value: object) -> list[str]:
+        if isinstance(value, str):
+            trimmed = value.strip()
+            return [trimmed] if trimmed else []
+        if isinstance(value, (list, tuple)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return []
+
+    def _video_product_context(
+        self,
+        *,
+        intake: ProductIntake | None,
+        business_context: dict | None,
+        creative_specs: dict | None,
+    ) -> dict:
+        business_context = business_context or {}
+        creative_specs = creative_specs or {}
+        product_name = (intake.product_name if intake and intake.product_name else "") or str(
+            business_context.get("product_name") or "the product"
+        )
+        audience_list = self._normalize_text_list(
+            business_context.get("target_audience") or business_context.get("audience") or []
+        )
+        return {
+            "product_name": product_name,
+            "audience": ", ".join(audience_list[:3]) if audience_list else "target buyers",
+            "value_props": self._normalize_text_list(
+                business_context.get("key_value_props") or business_context.get("value_props") or []
+            ),
+            "primary_cta": str(business_context.get("primary_cta") or "Shop Now"),
+            "media_summary": intake.asset_media_summary if intake and intake.asset_media_summary else "",
+            "platform": str(creative_specs.get("platform") or ""),
+            "creative_goal": str(creative_specs.get("creative_goal") or ""),
+        }
+
+    def _video_generation_spec(self, creative_specs: dict | None) -> dict:
+        creative_specs = creative_specs or {}
+        spec: dict[str, object] = {
+            "size": str(creative_specs.get("video_size") or creative_specs.get("image_size") or "9:16"),
+            "resolution": str(creative_specs.get("resolution") or "720p"),
+            "duration": int(creative_specs.get("video_duration_seconds") or 8),
+        }
+        for key in (
+            "generate_audio",
+            "return_last_frame",
+            "seed",
+            "tools",
+            "image_urls",
+            "image_with_roles",
+            "video_urls",
+            "audio_urls",
+        ):
+            if key in creative_specs and creative_specs.get(key) not in (None, "", []):
+                spec[key] = creative_specs.get(key)
+        return spec
+
+    def _video_prompt_quality_block(self, product_context: dict | None) -> str:
+        product_name = str((product_context or {}).get("product_name") or "the product")
         return (
-            "Hard visual constraints for dog leash realism: the leash must be one continuous visible strap or rope "
-            "from the handler's hand to the dog collar or harness clip; the clip must be fully attached to a collar "
-            "or harness D-ring; do not show a floating clip, missing strap segment, disconnected leash, broken leash, "
-            "impossible attachment point, extra duplicate leash, malformed dog anatomy, or cropped detail that hides "
-            "the connection logic."
+            f"Keep {product_name} visually consistent with the submitted product context. "
+            "Preserve recognizable form, materials, proportions, attachment logic, and key functional details. "
+            "Do not invent extra components, hide critical product details, or produce physically implausible interactions."
         )
 
     def _business_strategy_system_prompt(self, agent_role: str) -> str:
@@ -1086,25 +1151,17 @@ class AgentsRuntime:
         creative_specs = creative_specs or {}
         is_tiktok_shop = pipeline_mode == "tiktok_shop_video"
         tiktok_style = str(creative_specs.get("tiktok_video_style") or "ugc_demo")
-        media_summary = ""
-        if intake and intake.asset_media_summary:
-            media_summary = intake.asset_media_summary
-        product_name = intake.product_name if intake else str(business_context.get("product_name") or "the product")
-        value_props_raw = business_context.get("key_value_props") or business_context.get("value_props") or []
-        if isinstance(value_props_raw, str):
-            value_props = [value_props_raw]
-        else:
-            value_props = [str(item) for item in value_props_raw if str(item).strip()]
-        if not value_props:
-            value_props = ["reflective visibility", "comfortable control", "outdoor-ready durability"]
-        audience_raw = business_context.get("target_audience") or business_context.get("audience") or []
-        if isinstance(audience_raw, str):
-            audience = audience_raw
-        elif audience_raw:
-            audience = ", ".join(str(item) for item in audience_raw[:3])
-        else:
-            audience = "urban dog owners and weekend trail walkers"
-        cta = str(business_context.get("primary_cta") or "Shop Now")
+        product_context = self._video_product_context(
+            intake=intake,
+            business_context=business_context,
+            creative_specs=creative_specs,
+        )
+        media_summary = str(product_context.get("media_summary") or "")
+        product_name = str(product_context.get("product_name") or "the product")
+        value_props = [str(item) for item in (product_context.get("value_props") or []) if str(item).strip()]
+        audience = str(product_context.get("audience") or "target buyers")
+        cta = str(product_context.get("primary_cta") or "Shop Now")
+        generation_spec = self._video_generation_spec(creative_specs)
         prompt = self._compose_stage_prompt(
             runtime_config=runtime_config,
             agent_role="Video Script Agent",
@@ -1112,13 +1169,18 @@ class AgentsRuntime:
                 "Generate video hooks and scripts with the product context. "
                 f"product={product_name}, audience={audience}, value_props={value_props}, "
                 f"media_summary={media_summary}, variants={variant_set.model_dump()}. "
-                "Make every shot filmable, product-specific, and constrained by physical continuity."
+                f"generation_spec={generation_spec}. "
+                "Make every shot filmable, product-specific, and constrained by realistic product handling."
             ),
         )
         _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         scripts = []
         for item in variant_set.variants:
-            primary_value = value_props[(len(scripts)) % len(value_props)]
+            primary_value = (
+                value_props[(len(scripts)) % len(value_props)]
+                if value_props
+                else str(item.angle or item.message or "core product benefit")
+            )
             hook_base = item.hook or item.angle or primary_value
             tiktok_payload = None
             if is_tiktok_shop:
@@ -1175,26 +1237,31 @@ class AgentsRuntime:
                         f"CTA intensity: {cta_intensity}.",
                     ],
                 }
+            hook_line = item.hook or f"{item.variant_id}: {product_name} for {primary_value}"
             scripts.append(
                 VideoScriptItem(
                     variant_id=item.variant_id,
-                    hook=f"{item.variant_id}: Safer-feeling walks start with {primary_value}.",
+                    hook=hook_line,
                     script=(
-                        f"Open on a real dog walk with {product_name} clipped to a collar or harness. "
-                        f"Show the leash handle, quick clip, and reflective detail in close-up. "
-                        f"Cut to {audience} using it on a sidewalk or trail while keeping the dog close without exaggerated claims. "
+                        f"Open on {product_name} in a realistic use context that matches the submitted product references. "
+                        f"Show the key proof point in close-up: {primary_value}. "
+                        f"Demonstrate how {product_name} fits the routine of {audience} without inventing unsupported claims. "
                         f"End with {cta}. Variant hook: {hook_base}. Variant message: {item.message}"
                     ),
                     shot_list=[
-                        "vertical hook shot of a medium or large dog starting a walk with the leash visible",
-                        "close-up of padded handle, nylon strap, and quick clip in the owner's hand",
-                        "outdoor walking demo showing calm control and reflective detail without safety guarantees",
+                        f"hook reveal of {product_name} in a realistic use context tied to the submitted brief",
+                        f"close-up of {product_name} showing {primary_value}",
+                        f"practical demo of {product_name} for {audience}",
                         f"product-forward CTA end frame: {cta}",
                     ],
                     tiktok=tiktok_payload,
                 )
             )
-        pack = VideoScriptPack(scripts=scripts)
+        pack = VideoScriptPack(
+            scripts=scripts,
+            product_context=product_context,
+            generation_spec=generation_spec,
+        )
         payload = {
             **pack.model_dump(),
             "strategy_handoff": self._business_strategy_handoff(
@@ -1223,7 +1290,10 @@ class AgentsRuntime:
         runtime_config: dict | None = None,
     ) -> StageOutput:
         creative_specs = creative_specs or {}
-        image_size = str(creative_specs.get("video_size") or creative_specs.get("image_size") or "9:16")
+        generation_spec = {**(script_pack.generation_spec or {}), **self._video_generation_spec(creative_specs)}
+        image_size = str(generation_spec.get("size") or creative_specs.get("video_size") or creative_specs.get("image_size") or "9:16")
+        product_context = script_pack.product_context or {}
+        product_name = str(product_context.get("product_name") or "the product")
         prompt = self._compose_stage_prompt(
             runtime_config=runtime_config,
             agent_role="Storyboard Agent",
@@ -1252,12 +1322,12 @@ class AgentsRuntime:
                     else ""
                 )
                 frame_prompt = (
-                    f"Create a realistic vertical storyboard frame for a TikTok dog leash ad. "
+                    f"Create a realistic storyboard frame for {product_name}. "
                     f"Variant {script.variant_id}. Shot: {shot}. Hook: {script.hook}. "
                     f"{style_line}"
                     "Use a clean previsualization style suitable for human review before video generation. "
                     "No text overlay. Product-forward composition. "
-                    f"{self._leash_physical_constraints()}"
+                    f"{self._video_prompt_quality_block(product_context)}"
                 )
                 source = "placeholder"
                 image_provider = ""
@@ -1343,9 +1413,11 @@ class AgentsRuntime:
         on_video_asset=None,
     ) -> StageOutput:
         creative_specs = creative_specs or {}
-        video_size = str(creative_specs.get("video_size") or "9:16")
-        resolution = str(creative_specs.get("resolution") or "720p")
-        duration_seconds = int(creative_specs.get("video_duration_seconds") or 8)
+        generation_spec = {**(script_pack.generation_spec or {}), **self._video_generation_spec(creative_specs)}
+        product_context = script_pack.product_context or {}
+        video_size = str(generation_spec.get("size") or creative_specs.get("video_size") or "9:16")
+        resolution = str(generation_spec.get("resolution") or creative_specs.get("resolution") or "720p")
+        duration_seconds = int(generation_spec.get("duration") or creative_specs.get("video_duration_seconds") or 8)
         prompt = f"Generate videos from script pack: {script_pack.model_dump()}"
         _, text_model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         videos: list[VideoAsset] = []
@@ -1367,8 +1439,7 @@ class AgentsRuntime:
                 f"{tiktok_line}"
                 f"Output should be brand-safe and product-forward, aspect ratio {video_size}, "
                 f"target resolution {resolution}, duration {duration_seconds} seconds. "
-                f"{self._leash_physical_constraints()} Reject any frame where the leash is visually broken, "
-                "partially missing, or attached without a logical continuous strap."
+                f"{self._video_prompt_quality_block(product_context)}"
             )
             source = "placeholder"
             error_text = None
@@ -1397,6 +1468,7 @@ class AgentsRuntime:
                         size=video_size,
                         resolution=resolution,
                         duration_seconds=duration_seconds,
+                        video_payload=generation_spec,
                         runtime_config=runtime_config,
                     )
                     estimated_cost += video_result.estimated_cost
@@ -1436,10 +1508,10 @@ class AgentsRuntime:
                 "raw_response": raw_response,
                 "provider_errors": provider_errors,
                 "quality_constraints": {
-                    "leash_connection_required": True,
-                    "reject_missing_or_floating_clip": True,
-                    "reject_disconnected_or_cropped_leash": True,
+                    "preserve_submitted_product_identity": True,
+                    "require_physical_plausibility": True,
                 },
+                "generation_spec": generation_spec,
             }
             video_payload["visual_qa"] = self._local_media_qa(
                 asset_type="video",
@@ -1703,7 +1775,7 @@ class AgentsRuntime:
             agent_role="Visual QA Agent",
             task_instruction=(
                 "Review these structured visual QA records for ad-candidate risk. "
-                "Focus on product fidelity, physical plausibility, leash continuity if relevant, channel fit, and whether any candidate should be blocked before evaluation. "
+                "Focus on product fidelity, physical plausibility, channel fit, and whether any candidate should be blocked before evaluation. "
                 "Return concise operator notes; do not choose the final winner.\n"
                 f"intake_facts={json.dumps(intake, ensure_ascii=False)[:3000]}\n"
                 f"business_context={json.dumps(business_context, ensure_ascii=False)[:1800]}\n"
