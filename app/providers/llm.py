@@ -14,6 +14,25 @@ _PLACEHOLDER_PNG_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9omjQAAAAASUVORK5CYII="
 )
 
+_APIMART_IMAGE_SIZES = {
+    "1:1",
+    "16:9",
+    "9:16",
+    "4:3",
+    "3:4",
+    "3:2",
+    "2:3",
+    "5:4",
+    "4:5",
+    "2:1",
+    "1:2",
+    "21:9",
+    "9:21",
+}
+_SEEDANCE_SIZES = {"16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"}
+_SEEDANCE_RESOLUTIONS = {"480p", "720p", "1080p"}
+_SEEDANCE_IMAGE_ROLE_VALUES = {"first_frame", "last_frame"}
+
 
 def _normalize_task_result(result: dict[str, Any]) -> list[dict[str, Any]]:
     image_url = result.get("image_url")
@@ -91,6 +110,50 @@ def _first_url(value: Any) -> str | None:
     return None
 
 
+def _is_apimart_context(provider_name: str, api_base_url: str | None) -> bool:
+    return provider_name == "apimart" or "api.apimart.ai" in (api_base_url or "")
+
+
+def _validate_apimart_gpt_image_request(request: "ImageGenRequest") -> None:
+    if request.n != 1:
+        raise ValueError("gpt-image-2 n must be 1")
+    if request.size not in _APIMART_IMAGE_SIZES:
+        supported = ", ".join(sorted(_APIMART_IMAGE_SIZES))
+        raise ValueError(f"gpt-image-2 size must be one of: {supported}")
+    image_urls = request.image_urls or request.reference_image_urls
+    if len(image_urls) > 16:
+        raise ValueError("gpt-image-2 image_urls supports at most 16 references")
+
+
+def _validate_apimart_seedance_request(request: "VideoGenRequest", *, model_name: str) -> None:
+    if request.duration_seconds < 4 or request.duration_seconds > 15:
+        raise ValueError("doubao-seedance duration must be between 4 and 15 seconds")
+    if request.size not in _SEEDANCE_SIZES:
+        supported = ", ".join(sorted(_SEEDANCE_SIZES))
+        raise ValueError(f"doubao-seedance size must be one of: {supported}")
+    if request.resolution not in _SEEDANCE_RESOLUTIONS:
+        supported = ", ".join(sorted(_SEEDANCE_RESOLUTIONS))
+        raise ValueError(f"doubao-seedance resolution must be one of: {supported}")
+    if request.image_urls and request.image_with_roles:
+        raise ValueError("doubao-seedance image_urls and image_with_roles cannot both be set")
+    if request.image_with_roles and (request.video_urls or request.audio_urls):
+        raise ValueError("doubao-seedance video_urls and audio_urls are incompatible with image_with_roles")
+    if len(request.image_urls) > 9:
+        raise ValueError("doubao-seedance image_urls supports at most 9 references")
+    if len(request.video_urls) > 3:
+        raise ValueError("doubao-seedance video_urls supports at most 3 references")
+    if len(request.audio_urls) > 3:
+        raise ValueError("doubao-seedance audio_urls supports at most 3 references")
+    if request.image_with_roles:
+        for item in request.image_with_roles:
+            role = str(item.get("role") or "").strip()
+            if role not in _SEEDANCE_IMAGE_ROLE_VALUES:
+                supported = ", ".join(sorted(_SEEDANCE_IMAGE_ROLE_VALUES))
+                raise ValueError(f"doubao-seedance image_with_roles.role must be one of: {supported}")
+    if request.resolution == "1080p" and not model_name.endswith("-face"):
+        raise ValueError("doubao-seedance 1080p is only supported for *-face models")
+
+
 @dataclass(slots=True)
 class LlmResponse:
     text: str
@@ -137,9 +200,11 @@ class ImageGenRequest:
     prompt: str
     n: int = 1
     size: str = "1:1"
+    image_urls: list[str] = field(default_factory=list)
     reference_image_urls: list[str] = field(default_factory=list)
     mode: str = "generate"
     input_fidelity: str | None = None
+    official_fallback: bool | None = None
 
 
 @dataclass(slots=True)
@@ -162,11 +227,19 @@ class GeneratedVideo:
 @dataclass(slots=True)
 class VideoGenRequest:
     model: str
-    prompt: str
+    prompt: str = ""
     duration_seconds: int = 8
     size: str = "9:16"
     resolution: str = "720p"
     n: int = 1
+    seed: int | None = None
+    generate_audio: bool | None = None
+    return_last_frame: bool | None = None
+    tools: list[dict[str, Any]] = field(default_factory=list)
+    image_urls: list[str] = field(default_factory=list)
+    image_with_roles: list[dict[str, Any]] = field(default_factory=list)
+    video_urls: list[str] = field(default_factory=list)
+    audio_urls: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -694,6 +767,8 @@ class OpenAICompatibleProvider(LlmProvider):
     ) -> ImageGenResult:
         if not api_base_url or not api_key:
             return self._stub.generate_image(request, api_base_url=api_base_url, api_key=api_key, extra=extra)
+        if _is_apimart_context(self.provider_name, api_base_url) and request.model == "gpt-image-2":
+            _validate_apimart_gpt_image_request(request)
 
         payload: dict[str, Any] = {
             "model": request.model,
@@ -701,15 +776,17 @@ class OpenAICompatibleProvider(LlmProvider):
             "n": request.n,
             "size": request.size,
         }
-        if request.reference_image_urls:
-            payload["image_urls"] = request.reference_image_urls
-            payload["reference_image_urls"] = request.reference_image_urls
+        image_urls = request.image_urls or request.reference_image_urls
+        if image_urls:
+            payload["image_urls"] = image_urls
         if request.mode and request.mode != "generate":
             payload["mode"] = request.mode
         if request.input_fidelity:
             payload["input_fidelity"] = request.input_fidelity
+        if request.official_fallback is not None:
+            payload["official_fallback"] = request.official_fallback
         if isinstance(extra, dict) and isinstance(extra.get("image_payload"), dict):
-            payload = {**payload, **extra["image_payload"]}
+            payload = {**extra["image_payload"], **payload}
 
         data = self._post_json(
             self._endpoint_candidates(api_base_url, "/images/generations"),
@@ -765,17 +842,35 @@ class OpenAICompatibleProvider(LlmProvider):
         if model_name == "douban-seedance-2-0":
             # Backward-compatible alias used in older configs.
             model_name = "doubao-seedance-2.0"
+        if _is_apimart_context(self.provider_name, api_base_url) and model_name.startswith("doubao-seedance-2.0"):
+            _validate_apimart_seedance_request(request, model_name=model_name)
 
         payload: dict[str, Any] = {
             "model": model_name,
-            "prompt": request.prompt,
-            "n": request.n,
             "size": request.size,
             "resolution": request.resolution,
             "duration": request.duration_seconds,
         }
+        if request.prompt:
+            payload["prompt"] = request.prompt
+        if request.seed is not None:
+            payload["seed"] = request.seed
+        if request.generate_audio is not None:
+            payload["generate_audio"] = request.generate_audio
+        if request.return_last_frame is not None:
+            payload["return_last_frame"] = request.return_last_frame
+        if request.tools:
+            payload["tools"] = request.tools
+        if request.image_urls:
+            payload["image_urls"] = request.image_urls
+        if request.image_with_roles:
+            payload["image_with_roles"] = request.image_with_roles
+        if request.video_urls:
+            payload["video_urls"] = request.video_urls
+        if request.audio_urls:
+            payload["audio_urls"] = request.audio_urls
         if isinstance(extra, dict) and isinstance(extra.get("video_payload"), dict):
-            payload = {**payload, **extra["video_payload"]}
+            payload = {**extra["video_payload"], **payload}
 
         data = self._post_json(
             self._endpoint_candidates(api_base_url, "/videos/generations"),

@@ -152,6 +152,7 @@ class AgentsRuntime:
                 prompt=prompt,
                 n=1,
                 size=size,
+                image_urls=reference_image_urls or [],
                 reference_image_urls=reference_image_urls or [],
                 mode=mode,
                 input_fidelity=input_fidelity,
@@ -177,9 +178,6 @@ class AgentsRuntime:
         runtime = runtime_config or {}
         video_runtime = dict(runtime.get("video") or {})
         video_extra = dict(video_runtime.get("extra") or runtime.get("extra") or {})
-        if video_payload:
-            existing_payload = dict(video_extra.get("video_payload") or {})
-            video_extra["video_payload"] = {**existing_payload, **video_payload}
         video_extra["submit_only"] = True
         video_runtime["extra"] = video_extra
         submit_runtime = {**runtime, "video": video_runtime}
@@ -212,9 +210,7 @@ class AgentsRuntime:
         model_name = video_runtime.get("model_name") or fallback_model
         llm = self.providers.get(provider_name)
         extra = dict(video_runtime.get("extra") or runtime.get("extra") or {})
-        if video_payload:
-            existing_payload = dict(extra.get("video_payload") or {})
-            extra["video_payload"] = {**existing_payload, **video_payload}
+        video_payload = video_payload or {}
         result = llm.generate_video(
             VideoGenRequest(
                 model=model_name,
@@ -223,6 +219,14 @@ class AgentsRuntime:
                 resolution=resolution,
                 n=1,
                 duration_seconds=duration_seconds,
+                seed=video_payload.get("seed"),
+                generate_audio=video_payload.get("generate_audio"),
+                return_last_frame=video_payload.get("return_last_frame"),
+                tools=list(video_payload.get("tools") or []),
+                image_urls=list(video_payload.get("image_urls") or []),
+                image_with_roles=list(video_payload.get("image_with_roles") or []),
+                video_urls=list(video_payload.get("video_urls") or []),
+                audio_urls=list(video_payload.get("audio_urls") or []),
             ),
             api_base_url=video_runtime.get("api_base_url") or runtime.get("api_base_url"),
             api_key=video_runtime.get("api_key") or runtime.get("api_key"),

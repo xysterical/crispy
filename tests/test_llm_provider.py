@@ -288,6 +288,92 @@ def test_generate_image_async_task_polling(monkeypatch):
     assert result.images[0].url == "https://example.com/image.png"
 
 
+def test_generate_image_apimart_payload_uses_documented_fields(monkeypatch):
+    endpoint = "https://api.apimart.ai/v1/images/generations"
+    client = _FakeClient(
+        post_map={
+            endpoint: _FakeResponse(
+                200,
+                {"code": 200, "data": [{"status": "submitted", "task_id": "task_image_payload"}]},
+            )
+        },
+        get_map={
+            "https://api.apimart.ai/v1/tasks/task_image_payload?language=en": _FakeResponse(
+                200,
+                {
+                    "code": 200,
+                    "data": {
+                        "status": "completed",
+                        "result": {
+                            "images": [
+                                {"url": ["https://example.com/image_from_task.png"]},
+                            ]
+                        },
+                    },
+                },
+            )
+        },
+    )
+    monkeypatch.setattr("app.providers.llm.httpx.Client", lambda timeout=90.0: client)
+    monkeypatch.setattr("app.providers.llm.time.sleep", lambda _: None)
+    provider = OpenAICompatibleProvider("apimart")
+    result = provider.generate_image(
+        ImageGenRequest(
+            model="gpt-image-2",
+            prompt="travel pouch hero shot",
+            size="16:9",
+            image_urls=[
+                "https://example.com/reference-a.png",
+                "data:image/png;base64,AAAA",
+            ],
+            official_fallback=True,
+        ),
+        api_base_url=endpoint,
+        api_key="dummy",
+    )
+    assert result.images[0].url == "https://example.com/image_from_task.png"
+    sent = client.posted_json_by_url[endpoint]
+    assert sent["image_urls"] == [
+        "https://example.com/reference-a.png",
+        "data:image/png;base64,AAAA",
+    ]
+    assert sent["official_fallback"] is True
+    assert "reference_image_urls" not in sent
+
+
+def test_generate_image_rejects_invalid_apimart_request_locally(monkeypatch):
+    endpoint = "https://api.apimart.ai/v1/images/generations"
+    client = _FakeClient(post_map={})
+    monkeypatch.setattr("app.providers.llm.httpx.Client", lambda timeout=90.0: client)
+    provider = OpenAICompatibleProvider("apimart")
+
+    for request, expected_error in [
+        (
+            ImageGenRequest(model="gpt-image-2", prompt="x", n=2, size="1:1"),
+            "n must be 1",
+        ),
+        (
+            ImageGenRequest(model="gpt-image-2", prompt="x", size="1024x1024"),
+            "size must be one of",
+        ),
+        (
+            ImageGenRequest(
+                model="gpt-image-2",
+                prompt="x",
+                image_urls=[f"https://example.com/{idx}.png" for idx in range(17)],
+            ),
+            "image_urls supports at most 16",
+        ),
+    ]:
+        try:
+            provider.generate_image(request, api_base_url=endpoint, api_key="dummy")
+        except ValueError as exc:
+            assert expected_error in str(exc)
+        else:
+            raise AssertionError("expected local request validation error")
+    assert client.posted_urls == []
+
+
 def test_generate_video_uses_configured_endpoint(monkeypatch):
     endpoint = "https://api.video-provider.ai/v1/videos/generations"
     client = _FakeClient(
@@ -315,6 +401,95 @@ def test_generate_video_uses_configured_endpoint(monkeypatch):
     assert sent["duration"] == 8
     assert sent["resolution"] == "720p"
     assert "duration_seconds" not in sent
+
+
+def test_generate_video_apimart_payload_uses_typed_structured_fields(monkeypatch):
+    endpoint = "https://api.apimart.ai/v1/videos/generations"
+    client = _FakeClient(
+        post_map={
+            endpoint: _FakeResponse(
+                200,
+                {
+                    "model": "doubao-seedance-2.0",
+                    "data": [{"video_url": "https://example.com/typed-structured-video.mp4"}],
+                },
+            )
+        }
+    )
+    monkeypatch.setattr("app.providers.llm.httpx.Client", lambda timeout=90.0: client)
+    provider = OpenAICompatibleProvider("apimart")
+    result = provider.generate_video(
+        VideoGenRequest(
+            model="doubao-seedance-2.0",
+            prompt="show the travel bag opening and closing",
+            size="16:9",
+            resolution="720p",
+            duration_seconds=5,
+            generate_audio=True,
+            return_last_frame=True,
+            seed=42,
+            tools=[{"type": "web_search"}],
+            image_urls=["https://example.com/frame-1.png"],
+            audio_urls=["https://example.com/music.wav"],
+        ),
+        api_base_url=endpoint,
+        api_key="dummy",
+    )
+    assert result.videos[0].url == "https://example.com/typed-structured-video.mp4"
+    sent = client.posted_json_by_url[endpoint]
+    assert sent["generate_audio"] is True
+    assert sent["return_last_frame"] is True
+    assert sent["seed"] == 42
+    assert sent["tools"] == [{"type": "web_search"}]
+    assert sent["image_urls"] == ["https://example.com/frame-1.png"]
+    assert sent["audio_urls"] == ["https://example.com/music.wav"]
+
+
+def test_generate_video_rejects_invalid_seedance_request_locally(monkeypatch):
+    endpoint = "https://api.apimart.ai/v1/videos/generations"
+    client = _FakeClient(post_map={})
+    monkeypatch.setattr("app.providers.llm.httpx.Client", lambda timeout=90.0: client)
+    provider = OpenAICompatibleProvider("apimart")
+
+    invalid_requests = [
+        (
+            VideoGenRequest(model="doubao-seedance-2.0", prompt="x", duration_seconds=3),
+            "duration must be between 4 and 15",
+        ),
+        (
+            VideoGenRequest(
+                model="doubao-seedance-2.0",
+                prompt="x",
+                image_urls=["https://example.com/a.png"],
+                image_with_roles=[{"url": "https://example.com/b.png", "role": "first_frame"}],
+            ),
+            "image_urls and image_with_roles cannot both be set",
+        ),
+        (
+            VideoGenRequest(
+                model="doubao-seedance-2.0",
+                image_with_roles=[{"url": "https://example.com/a.png", "role": "first_frame"}],
+                video_urls=["https://example.com/ref.mp4"],
+            ),
+            "video_urls and audio_urls are incompatible with image_with_roles",
+        ),
+        (
+            VideoGenRequest(
+                model="doubao-seedance-2.0",
+                image_with_roles=[{"url": "https://example.com/a.png", "role": "first_frame"}],
+                audio_urls=["https://example.com/ref.wav"],
+            ),
+            "video_urls and audio_urls are incompatible with image_with_roles",
+        ),
+    ]
+    for request, expected_error in invalid_requests:
+        try:
+            provider.generate_video(request, api_base_url=endpoint, api_key="dummy")
+        except ValueError as exc:
+            assert expected_error in str(exc)
+        else:
+            raise AssertionError("expected local request validation error")
+    assert client.posted_urls == []
 
 
 def test_generate_video_async_task_polling_and_alias(monkeypatch):

@@ -158,10 +158,9 @@ def test_storyboard_and_video_generation_do_not_inject_leash_defaults_and_use_st
     assert "leash" not in video_payload["prompt"].lower()
     assert "leash_connection_required" not in video_payload.get("quality_constraints", {})
     assert fake_provider.last_request is not None
-    assert fake_provider.last_extra is not None
-    assert fake_provider.last_extra["video_payload"]["generate_audio"] is True
-    assert fake_provider.last_extra["video_payload"]["return_last_frame"] is True
-    assert fake_provider.last_extra["video_payload"]["seed"] == 42
-    assert fake_provider.last_extra["video_payload"]["tools"] == [{"type": "web_search"}]
-    assert fake_provider.last_extra["video_payload"]["image_urls"] == ["https://example.com/reference-image.png"]
-    assert fake_provider.last_extra["video_payload"]["audio_urls"] == ["https://example.com/reference-audio.wav"]
+    assert fake_provider.last_request.generate_audio is True
+    assert fake_provider.last_request.return_last_frame is True
+    assert fake_provider.last_request.seed == 42
+    assert fake_provider.last_request.tools == [{"type": "web_search"}]
+    assert fake_provider.last_request.image_urls == ["https://example.com/reference-image.png"]
+    assert fake_provider.last_request.audio_urls == ["https://example.com/reference-audio.wav"]
