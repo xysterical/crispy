@@ -362,6 +362,16 @@ class AgentsRuntime:
                 return content, "url"
         return b"", "placeholder"
 
+    def _generation_error_artifact(self, run_id: str, variant_id: str, error_text: str) -> str:
+        """Write a human-readable error file when media generation fails.
+
+        Returns the file path. Downstream visual QA will fail to parse this as
+        an image, and evaluation gates will treat it as missing media.
+        """
+        filename = f"{variant_id}_generation_error.txt"
+        content = f"GENERATION FAILED\n\n{error_text}\n"
+        return self.media.write_text_artifact(run_id, filename, content)
+
     def _artifact_has_payload(self, uri: str | None, min_bytes: int = 1024) -> bool:
         if not uri:
             return False
@@ -862,7 +872,8 @@ class AgentsRuntime:
             except Exception as exc:
                 error_text = str(exc)
                 provider_errors = getattr(exc, "errors", []) or []
-                image_uri = self.media.write_binary_artifact(run_id, image_filename, decode_placeholder_png())
+                image_uri = self._generation_error_artifact(run_id, item.variant_id, error_text)
+                image_source = "generation_error"
 
             image_ref = ImageAssetRef(
                 variant_id=item.variant_id,
@@ -1094,7 +1105,8 @@ class AgentsRuntime:
             except Exception as exc:
                 error_text = str(exc)
                 provider_errors = getattr(exc, "errors", []) or []
-                image_uri = self.media.write_binary_artifact(run_id, image_filename, decode_placeholder_png())
+                image_uri = self._generation_error_artifact(run_id, item.variant_id, error_text)
+                image_source = "generation_error"
 
             image_ref = ImageAssetRef(
                 variant_id=item.variant_id,
@@ -1375,10 +1387,10 @@ class AgentsRuntime:
                 except Exception as exc:
                     frame_error = str(exc)
                     provider_errors = getattr(exc, "errors", []) or []
-                    frame_uri = self.media.write_binary_artifact(
+                    frame_uri = self._generation_error_artifact(
                         run_id,
-                        f"{script.variant_id}_storyboard_{idx + 1}{str((runtime_config or {}).get('asset_name_suffix') or '')}.png",
-                        decode_placeholder_png(),
+                        f"{script.variant_id}_storyboard_{idx + 1}",
+                        frame_error,
                     )
                 frame = {
                     "variant_id": script.variant_id,
@@ -1504,12 +1516,14 @@ class AgentsRuntime:
                         source = "external_task_pending"
                         video_uri = self.media.reserve_binary_artifact(run_id, video_filename)
                     else:
-                        video_uri = self.media.write_binary_artifact(run_id, video_filename, b"")
+                        error_text = "Video generation returned no data, no URL, and no external task ID."
+                        video_uri = self._generation_error_artifact(run_id, script.variant_id, error_text)
+                        source = "generation_error"
                     video_models_used.add(video_result.model_used or model_used)
             except Exception as exc:
                 error_text = str(exc)
                 provider_errors = getattr(exc, "errors", []) or []
-                video_uri = self.media.reserve_binary_artifact(run_id, video_filename)
+                video_uri = self._generation_error_artifact(run_id, script.variant_id, error_text)
             asset = VideoAsset(variant_id=script.variant_id, video_uri=video_uri, duration_seconds=float(duration_seconds))
             video_payload = {
                 **asset.model_dump(),
