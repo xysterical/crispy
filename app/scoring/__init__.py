@@ -1,2 +1,0 @@
-"""Scoring and compliance checks."""
-
