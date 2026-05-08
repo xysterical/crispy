@@ -631,8 +631,8 @@ class AgentsRuntime:
         shop_thesis = gm_policy.get("shop_thesis") or {}
         planning = PlanningBrief(
             strategic_angles=strategic_angles,
-            audience_priorities=[intake.business_context.get("target_audience", "general pet owners")],
-            positioning=shop_thesis.get("positioning") or intake.business_context.get("positioning", "practical premium utility"),
+            audience_priorities=self._normalize_text_list(intake.business_context.get("target_audience") or []),
+            positioning=shop_thesis.get("positioning") or intake.business_context.get("positioning", ""),
             constraints=constraints,
             gm_lessons=gm_lessons[:5],
             surface_strategy=surface_strategy,
@@ -1019,9 +1019,9 @@ class AgentsRuntime:
             copy_hint = "focus on clear product value, premium presentation, and buyer confidence."
 
         value_props = business_context.get("key_value_props", [])
-        value_line = ", ".join(value_props[:3]) if value_props else "comfort control, durable material, daily reliability"
-        price = business_context.get("price", "$35")
-        audience = business_context.get("target_audience", "dog owners")
+        value_line = ", ".join(value_props[:3]) if value_props else ""
+        price = business_context.get("price", "")
+        audience = business_context.get("target_audience", "")
         cta = business_context.get("primary_cta", "Shop Now")
         product_name = intake.product_name if intake and intake.product_name else str(business_context.get("product_name") or "the product")
 
@@ -1055,7 +1055,7 @@ class AgentsRuntime:
                 + f"{visual_summary}. "
                 + f"Style: realistic, brand-safe, no text overlay, sharp product visibility, conversion-oriented. "
                 + f"Use aspect ratio {image_size}, target resolution {resolution}. "
-                + "Visual QA gate: product must be clearly inspectable, physically plausible, not malformed, and not a generic pet stock image."
+                + "Visual QA gate: product must be clearly inspectable, physically plausible, not malformed, and not a generic stock image."
             )
             image_uri = ""
             image_source = "placeholder"

@@ -50,8 +50,8 @@ CREATE_RUN_HTML = """
                     </div>
                     <div class="file-preview-grid" id="file-preview-grid"></div>
                     <div class="row" style="margin-top:10px;">
-                      <div><label>Product Code (required)</label><input id="product_code" value="PRD-001" required onblur="checkProductHint()" /></div>
-                      <div><label>Product Name</label><input id="product_name" value="sample product" /></div>
+                      <div><label>Product Code (required)</label><input id="product_code" value="" placeholder="e.g. PRD-001" required onblur="checkProductHint()" /></div>
+                      <div><label>Product Name</label><input id="product_name" value="" placeholder="Enter product name" /></div>
                     </div>
                     <div id="product-hint" class="hint" style="display:none;"></div>
                     <div class="row">
@@ -63,12 +63,12 @@ CREATE_RUN_HTML = """
                       </div>
                       <div>
                         <label>Product Category</label>
-                        <input id="project_name" list="category-list" value="project_demo" />
+                        <input id="project_name" list="category-list" value="" placeholder="e.g. summer-collection" />
                         <datalist id="category-list"></datalist>
                       </div>
                     </div>
                     <div class="row">
-                      <div><label>Campaign</label><input id="campaign_name" value="campaign_demo" /></div>
+                      <div><label>Campaign</label><input id="campaign_name" value="" placeholder="e.g. spring-launch" /></div>
                       <div><label>Industry Code (required)</label><input id="industry_code" value="general_merchandise" required /></div>
                     </div>
                     <div class="action-row" style="justify-content:flex-end;margin-top:8px;">
@@ -261,17 +261,17 @@ CREATE_RUN_HTML = """
                     <label>Product Description</label>
                     <textarea id="product_description" rows="3" placeholder="What is the product, who uses it, and why it matters."></textarea>
                     <div class="row">
-                      <div><label>Target Audience</label><input id="target_audience" value="dog owners in US cities" /></div>
+                      <div><label>Target Audience</label><input id="target_audience" value="" placeholder="e.g. young professionals in urban areas" /></div>
                       <div><label>Price Range</label><input id="price_range" placeholder="$19.99 - $29.99" /></div>
                     </div>
                     <label>Key Value Props (comma separated)</label>
-                    <input id="key_value_props" value="hands-free walking,anti-pull comfort,durable nylon" />
+                    <input id="key_value_props" value="" placeholder="e.g. lightweight, waterproof, ergonomic" />
                     <div class="row">
                       <div><label>Primary CTA</label><input id="primary_cta" value="Shop Now" /></div>
                       <div><label>Campaign Goal</label><input id="campaign_goal" value="purchase" /></div>
                     </div>
                     <label>Category Tags (comma separated)</label>
-                    <input id="category_tags" value="pet_accessories,dog" />
+                    <input id="category_tags" value="" placeholder="e.g. electronics, headphones" />
                     <div class="action-row" style="justify-content:space-between;margin-top:8px;">
                       <button onclick="prevStep(3)">&#8592; Back</button>
                       <button class="primary" onclick="nextStep(3)">Next &#8594;</button>

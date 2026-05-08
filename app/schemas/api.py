@@ -593,7 +593,7 @@ class ShopAnalysisRequest(BaseModel):
     description: str = Field(default="", description="Operator-provided store description")
     industry_code: str = Field(default="general", description="Industry code for GmMemory association")
     workspace_name: str = Field(default="workspace_demo")
-    project_name: str = Field(default="project_demo")
+    project_name: str = Field(default="")
 
 
 class ShopAnalysisResult(BaseModel):

@@ -4228,7 +4228,7 @@ def run_shop_analysis(
         raise HTTPException(status_code=404, detail=f"shop not found: {payload.shop_id}")
     if shop:
         workspace, project = _get_or_create_workspace_project(
-            db, shop.name, payload.project_name if payload.project_name != "project_demo" else "shop_analysis"
+            db, shop.name, payload.project_name if payload.project_name else "shop_analysis"
         )
         if payload.industry_code:
             workspace.industry_code = payload.industry_code
@@ -4341,7 +4341,7 @@ def run_shop_analysis(
 def shop_analysis_history(
     shop_id: str | None = Query(default=None),
     workspace_name: str = Query(default="workspace_demo"),
-    project_name: str = Query(default="project_demo"),
+    project_name: str = Query(default=""),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> dict:
