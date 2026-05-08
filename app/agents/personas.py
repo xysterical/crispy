@@ -12,16 +12,21 @@ def _legacy_flat_path(agent_name: str) -> Path:
 
 def ensure_default_personas() -> None:
     settings = get_settings()
-    settings.personas_dir.mkdir(parents=True, exist_ok=True)
+    missing: list[str] = []
     for spec in AGENT_SPECS:
         path = settings.personas_dir / spec.relative_path
-        path.parent.mkdir(parents=True, exist_ok=True)
         legacy_path = _legacy_flat_path(spec.name)
         if legacy_path.exists() and not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(legacy_path.read_text(encoding="utf-8"), encoding="utf-8")
             continue
         if not path.exists():
-            path.write_text(spec.default_content, encoding="utf-8")
+            missing.append(f"  {spec.name} -> {path}")
+    if missing:
+        raise FileNotFoundError(
+            "Persona files missing. Create them under the personas/ directory:\n"
+            + "\n".join(missing)
+        )
 
 
 def persona_path(agent_name: str) -> Path:

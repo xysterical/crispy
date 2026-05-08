@@ -120,14 +120,22 @@ def test_persona_read_and_patch(client):
     assert before["display_name"] == "Product Research Agent"
     assert before["stage"] == "research"
 
-    patch_resp = client.patch(
-        "/personas/product_research_agent",
-        json={"content": "# Product Research Agent\n- Updated from dashboard.", "changed_by": "test-suite"},
-    )
-    assert patch_resp.status_code == 200
-    after = patch_resp.json()
-    assert after["version"] >= before["version"]
-    assert "Updated from dashboard" in after["content"]
+    original_content = before["content"]
+    test_content = "# Product Research Agent\n- Updated from dashboard."
+    try:
+        patch_resp = client.patch(
+            "/personas/product_research_agent",
+            json={"content": test_content, "changed_by": "test-suite"},
+        )
+        assert patch_resp.status_code == 200
+        after = patch_resp.json()
+        assert after["version"] >= before["version"]
+        assert "Updated from dashboard" in after["content"]
+    finally:
+        client.patch(
+            "/personas/product_research_agent",
+            json={"content": original_content, "changed_by": "test-suite-restore"},
+        )
 
 
 def test_persona_dashboard_page_loads(client):
