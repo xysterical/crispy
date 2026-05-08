@@ -6,7 +6,7 @@ from typing import Any
 
 
 MARKETPLACE_ASSET_GOAL = "marketplace_main_image"
-DEFAULT_MARKETPLACE_PLATFORMS = ["tiktok_shop", "shopify", "alibaba", "amazon"]
+DEFAULT_MARKETPLACE_PLATFORMS: list[str] = []
 MARKETPLACE_REVIEW_TAGS = {
     "color_mismatch",
     "edge_halo",
@@ -28,8 +28,8 @@ def normalize_platform_targets(creative_specs: dict | None) -> list[str]:
     elif isinstance(raw, str) and raw.strip():
         targets = [item.strip().lower() for item in raw.split(",") if item.strip()]
     else:
-        targets = list(DEFAULT_MARKETPLACE_PLATFORMS)
-    return targets or list(DEFAULT_MARKETPLACE_PLATFORMS)
+        targets = []
+    return targets
 
 
 def _now_iso() -> str:

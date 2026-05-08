@@ -811,7 +811,7 @@ class AgentsRuntime:
                         f"role={image_role}; audience={audience}."
                     ),
                     headline=f"{product_name} Main Image",
-                    description=f"White-background product-photo candidate for {', '.join(platform_targets)}.",
+                    description=f"White-background product-photo candidate{' for ' + ', '.join(platform_targets) if platform_targets else ''}.",
                     call_to_action=cta,
                 )
             )
@@ -822,7 +822,7 @@ class AgentsRuntime:
                 f"Product visual identity: {json.dumps(visual_identity, ensure_ascii=False)[:2200]}. "
                 f"Media summary: {visual_summary[:1600]}. "
                 f"Role: {image_role}; style requirements: {role['style']}. "
-                f"Output: square {export_size_px}x{export_size_px}px master, pure white background, marketplace-ready for {platform_targets}. "
+                f"Output: square {export_size_px}x{export_size_px}px master, pure white background" + (f", marketplace-ready for {', '.join(platform_targets)}" if platform_targets else "") + ". "
                 "If source media is low quality, improve lighting, material clarity, edge quality, and color balance while preserving product truth."
             )
             image_uri = ""

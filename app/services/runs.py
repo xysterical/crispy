@@ -310,7 +310,7 @@ def create_run(db: Session, payload: RunCreateRequest) -> PipelineRun:
         defaults = resolve_creative_specs(creative_preset)
         defaults.update(creative_specs)
         defaults["asset_goal"] = "marketplace_main_image"
-        defaults.setdefault("platform_targets", ["tiktok_shop", "shopify", "alibaba", "amazon"])
+        defaults.setdefault("platform_targets", [])
         defaults.setdefault("export_size_px", 2000)
         defaults.setdefault("background_policy", "pure_white")
         creative_specs = defaults
