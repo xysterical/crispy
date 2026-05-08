@@ -1840,6 +1840,105 @@ class AgentsRuntime:
             artifacts=[{"type": "visual_quality_report", "uri": uri, "payload": payload}],
         )
 
+    def _parse_evaluation_json(self, raw: str) -> dict:
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            match = re.search(r'\{[\s\S]*\}', raw)
+            return json.loads(match.group(0)) if match else {"variants": [], "raw_response": raw}
+
+    def _build_evaluation_context(
+        self,
+        variant_set: VariantSet,
+        copy_bundle: CopyImageBundle,
+        script_pack: VideoScriptPack,
+        video_bundle: VideoBundle,
+        visual_quality: dict,
+    ) -> list[dict]:
+        copy_by_id = {v.variant_id: v for v in copy_bundle.copy_variants}
+        image_by_id = {v.variant_id: v for v in copy_bundle.image_assets}
+        video_by_id = {v.variant_id: v for v in video_bundle.videos}
+        script_by_id = {s.variant_id: s for s in script_pack.scripts}
+        vq_by_id = {
+            item.get("variant_id"): item
+            for item in (visual_quality.get("variant_summaries") or [])
+            if isinstance(item, dict) and item.get("variant_id")
+        }
+        variants: list[dict] = []
+        for item in variant_set.variants:
+            copy = copy_by_id.get(item.variant_id)
+            image = image_by_id.get(item.variant_id)
+            video = video_by_id.get(item.variant_id)
+            script = script_by_id.get(item.variant_id)
+            vq = vq_by_id.get(item.variant_id) or {}
+            entry: dict = {
+                "variant_id": item.variant_id,
+                "angle": item.angle,
+                "hook": item.hook,
+                "message": item.message,
+                "copy": {
+                    "primary_text": copy.primary_text if copy else "",
+                    "headline": copy.headline if copy else "",
+                    "description": copy.description if copy else "",
+                    "cta": copy.call_to_action if copy else "",
+                },
+                "has_image": bool(image and self._artifact_has_payload(image.uri)),
+                "has_video": bool(video and self._artifact_has_payload(video.video_uri)),
+                "image_uri": image.uri if image else None,
+                "video_uri": video.video_uri if video else None,
+                "script_hook": script.hook if script else "",
+                "script_summary": script.script[:300] if script and script.script else "",
+                "visual_qa_status": vq.get("qa_status", "not_run"),
+                "visual_qa_score": vq.get("visual_score"),
+                "visual_qa_issues": vq.get("issues") or [],
+                "visual_qa_recommended_action": vq.get("recommended_action", ""),
+            }
+            if script and script.tiktok:
+                entry["tiktok"] = {
+                    "style": script.tiktok.style,
+                    "opening_hook": script.tiktok.opening_hook,
+                    "on_screen_text": script.tiktok.on_screen_text,
+                    "voiceover_lines": script.tiktok.voiceover_lines,
+                    "shot_timing": [s.model_dump() for s in script.tiktok.shot_timing],
+                    "product_proof_points": script.tiktok.product_proof_points,
+                    "cta": script.tiktok.cta,
+                }
+            variants.append(entry)
+        return variants
+
+    def _apply_evaluation_gates(
+        self,
+        llm_scores: dict,
+        variant_context: dict,
+    ) -> tuple[float, str, list[str], list[str]]:
+        """Apply deterministic hard gates on top of LLM scores.
+
+        Returns (capped_total, recommended_action, compliance_risks, compliance_reasons).
+        """
+        has_media = variant_context.get("has_image") or variant_context.get("has_video")
+        qa_status = str(variant_context.get("visual_qa_status") or "")
+        qa_action = str(variant_context.get("visual_qa_recommended_action") or "")
+        qa_issues = [str(i) for i in (variant_context.get("visual_qa_issues") or [])]
+
+        total = float(llm_scores.get("total_score", 50))
+        action = llm_scores.get("recommended_action", "manual_review")
+        risks = list(llm_scores.get("compliance_risks") or [])
+        reasons = list(llm_scores.get("compliance_reasons") or [])
+
+        # Gate 1: no valid media at all → force regeneration
+        if not has_media:
+            return min(total, 49.0), "request_regeneration", risks, reasons + ["No valid generated media asset found."]
+
+        # Gate 2: visual QA hard failures
+        if qa_status == "fail" or qa_action == "request_regeneration":
+            return min(total, 49.0), "request_regeneration", risks, reasons + [f"Visual QA failed: {qa_issues}"]
+
+        # Gate 3: pending async video
+        if qa_status == "pending" or qa_action == "wait_for_asset":
+            return min(total, 59.0), "manual_review", risks, reasons + ["Video generation still in progress."]
+
+        return total, action, risks, reasons
+
     def run_evaluation_selection(
         self,
         run_id: str,
@@ -1859,184 +1958,102 @@ class AgentsRuntime:
         creative_specs = creative_specs or {}
         gm_policy = gm_policy or {}
         is_tiktok_shop = pipeline_mode == "tiktok_shop_video"
-        tiktok_style = str(creative_specs.get("tiktok_video_style") or "ugc_demo")
+        visual_quality = visual_quality or {}
+
+        variant_contexts = self._build_evaluation_context(
+            variant_set, copy_bundle, script_pack, video_bundle, visual_quality,
+        )
+
+        dimensions = (
+            "thumb_stop_power, product_clarity, purchase_intent, native_tiktok_feel, "
+            "watch_through_potential, claim_safety, generation_feasibility"
+            if is_tiktok_shop
+            else "hook_appeal, copy_clarity, brand_alignment, visual_execution, compliance_safety"
+        )
+        tiktok_note = (
+            f" TikTok Shop video style: {creative_specs.get('tiktok_video_style', 'ugc_demo')}."
+            if is_tiktok_shop
+            else ""
+        )
+
         prompt = self._compose_stage_prompt(
             runtime_config=runtime_config,
             agent_role="Evaluation Agent",
             task_instruction=(
-                f"Evaluate and select best variants: {variant_set.model_dump()}. "
-                f"gm_policy={gm_policy.get('stage_guidance') or {}}"
+                f"Evaluate each variant and return a JSON object with a 'variants' array. "
+                f"Context — variants: {json.dumps(variant_contexts, ensure_ascii=False)}. "
+                f"GM policy: {json.dumps(gm_policy.get('stage_guidance') or {}, ensure_ascii=False)}.{tiktok_note}\n\n"
+                f"For each variant, score these dimensions 0-100: {dimensions}. "
+                "Also provide: total_score (0-100), compliance_level ('low'/'medium'/'high'), "
+                "recommended_action ('approve_variant'/'manual_review'/'request_regeneration'), "
+                "compliance_risks (list), compliance_reasons (list), and brief_reason (1 sentence). "
+                "Score based on creative quality, not string length. "
+                "A variant with missing or placeholder media should score low on execution. "
+                "Return ONLY valid JSON, no markdown wrapping."
             ),
         )
-        _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
-        copy_by_variant = {item.variant_id: item for item in copy_bundle.copy_variants}
-        video_by_variant = {item.variant_id: item for item in video_bundle.videos}
-        image_by_variant = {item.variant_id: item for item in copy_bundle.image_assets}
-        visual_quality = visual_quality or {}
-        visual_summary_by_variant = {
-            item.get("variant_id"): item
-            for item in (visual_quality.get("variant_summaries") or [])
-            if isinstance(item, dict) and item.get("variant_id")
+        raw, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        parsed = self._parse_evaluation_json(raw)
+        llm_variants = {
+            v.get("variant_id"): v
+            for v in (parsed.get("variants") or [])
+            if isinstance(v, dict) and v.get("variant_id")
         }
+
+        ctx_by_id = {c["variant_id"]: c for c in variant_contexts}
         ranked: list[RankedVariant] = []
         for item in variant_set.variants:
-            copy = copy_by_variant.get(item.variant_id)
-            script = next((x for x in script_pack.scripts if x.variant_id == item.variant_id), None)
-            image = image_by_variant.get(item.variant_id)
-            video = video_by_variant.get(item.variant_id)
-            has_valid_image = self._artifact_has_payload(image.uri if image else None)
-            has_valid_video = self._artifact_has_payload(video.video_uri if video else None)
-            visual_qas: list[dict] = []
-            if image:
-                visual_qas.append(
-                    self._local_media_qa(
-                        asset_type="image",
-                        uri=image.uri,
-                        payload=image.model_dump(),
-                        expected_ratio=image.aspect_ratio,
-                    )
-                )
-            if video:
-                visual_qas.append(
-                    self._local_media_qa(
-                        asset_type="video",
-                        uri=video.video_uri,
-                        payload=video.model_dump(),
-                    )
-                )
-            visual_qa_score = max([qa.get("score", 0.0) for qa in visual_qas] or [0.0])
-            visual_qa_flags = sorted({flag for qa in visual_qas for flag in (qa.get("flags") or [])})
-            qa_summary = visual_summary_by_variant.get(item.variant_id) or {}
-            if isinstance(qa_summary.get("visual_score"), (int, float)):
-                visual_qa_score = min(visual_qa_score if visual_qas else 100.0, float(qa_summary["visual_score"]))
-            qa_status = str(qa_summary.get("qa_status") or "")
-            qa_recommended_action = str(qa_summary.get("recommended_action") or "")
-            qa_issues = [str(issue) for issue in (qa_summary.get("issues") or [])]
-            visual_qa_flags = sorted(set([*visual_qa_flags, *qa_issues]))
-            hook_strength = min(100.0, 55.0 + len(item.hook) * 0.35)
-            clarity = min(100.0, 50.0 + len((copy.primary_text if copy else "")) * 0.28)
-            generation_fit = 88.0 if has_valid_video else 82.0 if has_valid_image else 25.0
-            generation_fit = min(generation_fit, visual_qa_score)
-            compliance = 90.0
-            compliance_risks: list[str] = []
-            compliance_reasons: list[str] = []
-            if script and ("guaranteed cure" in script.script.lower()):
-                compliance = 15.0
-                compliance_risks.append("legal_high_risk")
-                compliance_reasons.append("Detected prohibited cure-style claim in script.")
-            ai_naturalness = 86.0
-            total = round(
-                hook_strength * 0.24 + clarity * 0.20 + generation_fit * 0.26 + compliance * 0.20 + ai_naturalness * 0.10,
-                2,
+            ctx = ctx_by_id.get(item.variant_id, {})
+            llm = llm_variants.get(item.variant_id, {})
+            total, action, risks, reasons = self._apply_evaluation_gates(llm, ctx)
+
+            dim_keys = (
+                ["thumb_stop_power", "product_clarity", "purchase_intent", "native_tiktok_feel",
+                 "watch_through_potential", "claim_safety", "generation_feasibility"]
+                if is_tiktok_shop
+                else ["hook_appeal", "copy_clarity", "brand_alignment", "visual_execution", "compliance_safety"]
             )
-            level = ComplianceLevel.LOW if compliance >= 80 else ComplianceLevel.HIGH
-            if qa_status == "pending" or qa_recommended_action == "wait_for_asset":
-                recommended_action = "manual_review"
-                generation_fit = min(generation_fit, 35.0)
-            elif qa_status == "fail" or qa_recommended_action == "request_regeneration":
-                recommended_action = "request_regeneration"
-                generation_fit = min(generation_fit, 25.0)
-                total = min(total, 49.0)
-            elif not (has_valid_image or has_valid_video):
-                recommended_action = "request_regeneration"
-            elif any(flag in visual_qa_flags for flag in {"visual_qa_placeholder", "visual_qa_empty_video", "visual_qa_decode_error"}):
-                recommended_action = "request_regeneration"
-            else:
-                recommended_action = "approve_variant" if total >= 70 and level == ComplianceLevel.LOW else "manual_review" if level == ComplianceLevel.LOW else "request_regeneration"
-            total = round(
-                hook_strength * 0.24 + clarity * 0.20 + generation_fit * 0.26 + compliance * 0.20 + ai_naturalness * 0.10,
-                2,
-            )
-            if recommended_action == "request_regeneration":
-                total = min(total, 49.0)
-            tiktok_scores: dict[str, float] = {}
-            if is_tiktok_shop:
-                script_details = script.tiktok if script else None
-                has_tiktok_script = script_details is not None
-                on_screen_text_count = len(script_details.on_screen_text) if script_details else 0
-                shot_count = len(script_details.shot_timing) if script_details else 0
-                thumb_stop_power = min(100.0, hook_strength + (8 if has_tiktok_script else 0))
-                product_clarity = min(100.0, generation_fit + (6 if shot_count >= 2 else 0))
-                purchase_intent = min(100.0, clarity + (10 if tiktok_style == "direct_response_ad" else 4))
-                native_tiktok_feel = min(100.0, ai_naturalness + (8 if tiktok_style in {"ugc_demo", "shop_account_content"} else 2))
-                watch_through_potential = min(100.0, 62.0 + shot_count * 6 + on_screen_text_count * 2)
-                claim_safety = compliance
-                generation_feasibility = generation_fit
-                tiktok_scores = {
-                    "thumb_stop_power": round(thumb_stop_power, 2),
-                    "product_clarity": round(product_clarity, 2),
-                    "purchase_intent": round(purchase_intent, 2),
-                    "native_tiktok_feel": round(native_tiktok_feel, 2),
-                    "watch_through_potential": round(watch_through_potential, 2),
-                    "claim_safety": round(claim_safety, 2),
-                    "generation_feasibility": round(generation_feasibility, 2),
-                }
-                if tiktok_style == "direct_response_ad":
-                    total = round(
-                        thumb_stop_power * 0.18
-                        + product_clarity * 0.18
-                        + purchase_intent * 0.22
-                        + native_tiktok_feel * 0.10
-                        + watch_through_potential * 0.10
-                        + claim_safety * 0.12
-                        + generation_feasibility * 0.10,
-                        2,
-                    )
-                elif tiktok_style == "shop_account_content":
-                    total = round(
-                        thumb_stop_power * 0.14
-                        + product_clarity * 0.14
-                        + purchase_intent * 0.12
-                        + native_tiktok_feel * 0.20
-                        + watch_through_potential * 0.18
-                        + claim_safety * 0.12
-                        + generation_feasibility * 0.10,
-                        2,
-                    )
-                else:
-                    total = round(
-                        thumb_stop_power * 0.15
-                        + product_clarity * 0.20
-                        + purchase_intent * 0.15
-                        + native_tiktok_feel * 0.18
-                        + watch_through_potential * 0.10
-                        + claim_safety * 0.12
-                        + generation_feasibility * 0.10,
-                        2,
-                    )
-                if recommended_action == "request_regeneration":
-                    total = min(total, 49.0)
-            ranked.append(
-                RankedVariant(
-                    variant_id=item.variant_id,
-                    total_score=total,
-                    sub_scores={
-                        "hook_strength": round(hook_strength, 2),
-                        "clarity": round(clarity, 2),
-                        "generation_fit": round(generation_fit, 2),
-                        "visual_qa": round(visual_qa_score, 2),
-                        "compliance": round(compliance, 2),
-                        "ai_naturalness": round(ai_naturalness, 2),
-                        **tiktok_scores,
-                    },
-                    compliance_level=level,
-                    reasons=[
-                        f"angle={item.angle}",
-                        "valid generated media available" if has_valid_image or has_valid_video else "generated media missing or placeholder",
-                        f"visual_qa_flags={','.join(visual_qa_flags) if visual_qa_flags else 'none'}",
-                        f"visual_qa_agent_status={qa_status or 'not_run'}",
-                    ],
-                    compliance_risks=[*compliance_risks, *visual_qa_flags],
-                    compliance_reasons=compliance_reasons or ["No major compliance issues detected."],
-                    recommended_action=recommended_action,
-                )
-            )
+            sub_scores: dict[str, float] = {}
+            for k in dim_keys:
+                val = llm.get(k)
+                sub_scores[k] = round(float(val), 2) if isinstance(val, (int, float)) else 50.0
+            vq_score = ctx.get("visual_qa_score")
+            sub_scores["visual_qa"] = round(float(vq_score), 2) if isinstance(vq_score, (int, float)) else 100.0
+
+            level_raw = str(llm.get("compliance_level") or "low").lower()
+            level = ComplianceLevel.LOW if level_raw == "low" else ComplianceLevel.MEDIUM if level_raw == "medium" else ComplianceLevel.HIGH
+
+            llm_reason = str(llm.get("brief_reason") or "")
+            has_media = ctx.get("has_image") or ctx.get("has_video")
+            qa_status = str(ctx.get("visual_qa_status") or "not_run")
+            sys_reasons = [
+                f"visual_qa_agent_status={qa_status}",
+                "valid generated media available" if has_media else "generated media missing or placeholder",
+            ]
+            gate_reasons = [r for r in reasons if r]
+            all_reasons = [r for r in ([llm_reason] + sys_reasons + gate_reasons) if r] or [f"angle={item.angle}"]
+
+            ranked.append(RankedVariant(
+                variant_id=item.variant_id,
+                total_score=total,
+                sub_scores=sub_scores,
+                compliance_level=level,
+                reasons=all_reasons,
+                compliance_risks=list(risks),
+                compliance_reasons=list(reasons) or ["No major compliance issues detected."],
+                recommended_action=action,
+            ))
+
         ranked.sort(key=lambda x: x.total_score, reverse=True)
         top_k = ranked[:3]
         winner = top_k[0] if top_k else None
-        winner_copy = copy_by_variant.get(winner.variant_id) if winner else None
+
+        copy_by_id = {v.variant_id: v for v in copy_bundle.copy_variants}
+        video_by_id = {v.variant_id: v for v in video_bundle.videos}
+        winner_copy = copy_by_id.get(winner.variant_id) if winner else None
         winner_images = [x for x in copy_bundle.image_assets if winner and x.variant_id == winner.variant_id]
-        winner_video = video_by_variant.get(winner.variant_id) if winner else None
+        winner_video = video_by_id.get(winner.variant_id) if winner else None
+
         selected = SelectedDeliverables(
             winner_variant_id=winner.variant_id if winner else "N/A",
             copy_variant=winner_copy,
@@ -2046,22 +2063,22 @@ class AgentsRuntime:
         )
         scorecard = ScoreCard(
             sub_scores=ScoreBreakdown(
-                attraction=winner.sub_scores.get("hook_strength", 50) if winner else 50,
-                clarity=winner.sub_scores.get("clarity", 50) if winner else 50,
-                brand_alignment=winner.sub_scores.get("generation_fit", 50) if winner else 50,
-                compliance=winner.sub_scores.get("compliance", 50) if winner else 50,
-                ai_naturalness=winner.sub_scores.get("ai_naturalness", 50) if winner else 50,
+                attraction=winner.sub_scores.get("hook_appeal", winner.sub_scores.get("thumb_stop_power", 50)) if winner else 50,
+                clarity=winner.sub_scores.get("copy_clarity", winner.sub_scores.get("product_clarity", 50)) if winner else 50,
+                brand_alignment=winner.sub_scores.get("brand_alignment", winner.sub_scores.get("native_tiktok_feel", 50)) if winner else 50,
+                compliance=winner.sub_scores.get("compliance_safety", winner.sub_scores.get("claim_safety", 50)) if winner else 50,
+                ai_naturalness=winner.sub_scores.get("visual_execution", winner.sub_scores.get("generation_feasibility", 50)) if winner else 50,
             ),
             total_score=winner.total_score if winner else 50,
             risk_labels=[],
-            explanation={"selection": "winner chosen by composite score across copy+video+compliance dimensions."},
+            explanation={"selection": "winner chosen by LLM evaluation composite score with deterministic safety gates."},
             compliance_level=winner.compliance_level if winner else ComplianceLevel.MEDIUM,
-            ai_artifact_score=winner.sub_scores.get("ai_naturalness", 50) if winner else 50,
+            ai_artifact_score=winner.sub_scores.get("visual_execution", winner.sub_scores.get("generation_feasibility", 50)) if winner else 50,
         )
         forecast = ConversionForecast(
             score_0_100=scorecard.total_score,
             confidence_0_1=0.7 if scorecard.compliance_level == ComplianceLevel.LOW else 0.35,
-            drivers=["hook_strength", "clarity", "generation_fit", "compliance"],
+            drivers=["hook_appeal", "copy_clarity", "visual_execution", "compliance_safety"],
             recommended_action="approve_for_launch_test" if scorecard.total_score >= 65 else "iterate_new_variants",
         )
         evaluation = EvaluationResult(
