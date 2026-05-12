@@ -1,5 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Crispy Dashboard{% endblock %}
+{% block styles %}
+  {{ super() }}
+  /* ── Main panels blend into gradient background ── */
+  .runs-panel {
+    background: rgba(255, 255, 255, 0.88);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+  #run-detail-panel {
+    background: rgba(255, 255, 255, 0.88);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+{% endblock %}
 {% block body %}
 <body>
   <div class="app-shell">
@@ -44,7 +58,7 @@
         </section>
       </div>
       <div style="flex:1 1 480px;min-width:0;">
-        <section class="card">
+        <section class="card" id="run-detail-panel">
           <h2>Run Detail</h2>
           <div id="run-detail" class="run-detail-empty">Select a run.</div>
         </section>
