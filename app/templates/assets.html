@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+{% block title %}Crispy Asset Library{% endblock %}
+{% block styles %}
+  :root {
+    --bg: #f8fafc;
+    --bg-alt: #f1f5f9;
+    --card: #ffffff;
+    --text: #0f172a;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --accent: #059669;
+    --radius: 16px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background:
+      radial-gradient(circle at 10% -20%, #d1fae5 0%, transparent 40%),
+      radial-gradient(circle at 90% -20%, #e0e7ff 0%, transparent 42%),
+      linear-gradient(180deg, var(--bg-alt), var(--bg) 30%);
+  }
+  .app-shell { width: min(1380px, calc(100% - 24px)); margin: 22px auto 30px auto; }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px;
+    background: var(--card);
+    margin-bottom: 14px;
+    box-shadow: 0 8px 24px rgba(30, 62, 50, 0.07);
+    backdrop-filter: blur(4px);
+  }
+  h1 { margin: 0; font-size: 27px; letter-spacing: -0.02em; line-height: 1.2; }
+  .subtitle { margin-top: 6px; color: var(--muted); font-size: 14px; }
+  .filters { display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr; gap:10px; align-items:end; }
+  .filters-bottom {
+    display:flex;
+    gap:10px;
+    align-items:end;
+    margin-top:10px;
+    flex-wrap: wrap;
+  }
+  .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:12px; }
+  .asset-card {
+    border:1px solid #e2e8f0;
+    border-radius:12px;
+    padding:10px;
+    background:#fff;
+    box-shadow: 0 4px 14px rgba(32, 75, 57, 0.04);
+  }
+  .asset-card:hover { transform: translateY(-1px); transition: transform 160ms ease; }
+  input, select {
+    width: 100%;
+    padding: 9px 10px;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    box-sizing: border-box;
+    background: #fff;
+    color: var(--text);
+  }
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(31, 122, 98, 0.16);
+  }
+  button {
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    background: #f8fafc;
+    color: #1e293b;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: #f1f5f9; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .img-preview {
+    width: 100%;
+    border-radius: 10px;
+    border: 1px solid #dce7e1;
+    object-fit: contain;
+    max-height: 360px;
+    background:#f2f5fa;
+  }
+  .media-preview {
+    width: 100%;
+    border-radius: 10px;
+    border: 1px solid #dce7e1;
+    background:#f2f5fa;
+    display:block;
+  }
+  .media-preview.image {
+    object-fit: contain;
+    max-height: 420px;
+  }
+  .media-preview.video {
+    aspect-ratio: 9 / 16;
+    max-height: 420px;
+    object-fit: contain;
+    background:#050807;
+  }
+  .toolbar {
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-end;
+    margin-bottom:12px;
+    gap: 12px;
+  }
+  .nav-link {
+    border: 1px solid var(--line);
+    background: #fff;
+    padding: 8px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #047857;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .pill {
+    display:inline-block;
+    padding:2px 8px;
+    border-radius:20px;
+    font-size:12px;
+    border:1px solid #c9ddd1;
+    background: #f7fcf8;
+    margin-right:6px;
+  }
+  .stats-line { font-family: var(--mono); }
+  .empty {
+    grid-column: 1 / -1;
+    border: 1px dashed #c8dacd;
+    border-radius: 12px;
+    padding: 18px;
+    text-align: center;
+    color: var(--muted);
+    background: #f8fcfa;
+  }
+  @media (max-width: 1040px) {
+    .filters { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 860px) {
+    .app-shell { width: calc(100% - 12px); margin-top: 10px; }
+    .filters { grid-template-columns: 1fr; }
+    .toolbar { flex-direction: column; align-items: flex-start; }
+  }
+{% endblock %}
+{% block body %}
+<body>
+  <main class="app-shell">
+    <div class="toolbar">
+      <div>
+        <h1>Asset Library</h1>
+        <div class="subtitle">Browse generated outputs across runs, modes, and channels.</div>
+      </div>
+      <a class="nav-link" href="/dashboard">Back to Dashboard</a>
+    </div>
+    <section class="card">
+      <div class="filters">
+        <div><label>Search</label><input id="q" placeholder="run id / copy text / filename" /></div>
+        <div>
+          <label>Type</label>
+          <select id="artifact_types">
+            <option value="">All generated</option>
+            <option value="generated_image">generated_image</option>
+            <option value="copy_image_bundle">copy_image_bundle</option>
+            <option value="video_script_pack">video_script_pack</option>
+            <option value="storyboard_pack">storyboard_pack</option>
+            <option value="generated_video">generated_video</option>
+            <option value="video_bundle">video_bundle</option>
+            <option value="visual_quality_report">visual_quality_report</option>
+            <option value="evaluation_selection">evaluation_selection</option>
+          </select>
+        </div>
+      <div>
+        <label>Pipeline Mode</label>
+        <select id="pipeline_mode">
+          <option value="">All</option>
+          <option value="copy_image_only">copy_image_only</option>
+          <option value="dtc_site_image">dtc_site_image</option>
+          <option value="video_only">video_only</option>
+          <option value="full_multimodal">full_multimodal</option>
+        </select>
+      </div>
+      <div><label>Product Code</label><input id="product_code" placeholder="DL-001" /></div>
+      <div>
+        <label>Sort By</label>
+        <select id="sort_by">
+          <option value="created_at">created_at</option>
+          <option value="score">score</option>
+          </select>
+        </div>
+        <div>
+          <label>Order</label>
+          <select id="sort_order">
+            <option value="desc">desc</option>
+            <option value="asc">asc</option>
+          </select>
+        </div>
+      </div>
+      <div class="filters-bottom">
+        <div><label>Date From</label><input id="date_from" type="date" /></div>
+        <div><label>Date To</label><input id="date_to" type="date" /></div>
+        <div><button onclick="refreshAssets()">Apply</button></div>
+        <div><button onclick="prevPage()">Prev</button> <button onclick="nextPage()">Next</button></div>
+      </div>
+    </section>
+    <section class="card">
+      <div id="stats" class="muted stats-line"></div>
+      <div id="asset-grid" class="grid"></div>
+    </section>
+  </main>
+  <script>
+    let page = 1;
+    let pageSize = 20;
+    let total = 0;
+    function esc(v){ return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
+    function mediaUrl(path){ return `/media?path=${encodeURIComponent(path || "")}`; }
+    function mediaViewUrl(path){ return `/media/view?path=${encodeURIComponent(path || "")}`; }
+    function queryString(params){
+      const q = new URLSearchParams();
+      Object.entries(params).forEach(([k,v]) => {
+        if (v === null || v === undefined || v === "") return;
+        q.set(k, String(v));
+      });
+      return q.toString();
+    }
+    async function refreshAssets() {
+      const params = {
+        q: document.getElementById("q").value,
+        artifact_types: document.getElementById("artifact_types").value,
+        pipeline_mode: document.getElementById("pipeline_mode").value,
+        product_code: document.getElementById("product_code").value,
+        sort_by: document.getElementById("sort_by").value,
+        sort_order: document.getElementById("sort_order").value,
+        date_from: document.getElementById("date_from").value,
+        date_to: document.getElementById("date_to").value,
+        page,
+        page_size: pageSize,
+      };
+      const resp = await fetch(`/artifacts?${queryString(params)}`);
+      if (!resp.ok) throw new Error(await resp.text());
+      const data = await resp.json();
+      total = data.total;
+      document.getElementById("stats").textContent = `total=${data.total}, page=${data.page}, page_size=${data.page_size}`;
+      const grid = document.getElementById("asset-grid");
+      grid.innerHTML = "";
+      if (!data.items.length) {
+        grid.innerHTML = '<div class="empty">No assets match current filters.</div>';
+        return;
+      }
+      data.items.forEach((item) => {
+        const el = document.createElement("article");
+        el.className = "asset-card";
+        const isImage = item.artifact_type.includes("image");
+        const isVideo = item.artifact_type.includes("video") || item.uri.endsWith(".mp4");
+        const media = isImage
+          ? `<a href="${mediaViewUrl(item.uri)}" target="_blank"><img class="media-preview image" src="${mediaUrl(item.uri)}" alt="asset"/></a>`
+          : isVideo
+            ? `<a href="${mediaViewUrl(item.uri)}" target="_blank" class="muted">Open video</a><video controls playsinline class="media-preview video" src="${mediaUrl(item.uri)}"></video>`
+            : `<div class="muted">No direct preview.</div>`;
+        el.innerHTML = `
+          <div><span class="pill">${esc(item.artifact_type)}</span><span class="pill">${esc(item.pipeline_mode)}</span><span class="pill">${esc(item.product_code || "-")}</span></div>
+          <div class="muted">run: <a href="/dashboard#run=${esc(item.run_id)}">${esc(item.run_id)}</a></div>
+          ${media}
+          <div style="margin-top:8px;">${esc(item.preview_text || "-")}</div>
+          <div class="muted">score=${esc(item.score ?? "-")} | ${esc(item.created_at)}</div>
+          <div class="muted">${esc(item.uri)}</div>
+        `;
+        grid.appendChild(el);
+      });
+    }
+    function prevPage(){ if (page > 1) { page -= 1; refreshAssets(); } }
+    function nextPage(){ if ((page * pageSize) < total) { page += 1; refreshAssets(); } }
+    refreshAssets();
+  </script>
+</body>
+{% endblock %}

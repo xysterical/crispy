@@ -1,0 +1,514 @@
+{% extends "base.html" %}
+{% block title %}Crispy API &amp; Integration Configs{% endblock %}
+{% block styles %}
+  :root {
+    --bg: #f8fafc;
+    --bg-alt: #f1f5f9;
+    --card: #ffffff;
+    --text: #0f172a;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --accent: #059669;
+    --radius: 16px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background:
+      radial-gradient(circle at 10% -20%, #d1fae5 0%, transparent 40%),
+      radial-gradient(circle at 90% -20%, #e0e7ff 0%, transparent 42%),
+      linear-gradient(180deg, var(--bg-alt), var(--bg) 30%);
+  }
+  .app-shell { width: min(1320px, calc(100% - 24px)); margin: 22px auto 30px auto; }
+  .hero {
+    display:flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .page-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 10px;
+  }
+  h1, h2 { margin: 0; line-height: 1.25; }
+  h1 { font-size: 27px; letter-spacing: -0.02em; }
+  h2 { font-size: 19px; margin-bottom: 10px; }
+  .subtitle { margin-top: 6px; color: var(--muted); font-size: 14px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  a { color: #047857; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .nav-link {
+    border: 1px solid var(--line);
+    background: #fff;
+    padding: 8px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px;
+    background: var(--card);
+    box-shadow: 0 8px 24px rgba(30, 62, 50, 0.07);
+    backdrop-filter: blur(4px);
+  }
+  .secondary-btn {
+    background: #f8fafc;
+  }
+  .toast-wrap {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+    pointer-events: none;
+  }
+  .toast {
+    min-width: 180px;
+    max-width: 320px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid #6ee7b7;
+    background: #ecfdf5;
+    color: #064e3b;
+    box-shadow: 0 8px 20px rgba(28, 68, 52, 0.16);
+    font-size: 13px;
+    font-weight: 700;
+    opacity: 0;
+    transform: translateY(-6px);
+    transition: opacity 180ms ease, transform 180ms ease;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 920px; }
+  th, td { border-bottom: 1px solid #e2e8f0; padding: 9px 10px; text-align: left; vertical-align: top; }
+  thead th { background: #f8fafc; font-weight: 700; color: #1e293b; }
+  .advanced-col {
+    min-width: 120px;
+    max-width: 220px;
+    opacity: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    transition: min-width 220ms ease, max-width 220ms ease, padding 180ms ease, opacity 160ms ease;
+  }
+  table.advanced-collapsed .advanced-col {
+    min-width: 0;
+    max-width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    opacity: 0;
+  }
+  input, select {
+    width: 100%;
+    padding: 8px 9px;
+    border-radius: 9px;
+    border: 1px solid #e2e8f0;
+    box-sizing: border-box;
+    background: #fff;
+    color: var(--text);
+  }
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(31, 122, 98, 0.16);
+  }
+  button {
+    padding: 7px 10px;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    background: #f8fafc;
+    color: #1e293b;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: #eaf6ee; }
+  .panel { margin-top: 16px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .badge {
+    display: inline-block;
+    border: 1px solid #e2e8f0;
+    background: #f8fafc;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+  }
+  .badge-missing { border-color: #e2c8c8; background: #fff5f5; color: #925454; }
+  code { font-family: var(--mono); font-size: 12px; }
+
+  /* ── Dirty input indicator ── */
+  #cfg-table input.dirty, #cfg-table select.dirty {
+    border-color: #f59e0b;
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.15);
+    background: #fffbeb;
+  }
+
+  /* ── Save All FAB ── */
+  #save-fab {
+    position: fixed; bottom: 28px; right: 28px; z-index: 998;
+    background: var(--accent); color: #fff; border: none;
+    padding: 12px 22px; border-radius: 28px;
+    font-size: 14px; font-weight: 700; cursor: pointer;
+    box-shadow: 0 4px 20px rgba(5, 150, 105, 0.3);
+    display: flex; align-items: center; gap: 8px;
+    transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  }
+  #save-fab:hover {
+    background: var(--accent-dark);
+    box-shadow: 0 6px 24px rgba(5, 150, 105, 0.4);
+    transform: translateY(-2px);
+  }
+  #save-fab:active { transform: scale(0.97); }
+  #save-fab.saving {
+    background: var(--gray-500);
+    pointer-events: none;
+  }
+  .save-fab-count {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: #fff; color: var(--accent);
+    font-size: 11px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* ── Save toast ── */
+  .save-toast {
+    position: fixed; bottom: 88px; right: 28px; z-index: 999;
+    background: #1e293b; color: #fff;
+    padding: 10px 18px; border-radius: 10px;
+    font-size: 13px; font-weight: 600;
+    opacity: 0; transform: translateY(8px);
+    pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  .save-toast.show {
+    opacity: 1; transform: translateY(0);
+  }
+
+  @media (max-width: 860px) {
+    .app-shell { width: calc(100% - 12px); margin-top: 10px; }
+    .hero { flex-direction: column; align-items: flex-start; }
+    .row { grid-template-columns: 1fr; }
+  }
+{% endblock %}
+{% block body %}
+<body>
+  <div class="toast-wrap">
+    <div id="save-toast" class="toast">Saved</div>
+  </div>
+  <main class="app-shell">
+    <header class="hero">
+      <div>
+        <h1>API &amp; Integration Configs</h1>
+        <div class="subtitle">Manage LLM provider credentials for agents and integration credentials for Shopify / Meta.</div>
+        <div class="subtitle">Security: only env var names are stored. Env var values are read from the runtime environment.</div>
+      </div>
+      <a class="nav-link" href="/dashboard">Back to Dashboard</a>
+    </header>
+    <section class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+        <h2 style="margin:0;">Agent LLM Providers</h2>
+        <button id="toggle-advanced-cols" class="secondary-btn" onclick="toggleAdvancedCols()">Show Advanced Columns</button>
+      </div>
+      <div class="subtitle" style="margin-bottom: 12px;">Fallback rule: if agent config missing, use <b>default</b>. Multimodal agents expose modality-specific rows.</div>
+      <div class="table-wrap">
+        <table id="cfg-table" class="advanced-collapsed">
+          <thead><tr><th>Agent</th><th>Provider</th><th>Model</th><th>Base URL</th><th>API Key Env</th><th>Thinking</th><th class="advanced-col">Stream</th><th class="advanced-col">Budget</th><th class="advanced-col">Max Tokens</th><th class="advanced-col">Timeout</th><th>Env Status</th></tr></thead>
+          <tbody id="cfg-body"></tbody>
+        </table>
+      </div>
+    </section>
+    <section class="card" style="margin-top: 24px;">
+      <h2>Integration Credentials</h2>
+      <div class="subtitle" style="margin-bottom: 12px;">Credentials are read from environment variables. Only env var names are stored here.</div>
+      <div class="table-wrap">
+        <table id="int-cfg-table">
+          <thead><tr><th>Platform</th><th>Config Key</th><th>Label</th><th>Env Var</th><th>Required</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody id="int-cfg-body"></tbody>
+        </table>
+      </div>
+    </section>
+    <div id="save-fab" title="Save all unsaved configuration changes">
+      <span id="save-fab-count" class="save-fab-count" style="display:none">0</span>
+      <span id="save-fab-icon">Save All</span>
+    </div>
+    <div id="save-toast" class="save-toast"></div>
+  </main>
+  <script>
+    const personas = {{ personas_json | safe }};
+    const existing = {{ configs_json | safe }};
+    const integrationConfigs = {{ integration_configs_json | safe }};
+    let envVars = {{ env_vars_json | safe }};
+    let advancedColsVisible = false;
+    let toastTimer = null;
+    const byAgent = Object.fromEntries(existing.map(c => [c.agent_name, c]));
+    const baseRows = [{ agent_name: "default", display_name: "Default Fallback", stage: "global" }, ...personas];
+    const shopAnalysisAgents = new Set(["shop_analyst"]);
+    const pipelinePersonas = baseRows.filter((r) => !shopAnalysisAgents.has(r.agent_name));
+    const rows = pipelinePersonas.flatMap((r) => {
+      const title = (r.display_name || r.agent_name);
+      if (r.agent_name === "copy_image_agent") {
+        return [
+          { row_key: "copy_image_agent__text", agent_name: "copy_image_agent", mode: "text", title: "Copy Image Agent - Text", source: "copy_image_agent" },
+          { row_key: "copy_image_agent__image", agent_name: "copy_image_agent", mode: "image", title: "Copy Image Agent - Image", source: "copy_image_agent" },
+        ];
+      }
+      if (r.agent_name === "video_generation_agent") {
+        return [
+          { row_key: "video_generation_agent__text", agent_name: "video_generation_agent", mode: "text", title: "Video Generation Agent - Text", source: "video_generation_agent" },
+          { row_key: "video_generation_agent__video", agent_name: "video_generation_agent", mode: "video", title: "Video Generation Agent - Video", source: "video_generation_agent" },
+        ];
+      }
+      return [{ row_key: `${r.agent_name}__text`, agent_name: r.agent_name, mode: "text", title, source: r.agent_name }];
+    });
+    // Append Shop Analysis section at the bottom
+    rows.push(
+      { row_key: "__divider_shop__", agent_name: "__divider__", mode: "text", title: "divider", source: "divider", isDivider: true },
+      { row_key: "shop_analyst__text", agent_name: "shop_analyst", mode: "text", title: "Shop Analyst - LLM", source: "shop_analyst" },
+      { row_key: "shop_analyst__tavily", agent_name: "shop_analyst", mode: "tavily", title: "Shop Analyst - Tavily", source: "shop_analyst" },
+      { row_key: "shop_analyst__firecrawl", agent_name: "shop_analyst", mode: "firecrawl", title: "Shop Analyst - Firecrawl", source: "shop_analyst" },
+    );
+    async function api(path, options = {}) {
+      const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    }
+    function envOptions(selected) {
+      const base = ['<option value="">(none)</option>'];
+      const names = [...envVars];
+      if (selected && !names.includes(selected)) names.unshift(selected);
+      names.forEach((name) => { base.push(`<option value="${name}"${selected===name?" selected":""}>${name}</option>`); });
+      return base.join("");
+    }
+    function applyAdvancedColsVisibility() {
+      const table = document.getElementById("cfg-table");
+      if (table) {
+        table.classList.toggle("advanced-collapsed", !advancedColsVisible);
+      }
+      const btn = document.getElementById("toggle-advanced-cols");
+      btn.textContent = advancedColsVisible ? "Hide Advanced Columns" : "Show Advanced Columns";
+    }
+    function toggleAdvancedCols() {
+      advancedColsVisible = !advancedColsVisible;
+      applyAdvancedColsVisibility();
+    }
+    function markDirty(el) {
+      el.classList.add("dirty");
+      updateSaveFab();
+    }
+    function showSaveToast(message) {
+      const toast = document.getElementById("save-toast");
+      if (!toast) return;
+      toast.textContent = message || "Saved";
+      toast.classList.add("show");
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toast.classList.remove("show");
+      }, 1700);
+    }
+    function render() {
+      const body = document.getElementById("cfg-body");
+      body.innerHTML = "";
+      rows.forEach((r) => {
+        if (r.isDivider) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = '<td colspan="12" style="padding:8px 10px;background:#f0f4f2;border-bottom:2px solid var(--accent);font-weight:700;font-size:12px;color:var(--accent);">Shop Analysis Agents</td>';
+          body.appendChild(tr);
+          return;
+        }
+        const cfg = byAgent[r.agent_name] || {};
+        const isSearchTool = (r.mode === "tavily" || r.mode === "firecrawl");
+        const provider = r.mode === "text" ? (cfg.provider_name || "") : (r.mode === "image" ? (cfg.image_provider_name || "") : (cfg.video_provider_name || ""));
+        const model = r.mode === "text" ? (cfg.model_name || "") : (r.mode === "image" ? (cfg.image_model_name || "") : (cfg.video_model_name || ""));
+        const baseUrl = r.mode === "text" ? (cfg.api_base_url || "") : (r.mode === "image" ? (cfg.image_api_base_url || "") : (cfg.video_api_base_url || ""));
+        const keyEnv = r.mode === "tavily" ? (cfg.extra?.tavily_config?.api_key_env || "")
+          : r.mode === "firecrawl" ? (cfg.extra?.firecrawl_config?.api_key_env || "")
+          : r.mode === "text" ? (cfg.api_key_env || "")
+          : r.mode === "image" ? (cfg.image_api_key_env || "")
+          : (cfg.video_api_key_env || "");
+        const keyFound = r.mode === "tavily" ? cfg.tavily_api_key_available
+          : r.mode === "firecrawl" ? cfg.firecrawl_api_key_available
+          : r.mode === "text" ? cfg.api_key_available
+          : r.mode === "image" ? cfg.image_api_key_available
+          : cfg.video_api_key_available;
+        const thinkingMode = r.mode === "text" ? (cfg.thinking_mode || "auto") : "";
+        const thinkingBudget = r.mode === "text" ? (cfg.thinking_budget_tokens || "") : "";
+        const maxTokens = r.mode === "text" ? (cfg.max_output_tokens || "") : "";
+        const requestTimeout = r.mode === "text" ? (cfg.request_timeout_seconds || "") : "";
+        const streamingEnabled = r.mode === "text" ? Boolean(cfg.streaming_enabled) : false;
+        const tr = document.createElement("tr");
+        const envStatus = keyEnv
+          ? (keyFound ? '<span class="badge">found</span>' : '<span class="badge badge-missing">missing</span>')
+          : '<span class="muted">-</span>';
+        const providerCell = isSearchTool ? '<td class="muted">-</td>'
+          : `<td><input id="p-${r.row_key}" value="${provider}" oninput="markDirty(this)" /></td>`;
+        const modelCell = isSearchTool ? '<td class="muted">-</td>'
+          : `<td><input id="m-${r.row_key}" value="${model}" oninput="markDirty(this)" /></td>`;
+        const baseUrlCell = isSearchTool ? '<td class="muted">-</td>'
+          : `<td><input id="b-${r.row_key}" value="${baseUrl}" oninput="markDirty(this)" /></td>`;
+        const thinkingCell = (r.mode === "text") ? `<td><select id="t-${r.row_key}" onchange="markDirty(this)"><option value="auto"${thinkingMode==="auto"?" selected":""}>auto</option><option value="enabled"${thinkingMode==="enabled"?" selected":""}>enabled</option><option value="disabled"${thinkingMode==="disabled"?" selected":""}>disabled</option></select></td>`
+          : '<td class="muted">-</td>';
+        const streamCell = (r.mode === "text") ? `<td class="advanced-col"><input id="s-${r.row_key}" type="checkbox" onchange="markDirty(this)"${streamingEnabled ? " checked" : ""} /></td>`
+          : '<td class="advanced-col muted">-</td>';
+        const budgetCell = (r.mode === "text") ? `<td class="advanced-col"><input id="g-${r.row_key}" value="${thinkingBudget}" placeholder="optional" oninput="markDirty(this)" /></td>`
+          : '<td class="advanced-col muted">-</td>';
+        const maxTokensCell = (r.mode === "text") ? `<td class="advanced-col"><input id="o-${r.row_key}" value="${maxTokens}" placeholder="1200" oninput="markDirty(this)" /></td>`
+          : '<td class="advanced-col muted">-</td>';
+        const timeoutCell = (r.mode === "text") ? `<td class="advanced-col"><input id="x-${r.row_key}" value="${requestTimeout}" placeholder="90" oninput="markDirty(this)" /></td>`
+          : '<td class="advanced-col muted">-</td>';
+        tr.innerHTML = `
+          <td>${r.title}<div class="muted">${r.source}</div></td>
+          ${providerCell}
+          ${modelCell}
+          ${baseUrlCell}
+          <td><select id="k-${r.row_key}" onchange="markDirty(this)">${envOptions(keyEnv)}</select></td>
+          ${thinkingCell}
+          ${streamCell}
+          ${budgetCell}
+          ${maxTokensCell}
+          ${timeoutCell}
+          <td>${envStatus}</td>`;
+        body.appendChild(tr);
+      });
+      applyAdvancedColsVisibility();
+    }
+    function buildSavePayload(rowKey, row) {
+      const api_key_env = document.getElementById(`k-${rowKey}`).value || null;
+      let mergedExtra = { ...(byAgent[row.agent_name]?.extra || {}) };
+      if (row.mode === "tavily") {
+        mergedExtra.tavily_config = { api_key_env };
+      } else if (row.mode === "firecrawl") {
+        mergedExtra.firecrawl_config = { api_key_env };
+      }
+      if (row.mode === "text") {
+        const provider_name = document.getElementById(`p-${rowKey}`).value || null;
+        const model_name = document.getElementById(`m-${rowKey}`).value || null;
+        const api_base_url = document.getElementById(`b-${rowKey}`).value || null;
+        const max_output_tokens = document.getElementById(`o-${rowKey}`).value;
+        const thinking_budget_tokens = document.getElementById(`g-${rowKey}`).value;
+        const request_timeout_seconds = document.getElementById(`x-${rowKey}`).value;
+        return {
+          provider_name, model_name, api_base_url, api_key_env,
+          thinking_mode: document.getElementById(`t-${rowKey}`).value,
+          thinking_budget_tokens: thinking_budget_tokens ? Number(thinking_budget_tokens) : null,
+          max_output_tokens: max_output_tokens ? Number(max_output_tokens) : null,
+          request_timeout_seconds: request_timeout_seconds ? Number(request_timeout_seconds) : null,
+          streaming_enabled: document.getElementById(`s-${rowKey}`).checked,
+          extra: mergedExtra
+        };
+      } else if (row.mode === "image") {
+        return {
+          image_provider_name: document.getElementById(`p-${rowKey}`).value || null,
+          image_model_name: document.getElementById(`m-${rowKey}`).value || null,
+          image_api_base_url: document.getElementById(`b-${rowKey}`).value || null,
+          image_api_key_env: api_key_env
+        };
+      } else if (row.mode === "video") {
+        return {
+          video_provider_name: document.getElementById(`p-${rowKey}`).value || null,
+          video_model_name: document.getElementById(`m-${rowKey}`).value || null,
+          video_api_base_url: document.getElementById(`b-${rowKey}`).value || null,
+          video_api_key_env: api_key_env
+        };
+      } else if (row.mode === "tavily" || row.mode === "firecrawl") {
+        return { extra: mergedExtra };
+      }
+      return null;
+    }
+
+    async function saveAll() {
+      const fab = document.getElementById("save-fab");
+      fab.classList.add("saving");
+      let saved = 0;
+      let failed = 0;
+      for (const row of rows.filter(r => !r.isDivider)) {
+        try {
+          const payload = buildSavePayload(row.row_key, row);
+          if (!payload) continue;
+          byAgent[row.agent_name] = await api(`/agent-configs/${row.agent_name}`, { method: "PATCH", body: JSON.stringify(payload) });
+          // Clear dirty markers for this row
+          row.element?.querySelectorAll(".dirty").forEach(el => el.classList.remove("dirty"));
+          saved++;
+        } catch (e) {
+          console.error("Failed to save", row.row_key, e);
+          failed++;
+        }
+      }
+      render();
+      fab.classList.remove("saving");
+      updateSaveFab();
+      showSaveToast(failed === 0 ? `Saved ${saved} configuration${saved !== 1 ? "s" : ""}` : `Saved ${saved}, ${failed} failed`);
+    }
+
+    function updateSaveFab() {
+      const dirtyCount = document.querySelectorAll("#cfg-body .dirty").length;
+      const count = document.getElementById("save-fab-count");
+      if (dirtyCount > 0) {
+        count.style.display = "flex";
+        count.textContent = dirtyCount;
+      } else {
+        count.style.display = "none";
+      }
+    }
+    async function refreshIntegrationTable() {
+      const body = document.getElementById("int-cfg-body");
+      if (!body) return;
+      let configs = integrationConfigs;
+      try { configs = await api("/integration-configs"); } catch (_e) {}
+      body.innerHTML = configs.map(c => {
+        const platform = String(c.platform || "");
+        const configKey = String(c.config_key || "");
+        const label = String(c.label || "");
+        const envVar = String(c.env_var || "");
+        const isSet = c.is_set;
+        const updated = c.updated_at ? c.updated_at.slice(0,10) : "-";
+        return '<tr>'
+          + '<td>' + platform + '</td>'
+          + '<td><code>' + configKey + '</code></td>'
+          + '<td>' + label + '</td>'
+          + '<td><select onchange="saveIntegrationConfig(\'' + platform + '\', \'' + configKey + '\', this.value)">'
+          + envOptionsIntegration(envVar)
+          + '</select></td>'
+          + '<td>' + (c.is_required ? "Yes" : "No") + '</td>'
+          + '<td>' + (isSet ? '<span class="badge">found</span>' : '<span class="badge badge-missing">missing</span>') + '</td>'
+          + '<td><span class="muted">' + updated + '</span></td>'
+          + '</tr>';
+      }).join("");
+    }
+    function envOptionsIntegration(selected) {
+      const seen = new Set();
+      const names = [];
+      (envVars || []).forEach(function(n) { if (!seen.has(n)) { seen.add(n); names.push(n); } });
+      ["CRISPY_API_KEY_SHOPIFY_DOMAIN", "CRISPY_API_KEY_SHOPIFY", "CRISPY_API_KEY_META", "CRISPY_API_KEY_META_ACCOUNT"].forEach(function(n) { if (!seen.has(n)) { seen.add(n); names.push(n); } });
+      names.sort();
+      var opts = '<option value="">(none)</option>';
+      names.forEach(function(name) {
+        opts += '<option value="' + name + '"' + (selected === name ? ' selected' : '') + '>' + name + '</option>';
+      });
+      return opts;
+    }
+    async function saveIntegrationConfig(platform, configKey, envVar) {
+      try {
+        await api("/integration-configs/" + encodeURIComponent(platform) + "/" + encodeURIComponent(configKey), { method: "PATCH", body: JSON.stringify({ env_var: envVar }) });
+        integrationConfigs = await api("/integration-configs");
+        refreshIntegrationTable();
+        showSaveToast("Saved: " + platform + " / " + configKey);
+      } catch (err) { alert(err.message); }
+    }
+    async function init() {
+      try { envVars = await api("/agent-configs/env-vars"); } catch (_err) {}
+      render();
+      refreshIntegrationTable();
+      document.getElementById("save-fab").addEventListener("click", saveAll);
+    }
+    init();
+  </script>
+</body>
+{% endblock %}

@@ -1,0 +1,634 @@
+{% extends "base.html" %}
+{% block title %}Crispy Shop Analysis{% endblock %}
+{% block styles %}
+  :root {
+    --bg: #f8fafc;
+    --bg-alt: #f1f5f9;
+    --card: #ffffff;
+    --text: #0f172a;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --accent: #059669;
+    --radius: 16px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background:
+      radial-gradient(circle at 10% -20%, #d1fae5 0%, transparent 40%),
+      radial-gradient(circle at 90% -20%, #e0e7ff 0%, transparent 42%),
+      linear-gradient(180deg, var(--bg-alt), var(--bg) 30%);
+  }
+  .app-shell { width: min(1100px, calc(100% - 24px)); margin: 22px auto 30px auto; }
+  .hero { display:flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-bottom: 14px; }
+  h1, h2, h3 { margin: 0; line-height: 1.25; }
+  h1 { font-size: 27px; letter-spacing: -0.02em; }
+  h2 { font-size: 19px; margin-bottom: 10px; }
+  .subtitle { margin-top: 6px; color: var(--muted); font-size: 14px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  a { color: #047857; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .nav-link {
+    border: 1px solid var(--line);
+    background: #fff;
+    padding: 8px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 20px;
+    background: var(--card);
+    box-shadow: 0 8px 24px rgba(30, 62, 50, 0.07);
+    margin-bottom: 16px;
+  }
+  input, textarea, select {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-family: inherit;
+    font-size: 14px;
+    background: #fff;
+    color: var(--text);
+  }
+  input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(31, 122, 98, 0.15); }
+  label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+  button {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 18px;
+    font-family: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    background: #fff;
+    color: var(--text);
+    font-weight: 600;
+    transition: background 0.15s;
+  }
+  button:hover { background: #f1f5f9; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { background: #047857; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+  .form-row > div { flex: 1; min-width: 200px; }
+  .result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .result-panel {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+    background: #f8fafc;
+    max-height: 600px;
+    overflow-y: auto;
+  }
+  .result-panel pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .history-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    font-size: 13px;
+  }
+  .history-item:last-child { border-bottom: none; }
+  #shop-mgmt-card {
+    padding: 16px 18px;
+    background: #f8fafc;
+    box-shadow: 0 3px 12px rgba(30, 62, 50, 0.045);
+  }
+  .shop-manager-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .shop-manager-title {
+    margin: 0 0 2px;
+    font-size: 18px;
+    line-height: 1.2;
+    font-weight: 650;
+  }
+  .shop-manager-copy { color: var(--muted); font-size: 12px; line-height: 1.35; }
+  .shop-list {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    background: #fff;
+  }
+  .shop-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .shop-toolbar label {
+    margin: 0;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .shop-toolbar select {
+    width: auto;
+    min-width: 128px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    font-size: 12px;
+  }
+  .shop-toolbar button {
+    padding: 6px 9px;
+    border-radius: 8px;
+    font-size: 12px;
+  }
+  .shop-row {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) minmax(120px, 0.6fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .shop-row:last-child { border-bottom: none; }
+  .shop-name { font-size: 13px; font-weight: 650; line-height: 1.2; }
+  .shop-meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .shop-actions { display: flex; gap: 6px; justify-content: flex-end; }
+  .shop-actions button { font-size: 11px; padding: 5px 8px; border-radius: 8px; }
+  .shop-actions .danger { color: var(--danger); }
+  .shop-create-row {
+    display: grid;
+    grid-template-columns: 1fr minmax(150px, 0.35fr) auto;
+    gap: 10px;
+    align-items: end;
+    margin-top: 10px;
+  }
+  .shop-create-row label { font-size: 12px; }
+  .shop-create-row input { padding: 8px 10px; font-size: 13px; border-radius: 8px; }
+  .shop-create-row button { padding: 8px 14px; font-size: 13px; border-radius: 8px; }
+  .shop-status {
+    min-height: 16px;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .shop-status.error { color: var(--danger); }
+  .shop-status.ok { color: var(--accent); }
+  .status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .status-badge.completed { background: #ecfdf5; color: #065f46; }
+  .status-badge.failed { background: #fef2f2; color: #991b1b; }
+  .status-badge.running { background: #fffbeb; color: #92400e; }
+  .loading { text-align: center; padding: 32px; color: var(--muted); }
+  .loading .spinner {
+    display: inline-block;
+    width: 24px; height: 24px;
+    border: 3px solid var(--line);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 860px) {
+    .result-grid { grid-template-columns: 1fr; }
+    .form-row > div { min-width: 100%; }
+    .shop-toolbar { justify-content: flex-start; flex-wrap: wrap; }
+    .shop-row, .shop-create-row { grid-template-columns: 1fr; }
+    .shop-actions { justify-content: flex-start; }
+  }
+{% endblock %}
+{% block body %}
+<body>
+  <main class="app-shell">
+    <header class="hero">
+      <div>
+        <h1>Shop Analysis</h1>
+        <div class="subtitle">Research store positioning, SEO, and competitive landscape. Results feed into GM memory for creative strategy.</div>
+      </div>
+      <a class="nav-link" href="/dashboard">Back to Dashboard</a>
+    </header>
+
+    <section class="card" id="shop-mgmt-card">
+      <div class="shop-manager-head">
+        <div>
+          <h2 class="shop-manager-title">Shops</h2>
+          <div class="shop-manager-copy">Create a shop, run analysis for it, then choose that shop in Create Run so GM can reuse the shop context.</div>
+        </div>
+        <button onclick="toggleShopMgmt()" style="font-size:12px;padding:4px 10px;" id="btn-toggle-shops">-</button>
+      </div>
+      <div id="shop-mgmt-body">
+        <div class="shop-toolbar">
+          <label for="shop-sort-key">Sort</label>
+          <select id="shop-sort-key" onchange="renderShopMgmt()">
+            <option value="name">Name</option>
+            <option value="run_count">Runs</option>
+            <option value="analysis_count">Analyses</option>
+            <option value="category_count">Categories</option>
+          </select>
+          <button type="button" id="shop-sort-dir" onclick="toggleShopSortDirection()">A-Z</button>
+        </div>
+        <div id="shop-list-mgmt" class="shop-list"></div>
+        <div class="shop-create-row">
+          <div>
+            <label>New Shop</label>
+            <input id="new-shop-name" placeholder="Shop name" />
+          </div>
+          <div>
+            <label>Industry</label>
+            <input id="new-shop-industry" placeholder="general" />
+          </div>
+          <div>
+            <button id="btn-add-shop" onclick="addShop()">Add Shop</button>
+          </div>
+        </div>
+        <div id="shop-mgmt-status" class="shop-status"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>New Analysis</h2>
+      <div class="form-row" style="margin-bottom:10px;">
+        <div>
+          <label>Shop</label>
+          <select id="shop-name" onchange="onShopAnalysisShopChange()">
+            <option value="">Loading shops...</option>
+          </select>
+          <input id="shop-id" type="hidden" />
+        </div>
+        <div>
+          <label>Industry Code</label>
+          <input id="industry-code" value="general" placeholder="Auto-filled from shop" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div>
+          <label>Store URL (required)</label>
+          <input id="store-url" type="url" placeholder="https://example.com" />
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <label>Store Description (optional)</label>
+        <textarea id="store-description" rows="2" placeholder="Brief description: what they sell, target market, known positioning..."></textarea>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
+        <button class="primary" id="btn-run" onclick="runAnalysis()">Run Analysis</button>
+        <span id="run-status" class="muted"></span>
+      </div>
+    </section>
+
+    <section class="card" id="results-card" style="display:none;">
+      <h2 id="results-title">Results</h2>
+      <div class="result-grid">
+        <div>
+          <h3>Store Profile</h3>
+          <div class="result-panel" id="profile-panel">
+            <div class="loading" id="profile-loading"><div class="spinner"></div><div>Analyzing store...</div></div>
+            <pre id="profile-content" style="display:none;"></pre>
+            <div id="profile-error" class="muted" style="display:none;color:#dc2626;"></div>
+          </div>
+        </div>
+        <div>
+          <h3>Competitor Analysis</h3>
+          <div class="result-panel" id="competitor-panel">
+            <div class="loading" id="competitor-loading"><div class="spinner"></div><div>Researching competitors...</div></div>
+            <div id="competitor-content" style="display:none;"></div>
+            <div id="competitor-error" class="muted" style="display:none;color:#dc2626;"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>History</h2>
+      <div id="history-list" class="muted">Loading...</div>
+    </section>
+  </main>
+
+  <script>
+    async function api(path, options = {}) {
+      const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    }
+
+    let analysisShops = [];
+    let shopSortDirection = "asc";
+    function escHtml(v) {
+      return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    function escAttr(v) {
+      return escHtml(v).replace(/"/g, "&quot;");
+    }
+    function setShopStatus(message, kind = "") {
+      const el = document.getElementById("shop-mgmt-status");
+      el.textContent = message || "";
+      el.className = "shop-status" + (kind ? " " + kind : "");
+    }
+
+    // ── Shop Management ──
+    async function loadShopMgmt() {
+      try {
+        const data = await api("/shops");
+        analysisShops = data.shops || [];
+        renderShopMgmt();
+        renderShopSelect();
+        if (!document.getElementById("shop-name").value && analysisShops.length) {
+          document.getElementById("shop-name").value = analysisShops[0].id;
+        }
+        onShopAnalysisShopChange();
+      } catch (err) {
+        setShopStatus("Failed to load shops: " + err.message, "error");
+      }
+    }
+
+    function sortedShops() {
+      const key = document.getElementById("shop-sort-key")?.value || "name";
+      const direction = shopSortDirection === "desc" ? -1 : 1;
+      return [...analysisShops].sort((a, b) => {
+        if (key === "name") {
+          return direction * String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
+        }
+        const av = Number(a[key] || 0);
+        const bv = Number(b[key] || 0);
+        if (av === bv) return String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
+        return direction * (av - bv);
+      });
+    }
+
+    function toggleShopSortDirection() {
+      shopSortDirection = shopSortDirection === "asc" ? "desc" : "asc";
+      updateShopSortLabel();
+      renderShopMgmt();
+    }
+
+    function updateShopSortLabel() {
+      const key = document.getElementById("shop-sort-key")?.value || "name";
+      document.getElementById("shop-sort-dir").textContent = key === "name"
+        ? (shopSortDirection === "asc" ? "A-Z" : "Z-A")
+        : (shopSortDirection === "asc" ? "Low-High" : "High-Low");
+    }
+
+    function renderShopSelect() {
+      const sel = document.getElementById("shop-name");
+      const current = sel.value || document.getElementById("shop-id").value;
+      sel.innerHTML = analysisShops.map(s =>
+        '<option value="' + escAttr(s.id) + '">' + escHtml(s.name) + '</option>'
+      ).join("");
+      if (current && analysisShops.some(s => s.id === current)) {
+        sel.value = current;
+      }
+    }
+
+    function renderShopMgmt() {
+      const list = document.getElementById("shop-list-mgmt");
+      updateShopSortLabel();
+      const shops = sortedShops();
+      if (!shops.length) {
+        list.innerHTML = '<div class="shop-row"><div><div class="shop-name">No shops yet</div><div class="shop-meta">Create one below, then run analysis for it.</div></div></div>';
+        return;
+      }
+      list.innerHTML = shops.map(s => {
+        const details = [
+          (s.category_count || 0) + " categories",
+          (s.run_count || 0) + " runs",
+          (s.analysis_count || 0) + " analyses"
+        ].join(" · ");
+        return '<div class="shop-row" data-shop-id="' + escAttr(s.id) + '">'
+          + '<div><div class="shop-name">' + escHtml(s.name) + '</div><div class="shop-meta">' + escHtml(s.store_url || "No store URL saved") + '</div></div>'
+          + '<div><div class="shop-name">' + escHtml(s.industry_code || "general") + '</div><div class="shop-meta">' + escHtml(details) + '</div></div>'
+          + '<div class="shop-actions">'
+          + '<button type="button" data-action="select-shop" data-shop-id="' + escAttr(s.id) + '">Use</button>'
+          + '<button type="button" data-action="rename-shop" data-shop-id="' + escAttr(s.id) + '">Rename</button>'
+          + '<button type="button" class="danger" data-action="archive-shop" data-shop-id="' + escAttr(s.id) + '">Archive</button>'
+          + '</div></div>';
+      }).join("");
+      list.querySelectorAll("button[data-action]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const action = btn.dataset.action;
+          const shopId = btn.dataset.shopId;
+          if (action === "select-shop") selectShop(shopId);
+          if (action === "rename-shop") renameShopPrompt(shopId);
+          if (action === "archive-shop") archiveShopConfirm(shopId);
+        });
+      });
+    }
+
+    async function addShop() {
+      const input = document.getElementById("new-shop-name");
+      const name = input.value.trim();
+      if (!name) { setShopStatus("Enter a shop name first.", "error"); return; }
+      const btn = document.getElementById("btn-add-shop");
+      btn.disabled = true;
+      setShopStatus("Creating shop...");
+      try {
+        const created = await api("/shops", { method: "POST", body: JSON.stringify({
+          name: name,
+          industry_code: document.getElementById("new-shop-industry").value.trim() || document.getElementById("industry-code").value.trim() || "general",
+          store_url: document.getElementById("store-url").value.trim() || null,
+          description: document.getElementById("store-description").value.trim() || null
+        }) });
+        input.value = "";
+        document.getElementById("new-shop-industry").value = "";
+        await loadShopMgmt();
+        selectShop(created.id);
+        setShopStatus("Created shop: " + created.name, "ok");
+      } catch (err) {
+        setShopStatus("Could not create shop: " + err.message, "error");
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function selectShop(shopId) {
+      const shop = analysisShops.find(s => s.id === shopId);
+      if (!shop) return;
+      document.getElementById("shop-name").value = shop.id;
+      onShopAnalysisShopChange();
+      setShopStatus("Selected shop: " + shop.name, "ok");
+    }
+
+    function renameShopPrompt(shopId) {
+      const shop = analysisShops.find(s => s.id === shopId);
+      if (!shop) return;
+      const newName = prompt("Rename shop:", shop.name);
+      if (!newName || newName === shop.name) return;
+      api("/shops/" + encodeURIComponent(shopId), { method: "PATCH", body: JSON.stringify({ name: newName }) })
+        .then(() => loadShopMgmt())
+        .then(() => setShopStatus("Renamed shop.", "ok"))
+        .catch(err => setShopStatus("Could not rename shop: " + err.message, "error"));
+    }
+
+    function archiveShopConfirm(shopId) {
+      const shop = analysisShops.find(s => s.id === shopId);
+      if (!shop) return;
+      if (!confirm('Archive shop "' + shop.name + '"? Historical runs and GM memory will remain available.')) return;
+      api("/shops/" + encodeURIComponent(shopId), { method: "PATCH", body: JSON.stringify({ archived: true }) })
+        .then(() => {
+          if (document.getElementById("shop-id").value === shopId) {
+            document.getElementById("shop-name").value = "";
+            document.getElementById("shop-id").value = "";
+          }
+          return loadShopMgmt();
+        })
+        .then(() => setShopStatus("Archived shop: " + shop.name, "ok"))
+        .catch(err => setShopStatus("Could not archive shop: " + err.message, "error"));
+    }
+
+    function toggleShopMgmt() {
+      const body = document.getElementById("shop-mgmt-body");
+      const btn = document.getElementById("btn-toggle-shops");
+      if (body.style.display === "none") { body.style.display = "block"; btn.textContent = "-"; }
+      else { body.style.display = "none"; btn.textContent = "+"; }
+    }
+
+    async function loadShopAnalysisShops() {
+      try {
+        const data = await api("/shops");
+        analysisShops = data.shops || [];
+        renderShopMgmt();
+        renderShopSelect();
+        if (!document.getElementById("shop-name").value && analysisShops.length) {
+          document.getElementById("shop-name").value = analysisShops[0].id;
+        }
+        onShopAnalysisShopChange();
+      } catch (err) {}
+    }
+
+    function onShopAnalysisShopChange() {
+      const shopId = document.getElementById("shop-name").value;
+      const shop = analysisShops.find(s => s.id === shopId);
+      document.getElementById("shop-id").value = shop ? shop.id : "";
+      if (shop) {
+        document.getElementById("industry-code").value = shop.industry_code || "general";
+        if (shop.store_url && !document.getElementById("store-url").value) document.getElementById("store-url").value = shop.store_url;
+        if (shop.description && !document.getElementById("store-description").value) document.getElementById("store-description").value = shop.description;
+      }
+      loadHistory();
+    }
+
+    function selectedShop() {
+      const shopId = document.getElementById("shop-id").value || document.getElementById("shop-name").value;
+      return analysisShops.find(s => s.id === shopId) || null;
+    }
+
+    async function runAnalysis() {
+      const storeUrl = document.getElementById("store-url").value.trim();
+      if (!storeUrl) { alert("Please enter a store URL."); return; }
+      const shop = selectedShop();
+
+      const btn = document.getElementById("btn-run");
+      const status = document.getElementById("run-status");
+      btn.disabled = true;
+      status.textContent = "Running...";
+
+      const card = document.getElementById("results-card");
+      card.style.display = "block";
+      document.getElementById("results-title").textContent = "Results: " + storeUrl;
+
+      document.getElementById("profile-loading").style.display = "block";
+      document.getElementById("profile-content").style.display = "none";
+      document.getElementById("profile-error").style.display = "none";
+      document.getElementById("competitor-loading").style.display = "block";
+      document.getElementById("competitor-content").style.display = "none";
+      document.getElementById("competitor-error").style.display = "none";
+
+      try {
+        const data = await api("/shop-analysis/run", {
+          method: "POST",
+          body: JSON.stringify({
+            shop_id: document.getElementById("shop-id").value || null,
+            store_url: storeUrl,
+            description: document.getElementById("store-description").value.trim(),
+            industry_code: document.getElementById("industry-code").value.trim() || "general",
+            workspace_name: shop ? shop.name : "workspace_demo",
+            project_name: "shop_analysis",
+          }),
+        });
+
+        document.getElementById("profile-loading").style.display = "none";
+        if (data.profile) {
+          document.getElementById("profile-content").style.display = "block";
+          document.getElementById("profile-content").textContent = JSON.stringify(data.profile.content, null, 2);
+        } else {
+          document.getElementById("profile-error").style.display = "block";
+          document.getElementById("profile-error").textContent = data.error_message || "Profile analysis failed.";
+        }
+
+        document.getElementById("competitor-loading").style.display = "none";
+        if (data.competitor_analysis) {
+          document.getElementById("competitor-content").style.display = "block";
+          const report = data.competitor_analysis.content.report || "";
+          document.getElementById("competitor-content").innerHTML = report
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/\\n/g, "<br>")
+            .replace(/## (.+)/g, "<h3>$1</h3>")
+            .replace(/### (.+)/g, "<h4>$1</h4>")
+            .replace(/\\*\\*(.+?)\\*\\*/g, "<b>$1</b>");
+        } else {
+          document.getElementById("competitor-error").style.display = "block";
+          document.getElementById("competitor-error").textContent = data.error_message || "Competitor analysis failed.";
+        }
+
+        status.textContent = "Done!";
+        loadHistory();
+      } catch (err) {
+        status.textContent = "Error: " + err.message;
+        document.getElementById("profile-loading").style.display = "none";
+        document.getElementById("competitor-loading").style.display = "none";
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function loadHistory() {
+      try {
+        const shopId = document.getElementById("shop-id").value;
+        const shop = selectedShop();
+        const shopName = shop ? shop.name : "workspace_demo";
+        const historyUrl = shopId
+          ? "/shop-analysis/history?shop_id=" + encodeURIComponent(shopId)
+          : "/shop-analysis/history?workspace_name=" + encodeURIComponent(shopName) + "&project_name=shop_analysis";
+        const data = await api(historyUrl);
+        const list = document.getElementById("history-list");
+        if (!data.items.length) {
+          list.innerHTML = '<div class="muted">No analyses yet.</div>';
+          return;
+        }
+        list.innerHTML = data.items.map(item => {
+          const badgeClass = item.status === "completed" ? "completed" : "failed";
+          const dt = new Date(item.created_at);
+          const timeStr = String(dt.getMonth()+1).padStart(2,'0') + "-" +
+            String(dt.getDate()).padStart(2,'0') + " " +
+            String(dt.getHours()).padStart(2,'0') + ":" +
+            String(dt.getMinutes()).padStart(2,'0');
+          return '<div class="history-item">'
+            + '<div><b>' + item.store_url.replace(/</g, "&lt;") + '</b>'
+            + ' <span class="status-badge ' + badgeClass + '">' + item.source_type + '</span>'
+            + '<br><span class="muted">' + (item.summary || '').replace(/</g, "&lt;").substring(0, 100) + '</span></div>'
+            + '<div class="muted">' + timeStr + '</div>'
+            + '</div>';
+        }).join("");
+      } catch (err) {
+        document.getElementById("history-list").innerHTML = '<div class="muted">Failed to load history.</div>';
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => { loadShopMgmt(); loadHistory(); });
+  </script>
+</body>
+{% endblock %}
