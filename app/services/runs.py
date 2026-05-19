@@ -708,7 +708,11 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
     elif task.stage_name == "storyboard_image_generation":
         payload = {**base, "video_scripts": _stage_output_optional(db, run.id, "video_scripting")}
     elif task.stage_name == "video_generation":
-        payload = {**base, "video_scripts": _stage_output_optional(db, run.id, "video_scripting")}
+        payload = {
+            **base,
+            "video_scripts": _stage_output_optional(db, run.id, "video_scripting"),
+            "storyboards": _stage_output_optional(db, run.id, "storyboard_image_generation"),
+        }
     elif task.stage_name == "visual_quality_assessment":
         payload = {
             **base,
