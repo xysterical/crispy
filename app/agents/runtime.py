@@ -1186,6 +1186,79 @@ class AgentsRuntime:
             artifacts=artifacts,
         )
 
+    def _build_tiktok_payload(
+        self,
+        *,
+        product_name: str,
+        primary_value: str,
+        cta: str,
+        tiktok_style: str,
+        video_duration: float,
+        message: str | None = None,
+    ) -> dict:
+        """Build TikTok-specific script payload from creative specs.
+
+        The LLM provides hook/script/shot_list, but the TikTok-specific
+        structure (style, timing, on_screen_text, compliance_notes) should
+        be built deterministically from creative_specs.
+        """
+        opening_hook = f"POV: your {product_name} solves this in seconds"
+        proof_points = [primary_value]
+        if message:
+            proof_points.append(message)
+        proof_points = proof_points[:2]
+        if tiktok_style == "direct_response_ad":
+            opening_hook = f"Stop scrolling if you need {primary_value}"
+            cta_intensity = "strong"
+        elif tiktok_style == "shop_account_content":
+            opening_hook = f"Packing one small upgrade from our shop: {product_name}"
+            cta_intensity = "soft"
+        else:
+            cta_intensity = "medium"
+        return {
+            "style": tiktok_style,
+            "opening_hook": opening_hook,
+            "on_screen_text": [
+                opening_hook,
+                f"Proof: {primary_value}",
+                cta,
+            ],
+            "voiceover_lines": [
+                opening_hook,
+                f"Here is how {product_name} helps with {primary_value}.",
+                f"If this fits your routine, {cta}.",
+            ],
+            "shot_timing": [
+                {
+                    "start": 0,
+                    "end": 2,
+                    "visual": "fast vertical product reveal in a realistic use scene",
+                    "text_overlay": opening_hook,
+                    "intent": "thumb_stop",
+                },
+                {
+                    "start": 2,
+                    "end": 8,
+                    "visual": "close product demo with the key proof point visible",
+                    "text_overlay": f"Proof: {primary_value}",
+                    "intent": "proof",
+                },
+                {
+                    "start": 8,
+                    "end": video_duration,
+                    "visual": "product-forward end frame with clear next step",
+                    "text_overlay": cta,
+                    "intent": "cta",
+                },
+            ],
+            "product_proof_points": proof_points,
+            "cta": cta,
+            "compliance_notes": [
+                "Do not invent certifications, discounts, platform trends, or unsupported performance claims.",
+                f"CTA intensity: {cta_intensity}.",
+            ],
+        }
+
     def run_video_scripting(
         self,
         run_id: str,
@@ -1229,15 +1302,6 @@ class AgentsRuntime:
         scripts = []
         try:
             parsed = self._parse_llm_json(response_text, schema_key="scripts")
-            for entry in parsed["scripts"]:
-                scripts.append(
-                    VideoScriptItem(
-                        variant_id=entry.get("variant_id", f"V{len(scripts)+1}"),
-                        hook=entry.get("hook", ""),
-                        script=entry.get("script", ""),
-                        shot_list=entry.get("shot_list", []),
-                    )
-                )
         except ValueError:
             model_used = model_used + ":fallback_to_template"
             for item in variant_set.variants:
@@ -1249,59 +1313,15 @@ class AgentsRuntime:
                 hook_base = item.hook or item.angle or primary_value
                 tiktok_payload = None
                 if is_tiktok_shop:
-                    opening_hook = f"POV: your {product_name} solves this in seconds"
-                    proof_points = [primary_value, item.message][:2]
-                    if tiktok_style == "direct_response_ad":
-                        opening_hook = f"Stop scrolling if you need {primary_value}"
-                        cta_intensity = "strong"
-                    elif tiktok_style == "shop_account_content":
-                        opening_hook = f"Packing one small upgrade from our shop: {product_name}"
-                        cta_intensity = "soft"
-                    else:
-                        cta_intensity = "medium"
-                    tiktok_payload = {
-                        "style": tiktok_style,
-                        "opening_hook": opening_hook,
-                        "on_screen_text": [
-                            opening_hook,
-                            f"Proof: {primary_value}",
-                            cta,
-                        ],
-                        "voiceover_lines": [
-                            opening_hook,
-                            f"Here is how {product_name} helps with {primary_value}.",
-                            f"If this fits your routine, {cta}.",
-                        ],
-                        "shot_timing": [
-                            {
-                                "start": 0,
-                                "end": 2,
-                                "visual": "fast vertical product reveal in a realistic use scene",
-                                "text_overlay": opening_hook,
-                                "intent": "thumb_stop",
-                            },
-                            {
-                                "start": 2,
-                                "end": 8,
-                                "visual": "close product demo with the key proof point visible",
-                                "text_overlay": f"Proof: {primary_value}",
-                                "intent": "proof",
-                            },
-                            {
-                                "start": 8,
-                                "end": float(creative_specs.get("video_duration_seconds") or 12),
-                                "visual": "product-forward end frame with clear next step",
-                                "text_overlay": cta,
-                                "intent": "cta",
-                            },
-                        ],
-                        "product_proof_points": proof_points,
-                        "cta": cta,
-                        "compliance_notes": [
-                            "Do not invent certifications, discounts, platform trends, or unsupported performance claims.",
-                            f"CTA intensity: {cta_intensity}.",
-                        ],
-                    }
+                    video_duration = float(creative_specs.get("video_duration_seconds") or 12)
+                    tiktok_payload = self._build_tiktok_payload(
+                        product_name=product_name,
+                        primary_value=primary_value,
+                        cta=cta,
+                        tiktok_style=tiktok_style,
+                        video_duration=video_duration,
+                        message=item.message,
+                    )
                 hook_line = item.hook or f"{item.variant_id}: {product_name} for {primary_value}"
                 scripts.append(
                     VideoScriptItem(
@@ -1319,6 +1339,45 @@ class AgentsRuntime:
                             f"practical demo of {product_name} for {audience}",
                             f"product-forward CTA end frame: {cta}",
                         ],
+                        tiktok=tiktok_payload,
+                    )
+                )
+        else:
+            for entry in parsed["scripts"]:
+                tiktok_payload = None
+                if is_tiktok_shop:
+                    entry_vid = entry.get("variant_id", "")
+                    matching_variant = None
+                    for v in variant_set.variants:
+                        if v.variant_id == entry_vid:
+                            matching_variant = v
+                            break
+                    if matching_variant:
+                        primary_value = str(
+                            matching_variant.angle or matching_variant.message or "core product benefit"
+                        )
+                        message = matching_variant.message
+                    elif value_props:
+                        primary_value = value_props[(len(scripts)) % len(value_props)]
+                        message = None
+                    else:
+                        primary_value = "core product benefit"
+                        message = None
+                    video_duration = float(creative_specs.get("video_duration_seconds") or 12)
+                    tiktok_payload = self._build_tiktok_payload(
+                        product_name=product_name,
+                        primary_value=primary_value,
+                        cta=cta,
+                        tiktok_style=tiktok_style,
+                        video_duration=video_duration,
+                        message=message,
+                    )
+                scripts.append(
+                    VideoScriptItem(
+                        variant_id=entry.get("variant_id", f"V{len(scripts)+1}"),
+                        hook=entry.get("hook", ""),
+                        script=entry.get("script", ""),
+                        shot_list=entry.get("shot_list", []),
                         tiktok=tiktok_payload,
                     )
                 )

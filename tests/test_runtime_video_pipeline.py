@@ -433,3 +433,69 @@ def test_video_scripting_llm_missing_scripts_key_falls_back():
     assert ":fallback_to_template" in output.model_used
     assert len(output.payload["scripts"]) == 1
     assert output.payload["scripts"][0]["variant_id"] == "V1"
+
+
+def test_video_scripting_llm_success_path_populates_tiktok_payload():
+    """When pipeline_mode is tiktok_shop_video and LLM succeeds, tiktok field must be populated."""
+    runtime = AgentsRuntime()
+
+    llm_output = (
+        '{"scripts": ['
+        '{"variant_id": "V1", "hook": "TikTok hook text", "script": "TikTok script body", "shot_list": ["TikTok shot 1", "TikTok shot 2"]}'
+        "]}"
+    )
+    runtime._chat_complete = lambda *args, **kwargs: (llm_output, "gpt-4.1", 0.05)
+
+    variant_set = VariantSet(
+        variants=[
+            VariantCandidate(
+                variant_id="V1",
+                angle="organized packing",
+                hook="Pack faster without messy leaks",
+                message="Keeps travel-size bottles upright and separated.",
+            )
+        ]
+    )
+    intake = ProductIntake(
+        product_name="travel toiletry bag",
+        business_context={},
+        asset_media_summary="Compact zip organizer with clear compartments.",
+    )
+
+    output = runtime.run_video_scripting(
+        run_id="test-tiktok-llm-success",
+        variant_set=variant_set,
+        intake=intake,
+        business_context={
+            "target_audience": "frequent travelers",
+            "key_value_props": ["keeps bottles upright", "clear compartments"],
+            "primary_cta": "Shop Now",
+        },
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"tiktok_video_style": "ugc_demo", "video_duration_seconds": 12},
+        pipeline_mode="tiktok_shop_video",
+    )
+
+    assert output.model_used == "gpt-4.1"
+    assert ":fallback_to_template" not in output.model_used
+    scripts = output.payload["scripts"]
+    assert len(scripts) == 1
+    assert scripts[0]["variant_id"] == "V1"
+    assert scripts[0]["hook"] == "TikTok hook text"
+    assert scripts[0]["script"] == "TikTok script body"
+    assert scripts[0]["shot_list"] == ["TikTok shot 1", "TikTok shot 2"]
+
+    # tiktok payload must be populated
+    tiktok = scripts[0].get("tiktok")
+    assert tiktok is not None, "tiktok field must be populated for tiktok_shop_video pipeline"
+    assert isinstance(tiktok, dict)
+    assert tiktok["style"] == "ugc_demo"
+    assert "opening_hook" in tiktok
+    assert isinstance(tiktok["on_screen_text"], list)
+    assert isinstance(tiktok["voiceover_lines"], list)
+    assert isinstance(tiktok["shot_timing"], list)
+    assert isinstance(tiktok["product_proof_points"], list)
+    assert tiktok["cta"] == "Shop Now"
+    assert isinstance(tiktok["compliance_notes"], list)
+    assert any("CTA intensity" in note for note in tiktok["compliance_notes"])
