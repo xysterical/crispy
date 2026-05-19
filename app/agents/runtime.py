@@ -1556,7 +1556,10 @@ class AgentsRuntime:
         if storyboard_frames:
             frame_urls = []
             for frame in storyboard_frames:
-                data_url = self._local_image_to_data_url(frame["image_uri"])
+                uri = frame.get("image_uri")
+                if not uri:
+                    continue
+                data_url = self._local_image_to_data_url(uri)
                 if data_url:
                     frame_urls.append(data_url)
             if frame_urls:
