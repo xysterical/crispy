@@ -472,6 +472,30 @@ class AgentsRuntime:
         blocks.append(task_instruction)
         return "\n\n".join(block for block in blocks if block).strip()
 
+    def _parse_llm_json(self, response_text: str, schema_key: str) -> dict:
+        """Parse JSON from an LLM response, stripping markdown code fences.
+
+        Returns the full parsed dict on success.  Raises ValueError when
+        ``response_text`` is empty, the JSON is invalid, or *schema_key*
+        is missing from the parsed dict.
+        """
+        if not isinstance(response_text, str) or not response_text.strip():
+            raise ValueError("LLM response text is empty")
+        text = response_text.strip()
+        # Strip ```json ... ``` fences
+        fence_match = re.match(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
+        if fence_match:
+            text = fence_match.group(1).strip()
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Failed to parse LLM JSON response: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(f"LLM response is not a JSON object (got {type(parsed).__name__})")
+        if schema_key not in parsed:
+            raise ValueError(f"Expected key {schema_key!r} not found in LLM JSON response")
+        return parsed
+
     def _business_strategy_handoff(self, *, stage: str, decisions: list[str], risks: list[str], review_questions: list[str]) -> dict:
         return {
             "stage": stage,
@@ -1162,6 +1186,79 @@ class AgentsRuntime:
             artifacts=artifacts,
         )
 
+    def _build_tiktok_payload(
+        self,
+        *,
+        product_name: str,
+        primary_value: str,
+        cta: str,
+        tiktok_style: str,
+        video_duration: float,
+        message: str | None = None,
+    ) -> dict:
+        """Build TikTok-specific script payload from creative specs.
+
+        The LLM provides hook/script/shot_list, but the TikTok-specific
+        structure (style, timing, on_screen_text, compliance_notes) should
+        be built deterministically from creative_specs.
+        """
+        opening_hook = f"POV: your {product_name} solves this in seconds"
+        proof_points = [primary_value]
+        if message:
+            proof_points.append(message)
+        proof_points = proof_points[:2]
+        if tiktok_style == "direct_response_ad":
+            opening_hook = f"Stop scrolling if you need {primary_value}"
+            cta_intensity = "strong"
+        elif tiktok_style == "shop_account_content":
+            opening_hook = f"Packing one small upgrade from our shop: {product_name}"
+            cta_intensity = "soft"
+        else:
+            cta_intensity = "medium"
+        return {
+            "style": tiktok_style,
+            "opening_hook": opening_hook,
+            "on_screen_text": [
+                opening_hook,
+                f"Proof: {primary_value}",
+                cta,
+            ],
+            "voiceover_lines": [
+                opening_hook,
+                f"Here is how {product_name} helps with {primary_value}.",
+                f"If this fits your routine, {cta}.",
+            ],
+            "shot_timing": [
+                {
+                    "start": 0,
+                    "end": 2,
+                    "visual": "fast vertical product reveal in a realistic use scene",
+                    "text_overlay": opening_hook,
+                    "intent": "thumb_stop",
+                },
+                {
+                    "start": 2,
+                    "end": 8,
+                    "visual": "close product demo with the key proof point visible",
+                    "text_overlay": f"Proof: {primary_value}",
+                    "intent": "proof",
+                },
+                {
+                    "start": 8,
+                    "end": video_duration,
+                    "visual": "product-forward end frame with clear next step",
+                    "text_overlay": cta,
+                    "intent": "cta",
+                },
+            ],
+            "product_proof_points": proof_points,
+            "cta": cta,
+            "compliance_notes": [
+                "Do not invent certifications, discounts, platform trends, or unsupported performance claims.",
+                f"CTA intensity: {cta_intensity}.",
+            ],
+        }
+
     def run_video_scripting(
         self,
         run_id: str,
@@ -1201,90 +1298,89 @@ class AgentsRuntime:
                 "Make every shot filmable, product-specific, and constrained by realistic product handling."
             ),
         )
-        _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        response_text, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         scripts = []
-        for item in variant_set.variants:
-            primary_value = (
-                value_props[(len(scripts)) % len(value_props)]
-                if value_props
-                else str(item.angle or item.message or "core product benefit")
-            )
-            hook_base = item.hook or item.angle or primary_value
-            tiktok_payload = None
-            if is_tiktok_shop:
-                opening_hook = f"POV: your {product_name} solves this in seconds"
-                proof_points = [primary_value, item.message][:2]
-                if tiktok_style == "direct_response_ad":
-                    opening_hook = f"Stop scrolling if you need {primary_value}"
-                    cta_intensity = "strong"
-                elif tiktok_style == "shop_account_content":
-                    opening_hook = f"Packing one small upgrade from our shop: {product_name}"
-                    cta_intensity = "soft"
-                else:
-                    cta_intensity = "medium"
-                tiktok_payload = {
-                    "style": tiktok_style,
-                    "opening_hook": opening_hook,
-                    "on_screen_text": [
-                        opening_hook,
-                        f"Proof: {primary_value}",
-                        cta,
-                    ],
-                    "voiceover_lines": [
-                        opening_hook,
-                        f"Here is how {product_name} helps with {primary_value}.",
-                        f"If this fits your routine, {cta}.",
-                    ],
-                    "shot_timing": [
-                        {
-                            "start": 0,
-                            "end": 2,
-                            "visual": "fast vertical product reveal in a realistic use scene",
-                            "text_overlay": opening_hook,
-                            "intent": "thumb_stop",
-                        },
-                        {
-                            "start": 2,
-                            "end": 8,
-                            "visual": "close product demo with the key proof point visible",
-                            "text_overlay": f"Proof: {primary_value}",
-                            "intent": "proof",
-                        },
-                        {
-                            "start": 8,
-                            "end": float(creative_specs.get("video_duration_seconds") or 12),
-                            "visual": "product-forward end frame with clear next step",
-                            "text_overlay": cta,
-                            "intent": "cta",
-                        },
-                    ],
-                    "product_proof_points": proof_points,
-                    "cta": cta,
-                    "compliance_notes": [
-                        "Do not invent certifications, discounts, platform trends, or unsupported performance claims.",
-                        f"CTA intensity: {cta_intensity}.",
-                    ],
-                }
-            hook_line = item.hook or f"{item.variant_id}: {product_name} for {primary_value}"
-            scripts.append(
-                VideoScriptItem(
-                    variant_id=item.variant_id,
-                    hook=hook_line,
-                    script=(
-                        f"Open on {product_name} in a realistic use context that matches the submitted product references. "
-                        f"Show the key proof point in close-up: {primary_value}. "
-                        f"Demonstrate how {product_name} fits the routine of {audience} without inventing unsupported claims. "
-                        f"End with {cta}. Variant hook: {hook_base}. Variant message: {item.message}"
-                    ),
-                    shot_list=[
-                        f"hook reveal of {product_name} in a realistic use context tied to the submitted brief",
-                        f"close-up of {product_name} showing {primary_value}",
-                        f"practical demo of {product_name} for {audience}",
-                        f"product-forward CTA end frame: {cta}",
-                    ],
-                    tiktok=tiktok_payload,
+        try:
+            parsed = self._parse_llm_json(response_text, schema_key="scripts")
+        except ValueError:
+            model_used = model_used + ":fallback_to_template"
+            for item in variant_set.variants:
+                primary_value = (
+                    value_props[(len(scripts)) % len(value_props)]
+                    if value_props
+                    else str(item.angle or item.message or "core product benefit")
                 )
-            )
+                hook_base = item.hook or item.angle or primary_value
+                tiktok_payload = None
+                if is_tiktok_shop:
+                    video_duration = float(creative_specs.get("video_duration_seconds") or 12)
+                    tiktok_payload = self._build_tiktok_payload(
+                        product_name=product_name,
+                        primary_value=primary_value,
+                        cta=cta,
+                        tiktok_style=tiktok_style,
+                        video_duration=video_duration,
+                        message=item.message,
+                    )
+                hook_line = item.hook or f"{item.variant_id}: {product_name} for {primary_value}"
+                scripts.append(
+                    VideoScriptItem(
+                        variant_id=item.variant_id,
+                        hook=hook_line,
+                        script=(
+                            f"Open on {product_name} in a realistic use context that matches the submitted product references. "
+                            f"Show the key proof point in close-up: {primary_value}. "
+                            f"Demonstrate how {product_name} fits the routine of {audience} without inventing unsupported claims. "
+                            f"End with {cta}. Variant hook: {hook_base}. Variant message: {item.message}"
+                        ),
+                        shot_list=[
+                            f"hook reveal of {product_name} in a realistic use context tied to the submitted brief",
+                            f"close-up of {product_name} showing {primary_value}",
+                            f"practical demo of {product_name} for {audience}",
+                            f"product-forward CTA end frame: {cta}",
+                        ],
+                        tiktok=tiktok_payload,
+                    )
+                )
+        else:
+            for entry in parsed["scripts"]:
+                tiktok_payload = None
+                if is_tiktok_shop:
+                    entry_vid = entry.get("variant_id", "")
+                    matching_variant = None
+                    for v in variant_set.variants:
+                        if v.variant_id == entry_vid:
+                            matching_variant = v
+                            break
+                    if matching_variant:
+                        primary_value = str(
+                            matching_variant.angle or matching_variant.message or "core product benefit"
+                        )
+                        message = matching_variant.message
+                    elif value_props:
+                        primary_value = value_props[(len(scripts)) % len(value_props)]
+                        message = None
+                    else:
+                        primary_value = "core product benefit"
+                        message = None
+                    video_duration = float(creative_specs.get("video_duration_seconds") or 12)
+                    tiktok_payload = self._build_tiktok_payload(
+                        product_name=product_name,
+                        primary_value=primary_value,
+                        cta=cta,
+                        tiktok_style=tiktok_style,
+                        video_duration=video_duration,
+                        message=message,
+                    )
+                scripts.append(
+                    VideoScriptItem(
+                        variant_id=entry.get("variant_id", f"V{len(scripts)+1}"),
+                        hook=entry.get("hook", ""),
+                        script=entry.get("script", ""),
+                        shot_list=entry.get("shot_list", []),
+                        tiktok=tiktok_payload,
+                    )
+                )
         pack = VideoScriptPack(
             scripts=scripts,
             product_context=product_context,
@@ -1332,31 +1428,45 @@ class AgentsRuntime:
         )
         estimated_cost = 0.0
         error_text = None
+        response_text: str | None = None
         try:
-            _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+            response_text, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         except Exception as exc:
             model_used = f"{provider}/{model}:storyboard_text_unavailable"
             error_text = str(exc)
+        llm_frame_prompts: dict[str, dict] = {}
+        if response_text is not None:
+            try:
+                parsed = self._parse_llm_json(response_text, schema_key="frames")
+                for frame_data in parsed["frames"]:
+                    llm_frame_prompts[frame_data["frame_id"]] = frame_data
+            except ValueError:
+                model_used = model_used + ":fallback_to_template"
         frames: list[dict] = []
         artifacts: list[dict] = []
         for script in script_pack.scripts:
             for idx in range(3):
                 shot = script.shot_list[idx] if idx < len(script.shot_list) else script.hook
-                tiktok_details = script.tiktok.model_dump() if script.tiktok else {}
-                style_line = (
-                    f"TikTok style: {tiktok_details.get('style')}. "
-                    f"Opening hook: {tiktok_details.get('opening_hook')}. "
-                    if tiktok_details
-                    else ""
-                )
-                frame_prompt = (
-                    f"Create a realistic storyboard frame for {product_name}. "
-                    f"Variant {script.variant_id}. Shot: {shot}. Hook: {script.hook}. "
-                    f"{style_line}"
-                    "Use a clean previsualization style suitable for human review before video generation. "
-                    "No text overlay. Product-forward composition. "
-                    f"{self._video_prompt_quality_block(product_context)}"
-                )
+                frame_id = f"{script.variant_id}_F{idx + 1}"
+                llm_frame = llm_frame_prompts.get(frame_id)
+                if llm_frame is not None:
+                    frame_prompt = llm_frame["prompt"]
+                else:
+                    tiktok_details = script.tiktok.model_dump() if script.tiktok else {}
+                    style_line = (
+                        f"TikTok style: {tiktok_details.get('style')}. "
+                        f"Opening hook: {tiktok_details.get('opening_hook')}. "
+                        if tiktok_details
+                        else ""
+                    )
+                    frame_prompt = (
+                        f"Create a realistic storyboard frame for {product_name}. "
+                        f"Variant {script.variant_id}. Shot: {shot}. Hook: {script.hook}. "
+                        f"{style_line}"
+                        "Use a clean previsualization style suitable for human review before video generation. "
+                        "No text overlay. Product-forward composition. "
+                        f"{self._video_prompt_quality_block(product_context)}"
+                    )
                 source = "placeholder"
                 image_provider = ""
                 image_model = ""
@@ -1394,7 +1504,7 @@ class AgentsRuntime:
                     )
                 frame = {
                     "variant_id": script.variant_id,
-                    "frame_id": f"{script.variant_id}_F{idx + 1}",
+                    "frame_id": frame_id,
                     "prompt": frame_prompt,
                     "image_uri": frame_uri,
                     "source": source,
@@ -1433,6 +1543,7 @@ class AgentsRuntime:
         self,
         run_id: str,
         script_pack: VideoScriptPack,
+        storyboard_frames: list[dict] | None = None,
         *,
         creative_specs: dict | None,
         provider: str,
@@ -1442,12 +1553,31 @@ class AgentsRuntime:
     ) -> StageOutput:
         creative_specs = creative_specs or {}
         generation_spec = {**(script_pack.generation_spec or {}), **self._video_generation_spec(creative_specs)}
+        if storyboard_frames:
+            frame_urls = []
+            for frame in storyboard_frames:
+                uri = frame.get("image_uri")
+                if not uri:
+                    continue
+                data_url = self._local_image_to_data_url(uri)
+                if data_url:
+                    frame_urls.append(data_url)
+            if frame_urls:
+                existing = list(generation_spec.get("image_urls") or [])
+                generation_spec["image_urls"] = existing + frame_urls
         product_context = script_pack.product_context or {}
         video_size = str(generation_spec.get("size") or creative_specs.get("video_size") or "9:16")
         resolution = str(generation_spec.get("resolution") or creative_specs.get("resolution") or "720p")
         duration_seconds = int(generation_spec.get("duration") or creative_specs.get("video_duration_seconds") or 8)
         prompt = f"Generate videos from script pack: {script_pack.model_dump()}"
-        _, text_model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        response_text, text_model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        llm_video_prompts: dict[str, dict] = {}
+        try:
+            parsed = self._parse_llm_json(response_text, schema_key="video_prompts")
+            for prompt_data in parsed["video_prompts"]:
+                llm_video_prompts[prompt_data["variant_id"]] = prompt_data
+        except (ValueError, KeyError, TypeError):
+            text_model_used = text_model_used + ":fallback_to_template"
         videos: list[VideoAsset] = []
         artifacts: list[dict] = []
         video_models_used: set[str] = set()
@@ -1461,14 +1591,18 @@ class AgentsRuntime:
                     f"on_screen_text={tiktok_details.get('on_screen_text')}; "
                     f"cta={tiktok_details.get('cta')}. "
                 )
-            video_prompt = (
-                "Generate a short social ad video clip based on script. "
-                f"Hook: {script.hook}. Script: {script.script}. Shots: {script.shot_list}. "
-                f"{tiktok_line}"
-                f"Output should be brand-safe and product-forward, aspect ratio {video_size}, "
-                f"target resolution {resolution}, duration {duration_seconds} seconds. "
-                f"{self._video_prompt_quality_block(product_context)}"
-            )
+            llm_prompt_data = llm_video_prompts.get(script.variant_id)
+            if llm_prompt_data is not None:
+                video_prompt = llm_prompt_data["prompt"]
+            else:
+                video_prompt = (
+                    "Generate a short social ad video clip based on script. "
+                    f"Hook: {script.hook}. Script: {script.script}. Shots: {script.shot_list}. "
+                    f"{tiktok_line}"
+                    f"Output should be brand-safe and product-forward, aspect ratio {video_size}, "
+                    f"target resolution {resolution}, duration {duration_seconds} seconds. "
+                    f"{self._video_prompt_quality_block(product_context)}"
+                )
             source = "placeholder"
             error_text = None
             model_used = ""

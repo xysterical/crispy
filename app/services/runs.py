@@ -85,6 +85,17 @@ REGENERATABLE_STAGES = {
 }
 
 
+def _get_stage_output(db: Session, run_id: str, stage_name: str) -> dict | None:
+    """Read the output_payload of the most recent completed task for a stage."""
+    task = (
+        db.query(StageTask)
+        .filter_by(run_id=run_id, stage_name=stage_name, failure_category=None)
+        .order_by(StageTask.completed_at.desc())
+        .first()
+    )
+    return task.output_payload if task else None
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -1444,6 +1455,11 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 run.updated_at = utcnow()
                 db.commit()
 
+            storyboard_output = _get_stage_output(db, run.id, "storyboard_image_generation")
+            storyboard_frames = (storyboard_output or {}).get("frames", [])
+            variant_ids = {s.variant_id for s in scripts.scripts}
+            variant_frames = [f for f in storyboard_frames if f.get("variant_id") in variant_ids]
+
             output = runtime.run_video_generation(
                 run.id,
                 scripts,
@@ -1452,6 +1468,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 model=model_name,
                 runtime_config=runtime_config,
                 on_video_asset=persist_video_asset,
+                storyboard_frames=variant_frames,
             )
         elif task.stage_name == "visual_quality_assessment":
             variants = VariantSet.model_validate(task.input_payload["variants"])
@@ -2266,6 +2283,10 @@ def regenerate_variant_assets(
             runtime_config=runtime_config,
         )
     elif stage_name == "video_generation":
+        storyboard_output = _get_stage_output(db, run_id, "storyboard_image_generation")
+        storyboard_frames = (storyboard_output or {}).get("frames", [])
+        variant_frames = [f for f in storyboard_frames if f.get("variant_id") == variant_id]
+
         output = runtime.run_video_generation(
             run.id,
             _single_script_pack(db, run_id, variant_id),
@@ -2273,6 +2294,7 @@ def regenerate_variant_assets(
             provider=provider_name,
             model=model_name,
             runtime_config=runtime_config,
+            storyboard_frames=variant_frames,
         )
     else:
         raise ValueError(f"stage {stage_name} does not support variant regeneration")
