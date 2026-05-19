@@ -499,3 +499,293 @@ def test_video_scripting_llm_success_path_populates_tiktok_payload():
     assert tiktok["cta"] == "Shop Now"
     assert isinstance(tiktok["compliance_notes"], list)
     assert any("CTA intensity" in note for note in tiktok["compliance_notes"])
+
+
+# ---------------------------------------------------------------------------
+# run_storyboard_image_generation LLM integration tests
+# ---------------------------------------------------------------------------
+
+
+def test_storyboard_llm_success_path_uses_llm_prompts():
+    """When LLM returns valid JSON with frames, frame prompts come from the LLM output."""
+    runtime = AgentsRuntime()
+
+    llm_output = (
+        '{"frames": ['
+        '{"frame_id": "V1_F1", "variant_id": "V1", "prompt": "LLM storyboard prompt for frame 1"},'
+        '{"frame_id": "V1_F2", "variant_id": "V1", "prompt": "LLM storyboard prompt for frame 2"},'
+        '{"frame_id": "V1_F3", "variant_id": "V1", "prompt": "LLM storyboard prompt for frame 3"}'
+        "]}"
+    )
+    runtime._chat_complete = lambda *args, **kwargs: (llm_output, "gpt-4.1", 0.05)
+
+    def fake_generate_image(*, prompt, **kwargs):
+        return (
+            type("ImageResult", (), {"estimated_cost": 0.0, "images": []})(),
+            "stub-image-provider",
+            "stub-image-model",
+        )
+
+    runtime._generate_image = fake_generate_image
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="Pack faster without messy leaks",
+                script="Show the travel toiletry bag holding upright bottles.",
+                shot_list=[
+                    "Open the bag on a hotel bathroom counter.",
+                    "Close-up of upright bottle sleeves.",
+                    "Packed bag slides neatly into a carry-on.",
+                ],
+            )
+        ],
+        product_context={"product_name": "travel toiletry bag", "audience": "frequent travelers"},
+        generation_spec={"size": "16:9", "resolution": "720p", "duration": 5},
+    )
+
+    output = runtime.run_storyboard_image_generation(
+        run_id="test-storyboard-llm-success",
+        script_pack=script_pack,
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"video_size": "9:16"},
+    )
+
+    assert output.model_used == "gpt-4.1"
+    assert ":fallback_to_template" not in output.model_used
+    frames = output.payload["frames"]
+    assert len(frames) == 3
+    assert frames[0]["prompt"] == "LLM storyboard prompt for frame 1"
+    assert frames[1]["prompt"] == "LLM storyboard prompt for frame 2"
+    assert frames[2]["prompt"] == "LLM storyboard prompt for frame 3"
+    # Template content must NOT appear in LLM success path
+    assert "Create a realistic storyboard frame" not in frames[0]["prompt"]
+
+
+def test_storyboard_llm_parse_failure_falls_back_to_template():
+    """When LLM JSON is unparseable, fall back to template prompts and tag model_used."""
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("not valid json", "gpt-4.1", 0.05)
+
+    def fake_generate_image(*, prompt, **kwargs):
+        return (
+            type("ImageResult", (), {"estimated_cost": 0.0, "images": []})(),
+            "stub-image-provider",
+            "stub-image-model",
+        )
+
+    runtime._generate_image = fake_generate_image
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="Pack faster without messy leaks",
+                script="Show the travel toiletry bag holding upright bottles.",
+                shot_list=[
+                    "Open the bag on a hotel bathroom counter.",
+                    "Close-up of upright bottle sleeves.",
+                    "Packed bag slides neatly into a carry-on.",
+                ],
+            )
+        ],
+        product_context={"product_name": "travel toiletry bag", "audience": "frequent travelers"},
+        generation_spec={"size": "16:9", "resolution": "720p", "duration": 5},
+    )
+
+    output = runtime.run_storyboard_image_generation(
+        run_id="test-storyboard-llm-fallback",
+        script_pack=script_pack,
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"video_size": "9:16"},
+    )
+
+    assert ":fallback_to_template" in output.model_used
+    frames = output.payload["frames"]
+    assert len(frames) == 3
+    # Template content markers should appear in fallback path
+    assert "Create a realistic storyboard frame" in frames[0]["prompt"]
+    assert "travel toiletry bag" in frames[0]["prompt"].lower()
+
+
+def test_storyboard_llm_empty_response_falls_back():
+    """Empty LLM response triggers ValueError from _parse_llm_json and falls back."""
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("", "gpt-4.1", 0.05)
+
+    def fake_generate_image(*, prompt, **kwargs):
+        return (
+            type("ImageResult", (), {"estimated_cost": 0.0, "images": []})(),
+            "stub-image-provider",
+            "stub-image-model",
+        )
+
+    runtime._generate_image = fake_generate_image
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="Hook text",
+                script="Script body.",
+                shot_list=["Shot 1", "Shot 2", "Shot 3"],
+            )
+        ],
+        product_context={"product_name": "widget", "audience": "buyers"},
+        generation_spec={},
+    )
+
+    output = runtime.run_storyboard_image_generation(
+        run_id="test-storyboard-empty-response",
+        script_pack=script_pack,
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"video_size": "9:16"},
+    )
+
+    assert ":fallback_to_template" in output.model_used
+    assert len(output.payload["frames"]) == 3
+
+
+def test_storyboard_llm_missing_frames_key_falls_back():
+    """LLM JSON without 'frames' key falls back to template."""
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ('{"other_key": [1,2,3]}', "gpt-4.1", 0.05)
+
+    def fake_generate_image(*, prompt, **kwargs):
+        return (
+            type("ImageResult", (), {"estimated_cost": 0.0, "images": []})(),
+            "stub-image-provider",
+            "stub-image-model",
+        )
+
+    runtime._generate_image = fake_generate_image
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="Hook text",
+                script="Script body.",
+                shot_list=["Shot 1", "Shot 2", "Shot 3"],
+            )
+        ],
+        product_context={"product_name": "widget", "audience": "buyers"},
+        generation_spec={},
+    )
+
+    output = runtime.run_storyboard_image_generation(
+        run_id="test-storyboard-missing-key",
+        script_pack=script_pack,
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"video_size": "9:16"},
+    )
+
+    assert ":fallback_to_template" in output.model_used
+    assert len(output.payload["frames"]) == 3
+    assert "Create a realistic storyboard frame" in output.payload["frames"][0]["prompt"]
+
+
+def test_storyboard_llm_partial_frame_match_uses_llm_for_match_fallback_for_miss():
+    """When LLM returns some frames but not all, matched frames use LLM prompts, others use template."""
+    runtime = AgentsRuntime()
+
+    llm_output = (
+        '{"frames": ['
+        '{"frame_id": "V1_F1", "variant_id": "V1", "prompt": "LLM frame 1 prompt"},'
+        '{"frame_id": "V1_F3", "variant_id": "V1", "prompt": "LLM frame 3 prompt"}'
+        "]}"
+    )
+    runtime._chat_complete = lambda *args, **kwargs: (llm_output, "gpt-4.1", 0.05)
+
+    def fake_generate_image(*, prompt, **kwargs):
+        return (
+            type("ImageResult", (), {"estimated_cost": 0.0, "images": []})(),
+            "stub-image-provider",
+            "stub-image-model",
+        )
+
+    runtime._generate_image = fake_generate_image
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="Hook text",
+                script="Script body.",
+                shot_list=["Shot 1", "Shot 2", "Shot 3"],
+            )
+        ],
+        product_context={"product_name": "widget", "audience": "buyers"},
+        generation_spec={},
+    )
+
+    output = runtime.run_storyboard_image_generation(
+        run_id="test-storyboard-partial-match",
+        script_pack=script_pack,
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"video_size": "9:16"},
+    )
+
+    assert output.model_used == "gpt-4.1"
+    assert ":fallback_to_template" not in output.model_used
+    frames = output.payload["frames"]
+    assert len(frames) == 3
+    # Frame 1 and 3 should use LLM prompts
+    assert frames[0]["prompt"] == "LLM frame 1 prompt"
+    assert frames[2]["prompt"] == "LLM frame 3 prompt"
+    # Frame 2 should use template (fallback)
+    assert "Create a realistic storyboard frame" in frames[1]["prompt"]
+
+
+def test_storyboard_chat_complete_exception_still_uses_template():
+    """When _chat_complete itself raises, inner parse is skipped and template is used."""
+    runtime = AgentsRuntime()
+
+    def failing_chat_complete(*args, **kwargs):
+        raise RuntimeError("API transport failure")
+
+    runtime._chat_complete = failing_chat_complete
+
+    def fake_generate_image(*, prompt, **kwargs):
+        return (
+            type("ImageResult", (), {"estimated_cost": 0.0, "images": []})(),
+            "stub-image-provider",
+            "stub-image-model",
+        )
+
+    runtime._generate_image = fake_generate_image
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="Hook text",
+                script="Script body.",
+                shot_list=["Shot 1", "Shot 2", "Shot 3"],
+            )
+        ],
+        product_context={"product_name": "widget", "audience": "buyers"},
+        generation_spec={},
+    )
+
+    output = runtime.run_storyboard_image_generation(
+        run_id="test-storyboard-transport-failure",
+        script_pack=script_pack,
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"video_size": "9:16"},
+    )
+
+    assert ":storyboard_text_unavailable" in output.model_used
+    assert ":fallback_to_template" not in output.model_used
+    frames = output.payload["frames"]
+    assert len(frames) == 3
+    assert "Create a realistic storyboard frame" in frames[0]["prompt"]
+    # Error should be set on frames
+    assert frames[0]["error"] == "API transport failure"

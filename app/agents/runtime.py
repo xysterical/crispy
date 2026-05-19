@@ -1428,31 +1428,45 @@ class AgentsRuntime:
         )
         estimated_cost = 0.0
         error_text = None
+        response_text: str | None = None
         try:
-            _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+            response_text, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         except Exception as exc:
             model_used = f"{provider}/{model}:storyboard_text_unavailable"
             error_text = str(exc)
+        llm_frame_prompts: dict[str, dict] = {}
+        if response_text is not None:
+            try:
+                parsed = self._parse_llm_json(response_text, schema_key="frames")
+                for frame_data in parsed["frames"]:
+                    llm_frame_prompts[frame_data["frame_id"]] = frame_data
+            except ValueError:
+                model_used = model_used + ":fallback_to_template"
         frames: list[dict] = []
         artifacts: list[dict] = []
         for script in script_pack.scripts:
             for idx in range(3):
                 shot = script.shot_list[idx] if idx < len(script.shot_list) else script.hook
-                tiktok_details = script.tiktok.model_dump() if script.tiktok else {}
-                style_line = (
-                    f"TikTok style: {tiktok_details.get('style')}. "
-                    f"Opening hook: {tiktok_details.get('opening_hook')}. "
-                    if tiktok_details
-                    else ""
-                )
-                frame_prompt = (
-                    f"Create a realistic storyboard frame for {product_name}. "
-                    f"Variant {script.variant_id}. Shot: {shot}. Hook: {script.hook}. "
-                    f"{style_line}"
-                    "Use a clean previsualization style suitable for human review before video generation. "
-                    "No text overlay. Product-forward composition. "
-                    f"{self._video_prompt_quality_block(product_context)}"
-                )
+                frame_id = f"{script.variant_id}_F{idx + 1}"
+                llm_frame = llm_frame_prompts.get(frame_id)
+                if llm_frame is not None:
+                    frame_prompt = llm_frame["prompt"]
+                else:
+                    tiktok_details = script.tiktok.model_dump() if script.tiktok else {}
+                    style_line = (
+                        f"TikTok style: {tiktok_details.get('style')}. "
+                        f"Opening hook: {tiktok_details.get('opening_hook')}. "
+                        if tiktok_details
+                        else ""
+                    )
+                    frame_prompt = (
+                        f"Create a realistic storyboard frame for {product_name}. "
+                        f"Variant {script.variant_id}. Shot: {shot}. Hook: {script.hook}. "
+                        f"{style_line}"
+                        "Use a clean previsualization style suitable for human review before video generation. "
+                        "No text overlay. Product-forward composition. "
+                        f"{self._video_prompt_quality_block(product_context)}"
+                    )
                 source = "placeholder"
                 image_provider = ""
                 image_model = ""
@@ -1490,7 +1504,7 @@ class AgentsRuntime:
                     )
                 frame = {
                     "variant_id": script.variant_id,
-                    "frame_id": f"{script.variant_id}_F{idx + 1}",
+                    "frame_id": frame_id,
                     "prompt": frame_prompt,
                     "image_uri": frame_uri,
                     "source": source,
