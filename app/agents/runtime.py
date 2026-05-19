@@ -1225,90 +1225,103 @@ class AgentsRuntime:
                 "Make every shot filmable, product-specific, and constrained by realistic product handling."
             ),
         )
-        _, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        response_text, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         scripts = []
-        for item in variant_set.variants:
-            primary_value = (
-                value_props[(len(scripts)) % len(value_props)]
-                if value_props
-                else str(item.angle or item.message or "core product benefit")
-            )
-            hook_base = item.hook or item.angle or primary_value
-            tiktok_payload = None
-            if is_tiktok_shop:
-                opening_hook = f"POV: your {product_name} solves this in seconds"
-                proof_points = [primary_value, item.message][:2]
-                if tiktok_style == "direct_response_ad":
-                    opening_hook = f"Stop scrolling if you need {primary_value}"
-                    cta_intensity = "strong"
-                elif tiktok_style == "shop_account_content":
-                    opening_hook = f"Packing one small upgrade from our shop: {product_name}"
-                    cta_intensity = "soft"
-                else:
-                    cta_intensity = "medium"
-                tiktok_payload = {
-                    "style": tiktok_style,
-                    "opening_hook": opening_hook,
-                    "on_screen_text": [
-                        opening_hook,
-                        f"Proof: {primary_value}",
-                        cta,
-                    ],
-                    "voiceover_lines": [
-                        opening_hook,
-                        f"Here is how {product_name} helps with {primary_value}.",
-                        f"If this fits your routine, {cta}.",
-                    ],
-                    "shot_timing": [
-                        {
-                            "start": 0,
-                            "end": 2,
-                            "visual": "fast vertical product reveal in a realistic use scene",
-                            "text_overlay": opening_hook,
-                            "intent": "thumb_stop",
-                        },
-                        {
-                            "start": 2,
-                            "end": 8,
-                            "visual": "close product demo with the key proof point visible",
-                            "text_overlay": f"Proof: {primary_value}",
-                            "intent": "proof",
-                        },
-                        {
-                            "start": 8,
-                            "end": float(creative_specs.get("video_duration_seconds") or 12),
-                            "visual": "product-forward end frame with clear next step",
-                            "text_overlay": cta,
-                            "intent": "cta",
-                        },
-                    ],
-                    "product_proof_points": proof_points,
-                    "cta": cta,
-                    "compliance_notes": [
-                        "Do not invent certifications, discounts, platform trends, or unsupported performance claims.",
-                        f"CTA intensity: {cta_intensity}.",
-                    ],
-                }
-            hook_line = item.hook or f"{item.variant_id}: {product_name} for {primary_value}"
-            scripts.append(
-                VideoScriptItem(
-                    variant_id=item.variant_id,
-                    hook=hook_line,
-                    script=(
-                        f"Open on {product_name} in a realistic use context that matches the submitted product references. "
-                        f"Show the key proof point in close-up: {primary_value}. "
-                        f"Demonstrate how {product_name} fits the routine of {audience} without inventing unsupported claims. "
-                        f"End with {cta}. Variant hook: {hook_base}. Variant message: {item.message}"
-                    ),
-                    shot_list=[
-                        f"hook reveal of {product_name} in a realistic use context tied to the submitted brief",
-                        f"close-up of {product_name} showing {primary_value}",
-                        f"practical demo of {product_name} for {audience}",
-                        f"product-forward CTA end frame: {cta}",
-                    ],
-                    tiktok=tiktok_payload,
+        try:
+            parsed = self._parse_llm_json(response_text, schema_key="scripts")
+            for entry in parsed["scripts"]:
+                scripts.append(
+                    VideoScriptItem(
+                        variant_id=entry.get("variant_id", f"V{len(scripts)+1}"),
+                        hook=entry.get("hook", ""),
+                        script=entry.get("script", ""),
+                        shot_list=entry.get("shot_list", []),
+                    )
                 )
-            )
+        except ValueError:
+            model_used = model_used + ":fallback_to_template"
+            for item in variant_set.variants:
+                primary_value = (
+                    value_props[(len(scripts)) % len(value_props)]
+                    if value_props
+                    else str(item.angle or item.message or "core product benefit")
+                )
+                hook_base = item.hook or item.angle or primary_value
+                tiktok_payload = None
+                if is_tiktok_shop:
+                    opening_hook = f"POV: your {product_name} solves this in seconds"
+                    proof_points = [primary_value, item.message][:2]
+                    if tiktok_style == "direct_response_ad":
+                        opening_hook = f"Stop scrolling if you need {primary_value}"
+                        cta_intensity = "strong"
+                    elif tiktok_style == "shop_account_content":
+                        opening_hook = f"Packing one small upgrade from our shop: {product_name}"
+                        cta_intensity = "soft"
+                    else:
+                        cta_intensity = "medium"
+                    tiktok_payload = {
+                        "style": tiktok_style,
+                        "opening_hook": opening_hook,
+                        "on_screen_text": [
+                            opening_hook,
+                            f"Proof: {primary_value}",
+                            cta,
+                        ],
+                        "voiceover_lines": [
+                            opening_hook,
+                            f"Here is how {product_name} helps with {primary_value}.",
+                            f"If this fits your routine, {cta}.",
+                        ],
+                        "shot_timing": [
+                            {
+                                "start": 0,
+                                "end": 2,
+                                "visual": "fast vertical product reveal in a realistic use scene",
+                                "text_overlay": opening_hook,
+                                "intent": "thumb_stop",
+                            },
+                            {
+                                "start": 2,
+                                "end": 8,
+                                "visual": "close product demo with the key proof point visible",
+                                "text_overlay": f"Proof: {primary_value}",
+                                "intent": "proof",
+                            },
+                            {
+                                "start": 8,
+                                "end": float(creative_specs.get("video_duration_seconds") or 12),
+                                "visual": "product-forward end frame with clear next step",
+                                "text_overlay": cta,
+                                "intent": "cta",
+                            },
+                        ],
+                        "product_proof_points": proof_points,
+                        "cta": cta,
+                        "compliance_notes": [
+                            "Do not invent certifications, discounts, platform trends, or unsupported performance claims.",
+                            f"CTA intensity: {cta_intensity}.",
+                        ],
+                    }
+                hook_line = item.hook or f"{item.variant_id}: {product_name} for {primary_value}"
+                scripts.append(
+                    VideoScriptItem(
+                        variant_id=item.variant_id,
+                        hook=hook_line,
+                        script=(
+                            f"Open on {product_name} in a realistic use context that matches the submitted product references. "
+                            f"Show the key proof point in close-up: {primary_value}. "
+                            f"Demonstrate how {product_name} fits the routine of {audience} without inventing unsupported claims. "
+                            f"End with {cta}. Variant hook: {hook_base}. Variant message: {item.message}"
+                        ),
+                        shot_list=[
+                            f"hook reveal of {product_name} in a realistic use context tied to the submitted brief",
+                            f"close-up of {product_name} showing {primary_value}",
+                            f"practical demo of {product_name} for {audience}",
+                            f"product-forward CTA end frame: {cta}",
+                        ],
+                        tiktok=tiktok_payload,
+                    )
+                )
         pack = VideoScriptPack(
             scripts=scripts,
             product_context=product_context,

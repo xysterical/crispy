@@ -248,3 +248,188 @@ def test_parse_llm_json_non_string_input_raises():
     runtime = AgentsRuntime()
     with pytest.raises(ValueError, match="empty"):
         runtime._parse_llm_json(None, "scripts")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# run_video_scripting LLM integration tests
+# ---------------------------------------------------------------------------
+
+
+def test_video_scripting_llm_success_path_uses_parsed_json():
+    """When LLM returns valid JSON, scripts come from the parsed output, not the template."""
+    runtime = AgentsRuntime()
+
+    llm_output = (
+        '{"scripts": ['
+        '{"variant_id": "V1", "hook": "LLM hook text", "script": "LLM script body", "shot_list": ["LLM shot 1", "LLM shot 2"]},'
+        '{"variant_id": "V2", "hook": "Second hook", "script": "Second script", "shot_list": ["Shot A"]}'
+        "]}"
+    )
+    runtime._chat_complete = lambda *args, **kwargs: (llm_output, "gpt-4.1", 0.05)
+
+    variant_set = VariantSet(
+        variants=[
+            VariantCandidate(
+                variant_id="V1",
+                angle="template angle",
+                hook="template hook",
+                message="template message",
+            )
+        ]
+    )
+    intake = ProductIntake(
+        product_name="test product",
+        business_context={},
+        asset_media_summary="Test summary.",
+    )
+
+    output = runtime.run_video_scripting(
+        run_id="test-llm-success",
+        variant_set=variant_set,
+        intake=intake,
+        business_context={
+            "target_audience": "test audience",
+            "key_value_props": ["test prop"],
+            "primary_cta": "Buy Now",
+        },
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={},
+        pipeline_mode=None,
+    )
+
+    assert output.model_used == "gpt-4.1"
+    assert ":fallback_to_template" not in output.model_used
+    scripts = output.payload["scripts"]
+    assert len(scripts) == 2
+    assert scripts[0]["variant_id"] == "V1"
+    assert scripts[0]["hook"] == "LLM hook text"
+    assert scripts[0]["script"] == "LLM script body"
+    assert scripts[0]["shot_list"] == ["LLM shot 1", "LLM shot 2"]
+    assert scripts[1]["variant_id"] == "V2"
+    assert scripts[1]["hook"] == "Second hook"
+    # Template-specific phrasing MUST NOT appear in LLM success path
+    script_text_combined = " ".join(
+        [scripts[0]["hook"], scripts[0]["script"], *scripts[0]["shot_list"]]
+    ).lower()
+    assert "variant hook:" not in script_text_combined
+    assert "variant message:" not in script_text_combined
+
+
+def test_video_scripting_llm_parse_failure_falls_back_to_template():
+    """When LLM JSON is unparseable, fall back to template loop and tag model_used."""
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("not valid json", "gpt-4.1", 0.05)
+
+    variant_set = VariantSet(
+        variants=[
+            VariantCandidate(
+                variant_id="V1",
+                angle="organized packing",
+                hook="Pack faster",
+                message="Keeps bottles upright.",
+            )
+        ]
+    )
+    intake = ProductIntake(
+        product_name="travel toiletry bag",
+        business_context={},
+        asset_media_summary="Compact zip organizer.",
+    )
+
+    output = runtime.run_video_scripting(
+        run_id="test-llm-fallback",
+        variant_set=variant_set,
+        intake=intake,
+        business_context={
+            "target_audience": "travelers",
+            "key_value_props": ["keeps bottles upright"],
+            "primary_cta": "Shop Now",
+        },
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={},
+        pipeline_mode=None,
+    )
+
+    assert output.model_used == "gpt-4.1:fallback_to_template"
+    scripts = output.payload["scripts"]
+    assert len(scripts) == 1
+    # Template content markers should appear
+    script_text = " ".join(
+        [scripts[0]["hook"], scripts[0]["script"], *scripts[0]["shot_list"]]
+    ).lower()
+    assert "variant hook:" in script_text or "variant message:" in script_text
+    assert "travel toiletry bag" in script_text
+
+
+def test_video_scripting_llm_empty_response_falls_back():
+    """Empty LLM response triggers ValueError from _parse_llm_json and falls back."""
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("", "gpt-4.1", 0.05)
+
+    variant_set = VariantSet(
+        variants=[
+            VariantCandidate(variant_id="V1", angle="test angle", hook="hook text", message="msg text")
+        ]
+    )
+    intake = ProductIntake(
+        product_name="widget",
+        business_context={},
+        asset_media_summary="A widget.",
+    )
+
+    output = runtime.run_video_scripting(
+        run_id="test-empty-response",
+        variant_set=variant_set,
+        intake=intake,
+        business_context={
+            "target_audience": "buyers",
+            "key_value_props": ["durable"],
+            "primary_cta": "Buy",
+        },
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={},
+        pipeline_mode=None,
+    )
+
+    assert ":fallback_to_template" in output.model_used
+    assert len(output.payload["scripts"]) == 1
+    assert output.payload["scripts"][0]["variant_id"] == "V1"
+
+
+def test_video_scripting_llm_missing_scripts_key_falls_back():
+    """LLM JSON without 'scripts' key falls back to template."""
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ('{"other_key": [1,2,3]}', "gpt-4.1", 0.05)
+
+    variant_set = VariantSet(
+        variants=[
+            VariantCandidate(variant_id="V1", angle="test angle", hook="hook text", message="msg text")
+        ]
+    )
+    intake = ProductIntake(
+        product_name="widget",
+        business_context={},
+        asset_media_summary="A widget.",
+    )
+
+    output = runtime.run_video_scripting(
+        run_id="test-missing-key",
+        variant_set=variant_set,
+        intake=intake,
+        business_context={
+            "target_audience": "buyers",
+            "key_value_props": ["durable"],
+            "primary_cta": "Buy",
+        },
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={},
+        pipeline_mode=None,
+    )
+
+    assert ":fallback_to_template" in output.model_used
+    assert len(output.payload["scripts"]) == 1
+    assert output.payload["scripts"][0]["variant_id"] == "V1"
