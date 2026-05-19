@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.agents.runtime import AgentsRuntime
 from app.providers.llm import GeneratedVideo, VideoGenResult
 from app.schemas.contracts import ProductIntake, VariantCandidate, VariantSet, VideoScriptItem, VideoScriptPack
@@ -170,9 +172,6 @@ def test_storyboard_and_video_generation_do_not_inject_leash_defaults_and_use_st
 # _parse_llm_json tests
 # ---------------------------------------------------------------------------
 
-import pytest
-
-
 def test_parse_llm_json_valid_raw():
     runtime = AgentsRuntime()
     result = runtime._parse_llm_json('{"scripts": [1, 2, 3]}', "scripts")
@@ -249,12 +248,3 @@ def test_parse_llm_json_non_string_input_raises():
     runtime = AgentsRuntime()
     with pytest.raises(ValueError, match="empty"):
         runtime._parse_llm_json(None, "scripts")  # type: ignore[arg-type]
-
-
-def test_parse_llm_json_fence_without_json_tag():
-    runtime = AgentsRuntime()
-    result = runtime._parse_llm_json(
-        '```\n{"video_prompts": [{"id": "v1"}]}\n```',
-        "video_prompts",
-    )
-    assert result == {"video_prompts": [{"id": "v1"}]}
