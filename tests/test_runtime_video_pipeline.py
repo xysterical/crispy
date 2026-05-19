@@ -789,3 +789,242 @@ def test_storyboard_chat_complete_exception_still_uses_template():
     assert "Create a realistic storyboard frame" in frames[0]["prompt"]
     # Error should be set on frames
     assert frames[0]["error"] == "API transport failure"
+
+
+# ---------------------------------------------------------------------------
+# run_video_generation LLM integration tests
+# ---------------------------------------------------------------------------
+
+
+def test_video_generation_llm_success_path_uses_llm_prompts():
+    """When LLM returns valid JSON with video_prompts, use LLM's prompt for video generation."""
+    runtime = AgentsRuntime()
+
+    llm_output = (
+        '{"video_prompts": ['
+        '{"variant_id": "V1", "prompt": "LLM optimized video prompt for V1", "quality_constraints": ["keep product centered"]},'
+        '{"variant_id": "V2", "prompt": "LLM optimized video prompt for V2", "quality_constraints": ["maintain lighting consistency"]}'
+        "]}"
+    )
+    runtime._chat_complete = lambda *args, **kwargs: (llm_output, "gpt-4.1", 0.05)
+
+    fake_provider = _FakeVideoProvider()
+    runtime.providers = _FakeRegistry(fake_provider)
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="Hook one",
+                script="Script one.",
+                shot_list=["Shot A", "Shot B"],
+            ),
+            VideoScriptItem(
+                variant_id="V2",
+                hook="Hook two",
+                script="Script two.",
+                shot_list=["Shot C", "Shot D"],
+            ),
+        ],
+        product_context={"product_name": "test product", "audience": "testers"},
+        generation_spec={"size": "16:9", "resolution": "720p", "duration": 5},
+    )
+
+    output = runtime.run_video_generation(
+        run_id="test-video-gen-llm-success",
+        script_pack=script_pack,
+        creative_specs={},
+        provider="apimart",
+        model="doubao-seedance-2.0",
+    )
+
+    assert ":fallback_to_template" not in output.model_used
+    assert "text=gpt-4.1" in output.model_used
+    videos = output.payload["videos"]
+    assert len(videos) == 2
+    # V1 should use LLM prompt
+    assert videos[0]["prompt"] == "LLM optimized video prompt for V1"
+    assert videos[0]["variant_id"] == "V1"
+    # V2 should use LLM prompt
+    assert videos[1]["prompt"] == "LLM optimized video prompt for V2"
+    assert videos[1]["variant_id"] == "V2"
+    # Template-specific phrasing MUST NOT appear in LLM success path
+    assert "Generate a short social ad video clip based on script" not in videos[0]["prompt"]
+
+
+def test_video_generation_llm_parse_failure_falls_back_to_template():
+    """When LLM JSON is unparseable, fall back to template prompts and tag model_used."""
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("not valid json", "gpt-4.1", 0.05)
+
+    fake_provider = _FakeVideoProvider()
+    runtime.providers = _FakeRegistry(fake_provider)
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="Pack faster without messy leaks",
+                script="Show the travel toiletry bag holding upright bottles.",
+                shot_list=["Open the bag", "Close-up of bottles", "Slide into carry-on"],
+            )
+        ],
+        product_context={"product_name": "travel toiletry bag", "audience": "frequent travelers"},
+        generation_spec={"size": "16:9", "resolution": "720p", "duration": 5},
+    )
+
+    output = runtime.run_video_generation(
+        run_id="test-video-gen-llm-fallback",
+        script_pack=script_pack,
+        creative_specs={},
+        provider="apimart",
+        model="doubao-seedance-2.0",
+    )
+
+    assert ":fallback_to_template" in output.model_used
+    videos = output.payload["videos"]
+    assert len(videos) == 1
+    # Template content markers should appear in fallback path
+    assert "Generate a short social ad video clip based on script" in videos[0]["prompt"]
+    assert "travel toiletry bag" in videos[0]["prompt"].lower()
+
+
+def test_video_generation_storyboard_frames_inject_image_urls():
+    """storyboard_frames image_uri values are converted to data URLs and injected into generation_spec."""
+    import base64
+    import os
+    import tempfile
+
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    fake_provider = _FakeVideoProvider()
+    runtime.providers = _FakeRegistry(fake_provider)
+
+    # Create a real temporary image file
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        tmp.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        tmp_path = tmp.name
+
+    try:
+        storyboard_frames = [
+            {"frame_id": "V1_F1", "variant_id": "V1", "image_uri": tmp_path, "prompt": "frame prompt"},
+        ]
+
+        script_pack = VideoScriptPack(
+            scripts=[
+                VideoScriptItem(
+                    variant_id="V1",
+                    hook="Hook text",
+                    script="Script body.",
+                    shot_list=["Shot 1", "Shot 2"],
+                )
+            ],
+            product_context={"product_name": "test product", "audience": "testers"},
+            generation_spec={"size": "16:9", "resolution": "720p", "duration": 5},
+        )
+
+        output = runtime.run_video_generation(
+            run_id="test-video-gen-storyboard-inject",
+            script_pack=script_pack,
+            storyboard_frames=storyboard_frames,
+            creative_specs={},
+            provider="apimart",
+            model="doubao-seedance-2.0",
+        )
+
+        # The generation_spec should contain image_urls with the data URL
+        video_payload = output.payload["videos"][0]
+        gen_spec = video_payload.get("generation_spec", {})
+        image_urls = gen_spec.get("image_urls", [])
+        assert len(image_urls) >= 1
+        data_url = image_urls[0]
+        assert data_url.startswith("data:image/png;base64,")
+        # Verify it's a valid base64 data URL
+        b64_part = data_url.split(",", 1)[1]
+        decoded = base64.b64decode(b64_part)
+        assert len(decoded) > 0
+    finally:
+        os.unlink(tmp_path)
+
+
+def test_video_generation_storyboard_frames_none_unchanged():
+    """When storyboard_frames is None, image_urls from creative_specs are preserved unchanged."""
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    fake_provider = _FakeVideoProvider()
+    runtime.providers = _FakeRegistry(fake_provider)
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="Hook text",
+                script="Script body.",
+                shot_list=["Shot 1", "Shot 2"],
+            )
+        ],
+        product_context={"product_name": "test product", "audience": "testers"},
+        generation_spec={"size": "16:9", "resolution": "720p", "duration": 5},
+    )
+
+    output = runtime.run_video_generation(
+        run_id="test-video-gen-no-storyboard",
+        script_pack=script_pack,
+        creative_specs={
+            "image_urls": ["https://example.com/reference-image.png"],
+        },
+        provider="apimart",
+        model="doubao-seedance-2.0",
+    )
+
+    # The generation_spec should contain only the creative_specs image_urls
+    video_payload = output.payload["videos"][0]
+    gen_spec = video_payload.get("generation_spec", {})
+    image_urls = gen_spec.get("image_urls", [])
+    assert image_urls == ["https://example.com/reference-image.png"]
+
+
+def test_video_generation_storyboard_frame_file_missing_skipped():
+    """storyboard_frames with non-existent image_uri paths are skipped, not injected."""
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    fake_provider = _FakeVideoProvider()
+    runtime.providers = _FakeRegistry(fake_provider)
+
+    storyboard_frames = [
+        {"frame_id": "V1_F1", "variant_id": "V1", "image_uri": "/nonexistent/path/frame.png", "prompt": "frame prompt"},
+    ]
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="Hook text",
+                script="Script body.",
+                shot_list=["Shot 1", "Shot 2"],
+            )
+        ],
+        product_context={"product_name": "test product", "audience": "testers"},
+        generation_spec={"size": "16:9", "resolution": "720p", "duration": 5},
+    )
+
+    output = runtime.run_video_generation(
+        run_id="test-video-gen-frame-missing",
+        script_pack=script_pack,
+        storyboard_frames=storyboard_frames,
+        creative_specs={
+            "image_urls": ["https://example.com/reference-image.png"],
+        },
+        provider="apimart",
+        model="doubao-seedance-2.0",
+    )
+
+    # The generation_spec should only retain the creative_specs image_urls
+    # (the missing frame file was skipped by _local_image_to_data_url)
+    video_payload = output.payload["videos"][0]
+    gen_spec = video_payload.get("generation_spec", {})
+    image_urls = gen_spec.get("image_urls", [])
+    assert image_urls == ["https://example.com/reference-image.png"]

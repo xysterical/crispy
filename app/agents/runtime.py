@@ -1543,6 +1543,7 @@ class AgentsRuntime:
         self,
         run_id: str,
         script_pack: VideoScriptPack,
+        storyboard_frames: list[dict] | None = None,
         *,
         creative_specs: dict | None,
         provider: str,
@@ -1552,12 +1553,28 @@ class AgentsRuntime:
     ) -> StageOutput:
         creative_specs = creative_specs or {}
         generation_spec = {**(script_pack.generation_spec or {}), **self._video_generation_spec(creative_specs)}
+        if storyboard_frames:
+            frame_urls = []
+            for frame in storyboard_frames:
+                data_url = self._local_image_to_data_url(frame["image_uri"])
+                if data_url:
+                    frame_urls.append(data_url)
+            if frame_urls:
+                existing = list(generation_spec.get("image_urls") or [])
+                generation_spec["image_urls"] = existing + frame_urls
         product_context = script_pack.product_context or {}
         video_size = str(generation_spec.get("size") or creative_specs.get("video_size") or "9:16")
         resolution = str(generation_spec.get("resolution") or creative_specs.get("resolution") or "720p")
         duration_seconds = int(generation_spec.get("duration") or creative_specs.get("video_duration_seconds") or 8)
         prompt = f"Generate videos from script pack: {script_pack.model_dump()}"
-        _, text_model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        response_text, text_model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        llm_video_prompts: dict[str, dict] = {}
+        try:
+            parsed = self._parse_llm_json(response_text, schema_key="video_prompts")
+            for prompt_data in parsed["video_prompts"]:
+                llm_video_prompts[prompt_data["variant_id"]] = prompt_data
+        except (ValueError, KeyError, TypeError):
+            text_model_used = text_model_used + ":fallback_to_template"
         videos: list[VideoAsset] = []
         artifacts: list[dict] = []
         video_models_used: set[str] = set()
@@ -1571,14 +1588,18 @@ class AgentsRuntime:
                     f"on_screen_text={tiktok_details.get('on_screen_text')}; "
                     f"cta={tiktok_details.get('cta')}. "
                 )
-            video_prompt = (
-                "Generate a short social ad video clip based on script. "
-                f"Hook: {script.hook}. Script: {script.script}. Shots: {script.shot_list}. "
-                f"{tiktok_line}"
-                f"Output should be brand-safe and product-forward, aspect ratio {video_size}, "
-                f"target resolution {resolution}, duration {duration_seconds} seconds. "
-                f"{self._video_prompt_quality_block(product_context)}"
-            )
+            llm_prompt_data = llm_video_prompts.get(script.variant_id)
+            if llm_prompt_data is not None:
+                video_prompt = llm_prompt_data["prompt"]
+            else:
+                video_prompt = (
+                    "Generate a short social ad video clip based on script. "
+                    f"Hook: {script.hook}. Script: {script.script}. Shots: {script.shot_list}. "
+                    f"{tiktok_line}"
+                    f"Output should be brand-safe and product-forward, aspect ratio {video_size}, "
+                    f"target resolution {resolution}, duration {duration_seconds} seconds. "
+                    f"{self._video_prompt_quality_block(product_context)}"
+                )
             source = "placeholder"
             error_text = None
             model_used = ""
