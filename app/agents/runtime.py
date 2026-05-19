@@ -472,6 +472,30 @@ class AgentsRuntime:
         blocks.append(task_instruction)
         return "\n\n".join(block for block in blocks if block).strip()
 
+    def _parse_llm_json(self, response_text: str, schema_key: str) -> dict:
+        """Parse JSON from an LLM response, stripping markdown code fences.
+
+        Returns the full parsed dict on success.  Raises ValueError when
+        ``response_text`` is empty, the JSON is invalid, or *schema_key*
+        is missing from the parsed dict.
+        """
+        if not isinstance(response_text, str) or not response_text.strip():
+            raise ValueError("LLM response text is empty")
+        text = response_text.strip()
+        # Strip ```json ... ``` fences
+        fence_match = re.match(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
+        if fence_match:
+            text = fence_match.group(1).strip()
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Failed to parse LLM JSON response: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(f"LLM response is not a JSON object (got {type(parsed).__name__})")
+        if schema_key not in parsed:
+            raise ValueError(f"Expected key {schema_key!r} not found in LLM JSON response")
+        return parsed
+
     def _business_strategy_handoff(self, *, stage: str, decisions: list[str], risks: list[str], review_questions: list[str]) -> dict:
         return {
             "stage": stage,

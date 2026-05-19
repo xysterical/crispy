@@ -164,3 +164,97 @@ def test_storyboard_and_video_generation_do_not_inject_leash_defaults_and_use_st
     assert fake_provider.last_request.tools == [{"type": "web_search"}]
     assert fake_provider.last_request.image_urls == ["https://example.com/reference-image.png"]
     assert fake_provider.last_request.audio_urls == ["https://example.com/reference-audio.wav"]
+
+
+# ---------------------------------------------------------------------------
+# _parse_llm_json tests
+# ---------------------------------------------------------------------------
+
+import pytest
+
+
+def test_parse_llm_json_valid_raw():
+    runtime = AgentsRuntime()
+    result = runtime._parse_llm_json('{"scripts": [1, 2, 3]}', "scripts")
+    assert result == {"scripts": [1, 2, 3]}
+
+
+def test_parse_llm_json_valid_with_fence():
+    runtime = AgentsRuntime()
+    result = runtime._parse_llm_json(
+        '```json\n{"frames": [{"id": 1}]}\n```',
+        "frames",
+    )
+    assert result == {"frames": [{"id": 1}]}
+
+
+def test_parse_llm_json_valid_with_plain_fence():
+    runtime = AgentsRuntime()
+    result = runtime._parse_llm_json(
+        '```\n{"video_prompts": ["prompt1"]}\n```',
+        "video_prompts",
+    )
+    assert result == {"video_prompts": ["prompt1"]}
+
+
+def test_parse_llm_json_strips_surrounding_whitespace():
+    runtime = AgentsRuntime()
+    result = runtime._parse_llm_json(
+        '  \n{"key": "value"}\n  ',
+        "key",
+    )
+    assert result == {"key": "value"}
+
+
+def test_parse_llm_json_returns_full_dict_not_just_value():
+    runtime = AgentsRuntime()
+    result = runtime._parse_llm_json(
+        '{"scripts": [1, 2], "meta": {"model": "gpt-4"}}',
+        "scripts",
+    )
+    assert result == {"scripts": [1, 2], "meta": {"model": "gpt-4"}}
+
+
+def test_parse_llm_json_empty_string_raises():
+    runtime = AgentsRuntime()
+    with pytest.raises(ValueError, match="empty"):
+        runtime._parse_llm_json("", "scripts")
+
+
+def test_parse_llm_json_whitespace_only_raises():
+    runtime = AgentsRuntime()
+    with pytest.raises(ValueError, match="empty"):
+        runtime._parse_llm_json("   \n  \t  ", "scripts")
+
+
+def test_parse_llm_json_invalid_json_raises():
+    runtime = AgentsRuntime()
+    with pytest.raises(ValueError, match="Failed to parse"):
+        runtime._parse_llm_json("not valid json", "scripts")
+
+
+def test_parse_llm_json_missing_schema_key_raises():
+    runtime = AgentsRuntime()
+    with pytest.raises(ValueError, match="not found"):
+        runtime._parse_llm_json('{"other_key": 1}', "scripts")
+
+
+def test_parse_llm_json_array_response_raises():
+    runtime = AgentsRuntime()
+    with pytest.raises(ValueError, match="not a JSON object"):
+        runtime._parse_llm_json("[1, 2, 3]", "scripts")
+
+
+def test_parse_llm_json_non_string_input_raises():
+    runtime = AgentsRuntime()
+    with pytest.raises(ValueError, match="empty"):
+        runtime._parse_llm_json(None, "scripts")  # type: ignore[arg-type]
+
+
+def test_parse_llm_json_fence_without_json_tag():
+    runtime = AgentsRuntime()
+    result = runtime._parse_llm_json(
+        '```\n{"video_prompts": [{"id": "v1"}]}\n```',
+        "video_prompts",
+    )
+    assert result == {"video_prompts": [{"id": "v1"}]}
