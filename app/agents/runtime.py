@@ -41,6 +41,8 @@ from app.schemas.contracts import (
     ScoreBreakdown,
     ScoreCard,
     SelectedDeliverables,
+    ShotFramePlan,
+    ShotPlanItem,
     VariantCandidate,
     VariantSet,
     VideoAsset,
@@ -1307,7 +1309,12 @@ class AgentsRuntime:
                 f"product={product_name}, audience={audience}, value_props={value_props}, "
                 f"media_summary={media_summary}, variants={variant_set.model_dump()}. "
                 f"generation_spec={generation_spec}. "
-                "Make every shot filmable, product-specific, and constrained by realistic product handling."
+                "Make every shot filmable, product-specific, and constrained by realistic product handling. "
+                "For each variant, also output a structured shot_plan array with 3-4 shot objects. "
+                "Each shot must have: shot_id, variant_id, intent (one of: thumb_stop, product_proof, usage_demo, cta_packshot), "
+                "first_frame with description and visible_product_elements, "
+                "optional last_frame, motion_description, audio_description, text_overlay, "
+                "and product_continuity_constraints (e.g. color_match, scale_consistent, material_match)."
             ),
         )
         response_text, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
@@ -1384,12 +1391,39 @@ class AgentsRuntime:
                         video_duration=video_duration,
                         message=message,
                     )
+                # Parse shot_plan from LLM response if present
+                shot_plan_raw = entry.get("shot_plan") or []
+                shot_plan: list[ShotPlanItem] = []
+                for sp in shot_plan_raw:
+                    try:
+                        ff = sp.get("first_frame", {})
+                        lf = sp.get("last_frame")
+                        shot_plan.append(ShotPlanItem(
+                            shot_id=sp.get("shot_id", f"shot_{len(shot_plan)+1}"),
+                            variant_id=sp.get("variant_id", entry.get("variant_id", "")),
+                            intent=sp.get("intent", "product_demo"),
+                            duration_seconds=sp.get("duration_seconds"),
+                            first_frame=ShotFramePlan(
+                                description=ff.get("description", ""),
+                                visible_product_elements=ff.get("visible_product_elements", []),
+                            ),
+                            last_frame=ShotFramePlan(
+                                description=lf.get("description", ""),
+                                visible_product_elements=lf.get("visible_product_elements", []),
+                            ) if lf else None,
+                            motion_description=sp.get("motion_description", ""),
+                            audio_description=sp.get("audio_description", ""),
+                            text_overlay=sp.get("text_overlay", ""),
+                            product_continuity_constraints=sp.get("product_continuity_constraints", []),
+                        ))
+                    except Exception:
+                        continue
                 scripts.append(
                     VideoScriptItem(
                         variant_id=entry.get("variant_id", f"V{len(scripts)+1}"),
                         hook=entry.get("hook", ""),
                         script=entry.get("script", ""),
-                        shot_list=entry.get("shot_list", []),
+                        shot_list=entry.get("shot_list", []), shot_plan=shot_plan,
                         tiktok=tiktok_payload,
                     )
                 )
