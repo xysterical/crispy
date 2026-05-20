@@ -5,6 +5,8 @@ from datetime import UTC, datetime, timedelta
 import json
 import logging
 from pathlib import Path
+import base64
+import mimetypes
 
 from sqlalchemy import desc, or_, select, update
 from sqlalchemy.orm import Session
@@ -662,6 +664,37 @@ def _analytics_insights(db: Session, run: PipelineRun) -> list[dict]:
         return insights
     except Exception:
         return []
+
+
+def _best_historical_reference_images(db: Session, product_code: str, limit: int = 2) -> list[dict]:
+    """Return top-scored historical variant images for a product as base64 data URL dicts."""
+    rows = (
+        db.query(VariantAsset)
+        .join(RunVariant, VariantAsset.run_variant_id == RunVariant.id)
+        .filter(
+            VariantAsset.asset_type == "image",
+            VariantAsset.uri.isnot(None),
+            RunVariant.current_score.isnot(None),
+        )
+        .order_by(RunVariant.current_score.desc())
+        .limit(limit)
+        .all()
+    )
+    results: list[dict] = []
+    for asset in rows:
+        path = Path(asset.uri) if asset.uri else None
+        if not path or not path.exists() or not path.is_file():
+            continue
+        raw = path.read_bytes()
+        mime = mimetypes.guess_type(str(path))[0] or "image/png"
+        encoded = base64.b64encode(raw).decode("ascii")
+        data_url = f"data:{mime};base64,{encoded}"
+        results.append({
+            "uri": data_url,
+            "description": "Previously generated winning product image",
+            "variant_score": asset.variant.current_score if asset.variant else None,
+        })
+    return results
 
 
 def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
