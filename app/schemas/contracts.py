@@ -229,11 +229,32 @@ class TikTokScriptDetails(BaseModel):
     compliance_notes: list[str] = Field(default_factory=list)
 
 
+class ShotFramePlan(BaseModel):
+    """ViMax-style: static frame snapshot for a single shot frame."""
+    description: str
+    visible_product_elements: list[str] = Field(default_factory=list)
+
+
+class ShotPlanItem(BaseModel):
+    """ViMax-style: first-frame / last-frame / motion triad shot contract."""
+    shot_id: str
+    variant_id: str
+    intent: str  # thumb_stop | product_proof | usage_demo | cta_packshot
+    duration_seconds: float | None = None
+    first_frame: ShotFramePlan
+    last_frame: ShotFramePlan | None = None
+    motion_description: str = ""
+    audio_description: str = ""
+    text_overlay: str = ""
+    product_continuity_constraints: list[str] = Field(default_factory=list)
+
+
 class VideoScriptItem(BaseModel):
     variant_id: str
     hook: str
     script: str
     shot_list: list[str] = Field(default_factory=list)
+    shot_plan: list[ShotPlanItem] = Field(default_factory=list)
     tiktok: TikTokScriptDetails | None = None
 
 
