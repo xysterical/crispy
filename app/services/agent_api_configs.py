@@ -194,11 +194,11 @@ def upsert_agent_config(
             extra_payload["video_config"] = merged_video
         row = AgentApiConfig(
             agent_name=agent_name,
-            provider_name=provider_name or defaults["provider_name"],
-            model_name=model_name or defaults["model_name"],
-            api_base_url=api_base_url if api_base_url is not None else defaults["api_base_url"],
-            api_key_env=api_key_env if api_key_env is not None else defaults["api_key_env"],
-            thinking_mode=thinking_mode or defaults["thinking_mode"],
+            provider_name=provider_name if provider_name is not None else "",
+            model_name=model_name if model_name is not None else "",
+            api_base_url=api_base_url if api_base_url is not None else "",
+            api_key_env=api_key_env if api_key_env is not None else "",
+            thinking_mode=thinking_mode if thinking_mode is not None else "",
             thinking_budget_tokens=thinking_budget_tokens,
             max_output_tokens=max_output_tokens,
             request_timeout_seconds=request_timeout_seconds,
