@@ -2131,6 +2131,15 @@ class AgentsRuntime:
                 "visual_qa_score": vq.get("visual_score"),
                 "visual_qa_issues": vq.get("issues") or [],
                 "visual_qa_recommended_action": vq.get("recommended_action", ""),
+                "shot_plan_summary": [
+                    {
+                        "shot_id": s.shot_id,
+                        "intent": s.intent,
+                        "duration": s.duration_seconds,
+                        "constraints": s.product_continuity_constraints,
+                    }
+                    for s in script.shot_plan
+                ] if script and script.shot_plan else [],
             }
             if script and script.tiktok:
                 entry["tiktok"] = {
