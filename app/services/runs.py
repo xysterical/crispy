@@ -1404,6 +1404,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
             variants = VariantSet.model_validate(task.input_payload["variants"])
             intake_payload = task.input_payload.get("intake") or {}
             intake = ProductIntake.model_validate(intake_payload) if intake_payload else None
+            historical_refs = _best_historical_reference_images(db, run.product_code, limit=2)
             output = runtime.run_copy_image_generation(
                 run.id,
                 variants,
@@ -1415,6 +1416,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 provider=provider_name,
                 model=model_name,
                 runtime_config=runtime_config,
+                historical_references=historical_refs,
             )
         elif task.stage_name == "video_scripting":
             variants = VariantSet.model_validate(task.input_payload["variants"])

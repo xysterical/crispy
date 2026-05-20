@@ -993,6 +993,7 @@ class AgentsRuntime:
         provider: str,
         model: str,
         runtime_config: dict | None = None,
+        historical_references: list[dict] | None = None,
     ) -> StageOutput:
         if is_marketplace_main_image(creative_specs):
             return self._run_marketplace_main_image_generation(
@@ -1021,7 +1022,7 @@ class AgentsRuntime:
         )
         estimated_cost = 0.0
         text_model_used = model
-        reference_inputs = self._reference_image_inputs(intake)
+        reference_inputs = self._reference_image_inputs(intake, extra_references=historical_references)
         spec_reference_inputs = [str(item).strip() for item in (creative_specs.get("reference_image_urls") or []) if str(item).strip()]
         if spec_reference_inputs:
             reference_inputs = [*reference_inputs, *spec_reference_inputs]
