@@ -1342,6 +1342,26 @@ class AgentsRuntime:
                         message=item.message,
                     )
                 hook_line = item.hook or f"{item.variant_id}: {product_name} for {primary_value}"
+                # Derive minimal shot_plan from shot_list in template fallback
+                shot_list = [
+                    f"hook reveal of {product_name} in a realistic use context tied to the submitted brief",
+                    f"close-up of {product_name} showing {primary_value}",
+                    f"practical demo of {product_name} for {audience}",
+                    f"product-forward CTA end frame: {cta}",
+                ]
+                intents = ["thumb_stop", "product_proof", "usage_demo", "cta_packshot"]
+                fallback_shot_plan: list[ShotPlanItem] = []
+                for i, shot_text in enumerate(shot_list):
+                    intent = intents[i] if i < len(intents) else "product_demo"
+                    fallback_shot_plan.append(ShotPlanItem(
+                        shot_id=f"shot_{i+1}",
+                        variant_id=item.variant_id,
+                        intent=intent,
+                        first_frame=ShotFramePlan(
+                            description=shot_text,
+                            visible_product_elements=[product_name],
+                        ),
+                    ))
                 scripts.append(
                     VideoScriptItem(
                         variant_id=item.variant_id,
@@ -1352,12 +1372,8 @@ class AgentsRuntime:
                             f"Demonstrate how {product_name} fits the routine of {audience} without inventing unsupported claims. "
                             f"End with {cta}. Variant hook: {hook_base}. Variant message: {item.message}"
                         ),
-                        shot_list=[
-                            f"hook reveal of {product_name} in a realistic use context tied to the submitted brief",
-                            f"close-up of {product_name} showing {primary_value}",
-                            f"practical demo of {product_name} for {audience}",
-                            f"product-forward CTA end frame: {cta}",
-                        ],
+                        shot_list=shot_list,
+                        shot_plan=fallback_shot_plan,
                         tiktok=tiktok_payload,
                     )
                 )
