@@ -1825,6 +1825,23 @@ class AgentsRuntime:
             asset_rows.append({"asset_type": "video", **video, "uri": video.get("video_uri")})
 
         scripts_by_variant = {item.get("variant_id"): item for item in _asset_items(video_scripts, "scripts")}
+
+        # Extract shot_plan summaries for QA context
+        shot_plan_by_variant: dict[str, list[dict]] = {}
+        for item in _asset_items(video_scripts, "scripts"):
+            vid = item.get("variant_id")
+            sp = item.get("shot_plan") or []
+            if vid and sp:
+                shot_plan_by_variant[vid] = [
+                    {
+                        "shot_id": s.get("shot_id", ""),
+                        "intent": s.get("intent", ""),
+                        "duration": s.get("duration_seconds"),
+                        "constraints": s.get("product_continuity_constraints", []),
+                    }
+                    for s in sp
+                ]
+
         reports: list[dict] = []
         summaries: list[dict] = []
         model_image_inputs: list[str] = []
@@ -2015,7 +2032,11 @@ class AgentsRuntime:
                 f"business_context={json.dumps(business_context, ensure_ascii=False)[:1800]}\n"
                 f"qa_records={json.dumps(summaries, ensure_ascii=False)[:5000]}\n"
                 f"attached_media_manifest={json.dumps(model_media_manifest, ensure_ascii=False)[:3000]}\n"
-                f"gm_policy={json.dumps(gm_policy.get('stage_guidance') or {}, ensure_ascii=False)[:2000]}"
+                f"gm_policy={json.dumps(gm_policy.get('stage_guidance') or {}, ensure_ascii=False)[:2000]}\n"
+                f"shot_plan_contracts={json.dumps(shot_plan_by_variant, ensure_ascii=False)[:2000]}"
+                "Additional checks: verify product appears clearly in early frames per shot intent, "
+                "visual continuity matches product_continuity_constraints (color, material, scale), "
+                "and each frame adheres to its shot intent."
             ),
         )
         model_summary = ""
