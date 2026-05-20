@@ -9,7 +9,7 @@ import base64
 import mimetypes
 
 from sqlalchemy import desc, or_, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.agents.persona_contracts import build_compiled_persona
 from app.agents.registry import STAGE_CONTRACT_VERSION, stage_agent, stage_collaborators
@@ -670,11 +670,14 @@ def _best_historical_reference_images(db: Session, product_code: str, limit: int
     """Return top-scored historical variant images for a product as base64 data URL dicts."""
     rows = (
         db.query(VariantAsset)
+        .options(joinedload(VariantAsset.variant))
         .join(RunVariant, VariantAsset.run_variant_id == RunVariant.id)
+        .join(PipelineRun, VariantAsset.run_id == PipelineRun.id)
         .filter(
             VariantAsset.asset_type == "image",
             VariantAsset.uri.isnot(None),
             RunVariant.current_score.isnot(None),
+            PipelineRun.product_code == product_code,
         )
         .order_by(RunVariant.current_score.desc())
         .limit(limit)
