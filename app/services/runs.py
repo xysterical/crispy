@@ -1449,6 +1449,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                     **(task.metadata_json or {}),
                     "storyboard_image_config_source": "copy_image_agent",
                 }
+            historical_refs = _best_historical_reference_images(db, run.product_code, limit=2)
             output = runtime.run_storyboard_image_generation(
                 run.id,
                 scripts,
@@ -1456,6 +1457,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 provider=provider_name,
                 model=model_name,
                 runtime_config=storyboard_runtime_config,
+                historical_references=historical_refs,
             )
         elif task.stage_name == "video_generation":
             scripts = VideoScriptPack.model_validate(task.input_payload["video_scripts"])

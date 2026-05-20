@@ -1424,9 +1424,16 @@ class AgentsRuntime:
         model: str,
         creative_specs: dict | None = None,
         runtime_config: dict | None = None,
+        historical_references: list[dict] | None = None,
     ) -> StageOutput:
         creative_specs = creative_specs or {}
         generation_spec = {**(script_pack.generation_spec or {}), **self._video_generation_spec(creative_specs)}
+        # Build reference URLs from historical best images
+        historical_frame_refs: list[str] = []
+        for ref in (historical_references or [])[:2]:
+            data_url = ref.get("uri")
+            if isinstance(data_url, str) and data_url:
+                historical_frame_refs.append(data_url)
         image_size = str(generation_spec.get("size") or creative_specs.get("video_size") or creative_specs.get("image_size") or "9:16")
         product_context = script_pack.product_context or {}
         product_name = str(product_context.get("product_name") or "the product")
@@ -1491,6 +1498,7 @@ class AgentsRuntime:
                         prompt=frame_prompt,
                         size=image_size,
                         runtime_config=runtime_config,
+                        reference_image_urls=historical_frame_refs if historical_frame_refs else None,
                     )
                     estimated_cost += image_result.estimated_cost
                     selected = image_result.images[0] if image_result.images else None
