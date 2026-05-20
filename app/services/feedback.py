@@ -95,6 +95,7 @@ def _variant_pattern_payload(db: Session, variant: RunVariant | None) -> dict:
         "hook": variant.hook,
         "message": variant.message,
         "visual_pattern": image_payload.get("prompt") if image_asset else None,
+        "image_uri": image_asset.uri if image_asset else None,
         "image_role": image_payload.get("image_role") if image_asset else None,
         "marketplace_qa_status": (image_payload.get("marketplace_qa") or {}).get("status") if image_asset else None,
         "platform_readiness": platform_readiness,
