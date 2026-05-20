@@ -262,7 +262,11 @@ class AgentsRuntime:
         encoded = base64.b64encode(raw).decode("ascii")
         return f"data:{mime};base64,{encoded}"
 
-    def _reference_image_inputs(self, intake: ProductIntake | None) -> list[str]:
+    def _reference_image_inputs(
+        self,
+        intake: ProductIntake | None,
+        extra_references: list[dict] | None = None,
+    ) -> list[str]:
         if not intake:
             return []
         rows = intake.image_references or []
@@ -275,6 +279,13 @@ class AgentsRuntime:
                 continue
             data_url = self._local_image_to_data_url(uri)
             if data_url:
+                inputs.append(data_url)
+        # Append extra references (e.g., historical best images), cap at 4 total
+        for ref in (extra_references or [])[:2]:
+            data_url = ref.get("uri")
+            if isinstance(data_url, str) and data_url:
+                if len(inputs) >= 4:
+                    break
                 inputs.append(data_url)
         return inputs
 
