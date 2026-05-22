@@ -3184,6 +3184,7 @@ def patch_agent_config(agent_name: str, payload: AgentApiConfigPatchRequest, db:
             request_timeout_seconds=payload.request_timeout_seconds,
             streaming_enabled=payload.streaming_enabled,
             extra=payload.extra,
+            update_fields=set(payload.model_fields_set),
         )
     except ValueError as exc:
         db.rollback()

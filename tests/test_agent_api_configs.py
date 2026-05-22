@@ -106,6 +106,82 @@ def test_agent_api_generation_image_config(client):
     assert gen["video_api_base_url"] == "https://api.video-provider.ai/v1/videos/generations"
 
 
+def test_agent_api_patch_can_clear_values_and_runtime_falls_back(client):
+    default_resp = client.patch(
+        "/agent-configs/default",
+        json={
+            "provider_name": "deepseek",
+            "model_name": "deepseek-v3.2",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "api_key_env": "CRISPY_API_KEY_DEEPSEEK",
+        },
+    )
+    assert default_resp.status_code == 200
+
+    seeded_resp = client.patch(
+        "/agent-configs/copy_image_agent",
+        json={
+            "provider_name": "kimi",
+            "model_name": "kimi-k2.6",
+            "api_base_url": "https://api.moonshot.cn/v1",
+            "api_key_env": "CRISPY_API_KEY_KIMI",
+            "image_provider_name": "openai",
+            "image_model_name": "gpt-image-2",
+            "image_api_base_url": "https://api.apimart.ai/v1/images/generations",
+            "image_api_key_env": "CRISPY_API_KEY_IMAGE",
+        },
+    )
+    assert seeded_resp.status_code == 200
+
+    cleared_resp = client.patch(
+        "/agent-configs/copy_image_agent",
+        json={
+            "provider_name": None,
+            "model_name": None,
+            "api_base_url": None,
+            "api_key_env": None,
+            "image_provider_name": None,
+            "image_model_name": None,
+            "image_api_base_url": None,
+            "image_api_key_env": None,
+            "max_output_tokens": None,
+        },
+    )
+    assert cleared_resp.status_code == 200
+    cleared = cleared_resp.json()
+    assert cleared["provider_name"] == ""
+    assert cleared["model_name"] == ""
+    assert cleared["api_base_url"] is None
+    assert cleared["api_key_env"] is None
+    assert cleared["image_provider_name"] is None
+    assert cleared["image_model_name"] is None
+    assert cleared["image_api_base_url"] is None
+    assert cleared["image_api_key_env"] is None
+
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-clear",
+            "project_name": "p-agentcfg-clear",
+            "product_name": "pet toy",
+            "product_code": "PT-CLEAR",
+            "industry_code": "pet_toys",
+            "campaign_name": "meta-agentcfg-clear",
+            "creative_preset": "meta_square_5s",
+            "model_provider": "openai",
+            "model_name": "gpt-4.1",
+        },
+    )
+    run_id = create_resp.json()["id"]
+
+    _run_worker_once()
+    run_view = client.get(f"/runs/{run_id}").json()
+    intake_task = [t for t in run_view["stage_tasks"] if t["stage_name"] == "intake"][0]
+    resolved_api = intake_task["metadata_json"]["resolved_api"]
+    assert resolved_api["provider_name"] == "deepseek"
+    assert resolved_api["model_name"] == "deepseek-v3.2"
+
+
 def test_agent_api_page_loads(client, monkeypatch):
     monkeypatch.setenv("CRISPY_API_KEY_KIMI", "dummy")
     resp = client.get("/dashboard/agent-apis")

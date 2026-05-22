@@ -72,6 +72,12 @@ def _modality_config_from_extra(extra: dict | None, key: str) -> dict[str, Any]:
     return dict(row)
 
 
+def _field_provided(field_name: str, value: Any, update_fields: set[str] | None) -> bool:
+    if update_fields is None:
+        return value is not None
+    return field_name in update_fields
+
+
 def _merge_modality_config(
     current_cfg: dict[str, Any],
     *,
@@ -79,28 +85,33 @@ def _merge_modality_config(
     model_name: str | None,
     api_base_url: str | None,
     api_key_env: str | None,
+    update_fields: set[str] | None = None,
+    provider_field: str = "provider_name",
+    model_field: str = "model_name",
+    api_base_url_field: str = "api_base_url",
+    api_key_env_field: str = "api_key_env",
 ) -> dict[str, Any]:
     merged = dict(current_cfg)
-    if provider_name is not None:
-        value = provider_name.strip()
+    if _field_provided(provider_field, provider_name, update_fields):
+        value = (provider_name or "").strip()
         if value:
             merged["provider_name"] = value
         else:
             merged.pop("provider_name", None)
-    if model_name is not None:
-        value = model_name.strip()
+    if _field_provided(model_field, model_name, update_fields):
+        value = (model_name or "").strip()
         if value:
             merged["model_name"] = value
         else:
             merged.pop("model_name", None)
-    if api_base_url is not None:
-        value = api_base_url.strip()
+    if _field_provided(api_base_url_field, api_base_url, update_fields):
+        value = (api_base_url or "").strip()
         if value:
             merged["api_base_url"] = value
         else:
             merged.pop("api_base_url", None)
-    if api_key_env is not None:
-        value = api_key_env.strip()
+    if _field_provided(api_key_env_field, api_key_env, update_fields):
+        value = (api_key_env or "").strip()
         if value:
             merged["api_key_env"] = value
         else:
@@ -147,6 +158,7 @@ def upsert_agent_config(
     request_timeout_seconds: int | None = None,
     streaming_enabled: bool | None = None,
     extra: dict | None,
+    update_fields: set[str] | None = None,
 ) -> AgentApiConfig:
     _validate_env_name(api_key_env)
     _validate_env_name(image_api_key_env)
@@ -163,12 +175,22 @@ def upsert_agent_config(
     ensure_default_agent_config(db)
     row = db.scalar(select(AgentApiConfig).where(AgentApiConfig.agent_name == agent_name))
     has_image_patch = any(
-        value is not None
-        for value in (image_provider_name, image_model_name, image_api_base_url, image_api_key_env)
+        _field_provided(field_name, value, update_fields)
+        for field_name, value in (
+            ("image_provider_name", image_provider_name),
+            ("image_model_name", image_model_name),
+            ("image_api_base_url", image_api_base_url),
+            ("image_api_key_env", image_api_key_env),
+        )
     )
     has_video_patch = any(
-        value is not None
-        for value in (video_provider_name, video_model_name, video_api_base_url, video_api_key_env)
+        _field_provided(field_name, value, update_fields)
+        for field_name, value in (
+            ("video_provider_name", video_provider_name),
+            ("video_model_name", video_model_name),
+            ("video_api_base_url", video_api_base_url),
+            ("video_api_key_env", video_api_key_env),
+        )
     )
 
     if not row:
@@ -180,6 +202,11 @@ def upsert_agent_config(
             model_name=image_model_name,
             api_base_url=image_api_base_url,
             api_key_env=image_api_key_env,
+            update_fields=update_fields,
+            provider_field="image_provider_name",
+            model_field="image_model_name",
+            api_base_url_field="image_api_base_url",
+            api_key_env_field="image_api_key_env",
         )
         if merged_image:
             extra_payload["image_config"] = merged_image
@@ -189,15 +216,20 @@ def upsert_agent_config(
             model_name=video_model_name,
             api_base_url=video_api_base_url,
             api_key_env=video_api_key_env,
+            update_fields=update_fields,
+            provider_field="video_provider_name",
+            model_field="video_model_name",
+            api_base_url_field="video_api_base_url",
+            api_key_env_field="video_api_key_env",
         )
         if merged_video:
             extra_payload["video_config"] = merged_video
         row = AgentApiConfig(
             agent_name=agent_name,
-            provider_name=provider_name if provider_name is not None else "",
-            model_name=model_name if model_name is not None else "",
-            api_base_url=api_base_url if api_base_url is not None else "",
-            api_key_env=api_key_env if api_key_env is not None else "",
+            provider_name=(provider_name or "").strip(),
+            model_name=(model_name or "").strip(),
+            api_base_url=(api_base_url or "").strip() or None,
+            api_key_env=(api_key_env or "").strip() or None,
             thinking_mode=thinking_mode if thinking_mode is not None else "",
             thinking_budget_tokens=thinking_budget_tokens,
             max_output_tokens=max_output_tokens,
@@ -209,23 +241,23 @@ def upsert_agent_config(
         db.flush()
         return row
 
-    if provider_name is not None:
-        row.provider_name = provider_name
-    if model_name is not None:
-        row.model_name = model_name
-    if api_base_url is not None:
-        row.api_base_url = api_base_url or None
-    if api_key_env is not None:
-        row.api_key_env = api_key_env or None
-    if thinking_mode is not None:
+    if _field_provided("provider_name", provider_name, update_fields):
+        row.provider_name = (provider_name or "").strip()
+    if _field_provided("model_name", model_name, update_fields):
+        row.model_name = (model_name or "").strip()
+    if _field_provided("api_base_url", api_base_url, update_fields):
+        row.api_base_url = (api_base_url or "").strip() or None
+    if _field_provided("api_key_env", api_key_env, update_fields):
+        row.api_key_env = (api_key_env or "").strip() or None
+    if _field_provided("thinking_mode", thinking_mode, update_fields):
         row.thinking_mode = thinking_mode or "auto"
-    if thinking_budget_tokens is not None:
+    if _field_provided("thinking_budget_tokens", thinking_budget_tokens, update_fields):
         row.thinking_budget_tokens = thinking_budget_tokens
-    if max_output_tokens is not None:
+    if _field_provided("max_output_tokens", max_output_tokens, update_fields):
         row.max_output_tokens = max_output_tokens
-    if request_timeout_seconds is not None:
+    if _field_provided("request_timeout_seconds", request_timeout_seconds, update_fields):
         row.request_timeout_seconds = request_timeout_seconds
-    if streaming_enabled is not None:
+    if _field_provided("streaming_enabled", streaming_enabled, update_fields):
         row.streaming_enabled = bool(streaming_enabled)
 
     base_extra = dict(extra) if isinstance(extra, dict) else dict(row.extra or {})
@@ -236,6 +268,11 @@ def upsert_agent_config(
             model_name=image_model_name,
             api_base_url=image_api_base_url,
             api_key_env=image_api_key_env,
+            update_fields=update_fields,
+            provider_field="image_provider_name",
+            model_field="image_model_name",
+            api_base_url_field="image_api_base_url",
+            api_key_env_field="image_api_key_env",
         )
         if merged_image:
             base_extra["image_config"] = merged_image
@@ -248,12 +285,17 @@ def upsert_agent_config(
             model_name=video_model_name,
             api_base_url=video_api_base_url,
             api_key_env=video_api_key_env,
+            update_fields=update_fields,
+            provider_field="video_provider_name",
+            model_field="video_model_name",
+            api_base_url_field="video_api_base_url",
+            api_key_env_field="video_api_key_env",
         )
         if merged_video:
             base_extra["video_config"] = merged_video
         else:
             base_extra.pop("video_config", None)
-    if extra is not None or has_image_patch or has_video_patch:
+    if _field_provided("extra", extra, update_fields) or has_image_patch or has_video_patch:
         row.extra = base_extra
 
     db.flush()
