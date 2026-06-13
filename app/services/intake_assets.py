@@ -22,6 +22,29 @@ def _safe_name(name: str) -> str:
     return Path(name).name.replace(" ", "_")
 
 
+def _allocate_unique_token(token: str, seen: set[str]) -> str:
+    candidate = token
+    idx = 2
+    while candidate in seen:
+        candidate = f"{token}_{idx}"
+        idx += 1
+    seen.add(candidate)
+    return candidate
+
+
+def _allocate_unique_filename(name: str, seen: set[str]) -> str:
+    path = Path(name)
+    stem = path.stem or "upload"
+    suffix = path.suffix
+    token = _allocate_unique_token(stem, {Path(item).stem for item in seen})
+    candidate = f"{token}{suffix}"
+    while candidate in seen:
+        token = _allocate_unique_token(stem, {Path(item).stem for item in seen})
+        candidate = f"{token}{suffix}"
+    seen.add(candidate)
+    return candidate
+
+
 def _parse_csv_bytes(data: bytes) -> list[dict]:
     text = data.decode("utf-8", errors="ignore")
     reader = csv.DictReader(io.StringIO(text))
@@ -75,9 +98,12 @@ def process_uploaded_payloads(run_id: str, uploads: list[dict[str, Any]]) -> tup
     sample_videos: list[dict] = []
     file_entries: list[dict] = []
     artifacts: list[dict] = []
+    stored_filenames: set[str] = set()
+    video_prefixes: set[str] = set()
 
     for item in uploads:
         filename = _safe_name(item["filename"])
+        stored_filename = _allocate_unique_filename(filename, stored_filenames)
         content = item["content"]
         content_type = item.get("content_type")
         size = len(content)
@@ -87,7 +113,7 @@ def process_uploaded_payloads(run_id: str, uploads: list[dict[str, Any]]) -> tup
         if total_size > MAX_TOTAL_SIZE_BYTES:
             raise ValueError(f"total upload too large; max={MAX_TOTAL_SIZE_BYTES}")
 
-        path = input_dir / filename
+        path = input_dir / stored_filename
         path.write_bytes(content)
         ext = path.suffix.lower()
         entry = {
@@ -109,7 +135,8 @@ def process_uploaded_payloads(run_id: str, uploads: list[dict[str, Any]]) -> tup
         elif ext in IMAGE_EXTENSIONS:
             sample_images.append(entry)
         elif ext in VIDEO_EXTENSIONS:
-            frames = _extract_video_frames(run_id, Path(filename).stem, path, count=3)
+            frame_prefix = _allocate_unique_token(Path(filename).stem or "video", video_prefixes)
+            frames = _extract_video_frames(run_id, frame_prefix, path, count=3)
             sample_videos.append({**entry, "frame_placeholders": frames, "duration_seconds": 15.0})
             for frame_path in frames:
                 artifacts.append(

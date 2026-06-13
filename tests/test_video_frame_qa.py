@@ -4,6 +4,7 @@ import types
 
 import pytest
 
+from app.services.intake_assets import process_uploaded_payloads
 from app.services.video_frames import sample_video_frames
 
 
@@ -107,3 +108,21 @@ def test_sample_video_frames_clears_stale_prefix_frames_before_sampling(tmp_path
     assert all(Path(frame).exists() for frame in frames)
     assert str(stale) not in frames
     assert not stale.exists()
+
+
+def test_process_uploaded_payloads_keeps_duplicate_video_filenames_distinct():
+    summary, artifacts = process_uploaded_payloads(
+        "duplicate-video-names",
+        [
+            {"filename": "clip.mp4", "content_type": "video/mp4", "content": b"not a video one"},
+            {"filename": "clip.mp4", "content_type": "video/mp4", "content": b"not a video two"},
+        ],
+    )
+
+    videos = summary["sample_videos"]
+    assert len(videos) == 2
+    assert videos[0]["uri"] != videos[1]["uri"]
+    assert set(videos[0]["frame_placeholders"]).isdisjoint(videos[1]["frame_placeholders"])
+    assert all(Path(video["uri"]).exists() for video in videos)
+    assert all(Path(frame).exists() for video in videos for frame in video["frame_placeholders"])
+    assert len([item for item in artifacts if item["type"] == "input_video_frame"]) == 6
