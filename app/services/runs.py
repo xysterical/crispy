@@ -52,6 +52,7 @@ from app.services.creative_specs import (
     TIKTOK_SHOP_VIDEO_DEFAULT_STYLE,
     TIKTOK_SHOP_VIDEO_PRESET,
     get_dtc_site_review_hints,
+    get_social_review_contract,
     resolve_creative_specs,
 )
 from app.services.execution_memory import (
@@ -716,6 +717,11 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
         "pipeline_mode": run.pipeline_mode,
         "creative_preset": run.creative_preset,
         "creative_specs": run.creative_specs or {},
+        "social_review_contract": get_social_review_contract(
+            campaign.channel if campaign else "",
+            run.pipeline_mode,
+            run.creative_specs or {},
+        ),
         "variant_count": run.variant_count,
         "enable_research": run.enable_research,
         "manual_research_brief": run.manual_research_brief or "",

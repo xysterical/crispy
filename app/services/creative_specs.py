@@ -52,6 +52,39 @@ DTC_SITE_SURFACE_LIBRARY: dict[str, dict] = {
     },
 }
 
+SOCIAL_REVIEW_CONTRACTS: dict[tuple[str, str], dict] = {
+    ("tiktok", "tiktok_shop_video"): {
+        "review_profile": "social_video",
+        "preferred_video_size": "9:16",
+        "required_checks": [
+            "first_frame_clarity",
+            "product_truth",
+            "continuity",
+            "cta_clarity",
+        ],
+        "evaluation_dimensions": [
+            "thumb_stop_power",
+            "product_clarity",
+            "purchase_intent",
+            "watch_through_potential",
+        ],
+    },
+    ("meta", "copy_image_only"): {
+        "review_profile": "social_image",
+        "preferred_image_size": "1:1",
+        "required_checks": [
+            "product_visibility",
+            "text_overlay_risk",
+            "claim_safety",
+        ],
+        "evaluation_dimensions": [
+            "hook_appeal",
+            "visual_execution",
+            "brand_alignment",
+        ],
+    },
+}
+
 CREATIVE_PRESETS: dict[str, dict] = {
     "meta_square_5s": {
         "image_size": "1:1",
@@ -173,6 +206,25 @@ def get_dtc_site_surface_strategy(creative_specs: dict | None) -> dict:
 def get_dtc_site_review_hints(creative_specs: dict | None) -> list[str]:
     strategy = get_dtc_site_surface_strategy(creative_specs)
     return list(strategy.get("review_hints") or [])
+
+
+def get_social_review_contract(channel: str | None, pipeline_mode: str | None, creative_specs: dict | None = None) -> dict:
+    specs = creative_specs or {}
+    key = (str(channel or "").strip().lower(), str(pipeline_mode or "").strip().lower())
+    base = deepcopy(SOCIAL_REVIEW_CONTRACTS.get(key) or {})
+    if not base:
+        return {
+            "review_profile": "generic",
+            "preferred_image_size": specs.get("image_size"),
+            "preferred_video_size": specs.get("video_size"),
+            "required_checks": [],
+            "evaluation_dimensions": [],
+        }
+    if "preferred_image_size" not in base and specs.get("image_size"):
+        base["preferred_image_size"] = specs["image_size"]
+    if "preferred_video_size" not in base and specs.get("video_size"):
+        base["preferred_video_size"] = specs["video_size"]
+    return base
 
 
 def resolve_creative_specs(creative_preset: str, creative_specs: dict | None = None) -> dict:
