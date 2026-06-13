@@ -6,7 +6,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from app.data.models import PipelineRun, RunVariant, VariantAsset
+from app.data.models import Campaign, PipelineRun, RunVariant, VariantAsset
 
 
 def _file_to_data_url(path: Path) -> str | None:
@@ -25,10 +25,11 @@ def build_reference_bundle(
     limit_images: int = 2,
     limit_frames: int = 2,
 ) -> dict:
-    rows = (
-        db.query(VariantAsset, RunVariant.current_score)
+    query = (
+        db.query(VariantAsset, RunVariant.current_score, Campaign.channel)
         .join(RunVariant, VariantAsset.run_variant_id == RunVariant.id)
         .join(PipelineRun, VariantAsset.run_id == PipelineRun.id)
+        .join(Campaign, PipelineRun.campaign_id == Campaign.id)
         .filter(
             PipelineRun.product_code == product_code,
             VariantAsset.asset_type.in_(["image", "storyboard_frame"]),
@@ -36,13 +37,14 @@ def build_reference_bundle(
             RunVariant.current_score.isnot(None),
         )
         .order_by(RunVariant.current_score.desc())
-        .limit(40)
-        .all()
     )
+    if channel:
+        query = query.filter(Campaign.channel == channel)
+    rows = query.limit(40).all()
 
     images: list[dict] = []
     frames: list[dict] = []
-    for asset, score in rows:
+    for asset, score, asset_channel in rows:
         data_url = _file_to_data_url(Path(asset.uri))
         if not data_url:
             continue
@@ -51,7 +53,7 @@ def build_reference_bundle(
             "asset_type": asset.asset_type,
             "score": score,
             "source_type": f"historical_{asset.asset_type}",
-            "channel": channel,
+            "channel": asset_channel,
         }
         if asset.asset_type == "image" and len(images) < limit_images:
             images.append(item)
