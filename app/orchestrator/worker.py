@@ -59,7 +59,6 @@ class PipelineWorker:
         self._total_failed: int = 0
         self._video_poller_last_run: datetime | None = None
         self._video_poller_success: bool = True
-        self._full_auto_regen_cycles: int = 0
 
     # ── Public API ──────────────────────────────────────────
 
@@ -313,15 +312,23 @@ class PipelineWorker:
         if not regen_variants:
             return True
 
-        if self._full_auto_regen_cycles >= 2:
+        metadata = dict(task.metadata_json or {})
+        regen_cycles = int(metadata.get("full_auto_visual_qa_regen_cycles") or 0)
+
+        if regen_cycles >= 2:
             logger.warning(
                 "Full-auto visual_qa regen limit reached for run %s; advancing anyway",
                 run.id,
             )
-            self._full_auto_regen_cycles = 0
+            task.metadata_json = {**metadata, "full_auto_visual_qa_regen_limit_reached": True}
             return True
 
-        self._full_auto_regen_cycles += 1
+        regen_cycles += 1
+        task.metadata_json = {
+            **metadata,
+            "full_auto_visual_qa_regen_cycles": regen_cycles,
+            "full_auto_visual_qa_regen_limit_reached": False,
+        }
         regenerated = 0
         for summary in regen_variants[:3]:
             variant_id = summary.get("variant_id")
@@ -332,7 +339,7 @@ class PipelineWorker:
                     db,
                     run_id=run.id,
                     variant_id=str(variant_id),
-                    reason=f"full_auto_visual_qa_cycle_{self._full_auto_regen_cycles}",
+                    reason=f"full_auto_visual_qa_cycle_{regen_cycles}",
                 )
                 regenerated += 1
             except Exception:
@@ -347,7 +354,7 @@ class PipelineWorker:
             task.priority = 1
             logger.info(
                 "Full-auto visual_qa: regenerated %d variants for run %s; re-queued visual_qa (cycle %d)",
-                regenerated, run.id, self._full_auto_regen_cycles,
+                regenerated, run.id, regen_cycles,
             )
             return False
 
