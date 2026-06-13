@@ -70,6 +70,14 @@ def seeded_reference_assets(db_session, tmp_path):
         message="message lower",
         current_score=88.0,
     )
+    failed_variant = RunVariant(
+        run_id=top_run.id,
+        variant_id="V4",
+        angle="angle failed",
+        hook="hook failed",
+        message="message failed",
+        current_score=98.0,
+    )
     other_channel_variant = RunVariant(
         run_id=other_channel_run.id,
         variant_id="V3",
@@ -78,15 +86,17 @@ def seeded_reference_assets(db_session, tmp_path):
         message="message other",
         current_score=99.0,
     )
-    db_session.add_all([top_variant, lower_variant, other_channel_variant])
+    db_session.add_all([top_variant, lower_variant, failed_variant, other_channel_variant])
     db_session.flush()
 
     top_image_path = tmp_path / "winner.png"
     lower_image_path = tmp_path / "winner_2.png"
+    failed_image_path = tmp_path / "winner_failed.png"
     other_channel_image_path = tmp_path / "winner_meta.png"
     frame_path = tmp_path / "winner_frame.png"
     Image.new("RGB", (1200, 1200), color=(255, 255, 255)).save(top_image_path, format="PNG")
     Image.new("RGB", (1200, 1200), color=(245, 245, 245)).save(lower_image_path, format="PNG")
+    Image.new("RGB", (1200, 1200), color=(235, 235, 235)).save(failed_image_path, format="PNG")
     Image.new("RGB", (1200, 1200), color=(230, 230, 230)).save(other_channel_image_path, format="PNG")
     Image.new("RGB", (720, 1280), color=(240, 240, 240)).save(frame_path, format="PNG")
 
@@ -109,6 +119,15 @@ def seeded_reference_assets(db_session, tmp_path):
                 uri=str(lower_image_path),
                 idempotency_key="ref-image-2",
                 payload={"visual_qa": {"status": "pass", "score": 92}},
+            ),
+            VariantAsset(
+                run_variant_id=failed_variant.id,
+                run_id=top_run.id,
+                stage_name="copy_image_generation",
+                asset_type="image",
+                uri=str(failed_image_path),
+                idempotency_key="ref-image-failed",
+                payload={"visual_qa": {"status": "fail", "score": 10}},
             ),
             VariantAsset(
                 run_variant_id=other_channel_variant.id,
@@ -144,6 +163,7 @@ def test_reference_bundle_prefers_high_score_passed_assets(db_session, seeded_re
     )
     assert len(bundle["images"]) == 2
     assert [item["score"] for item in bundle["images"]] == [96.0, 88.0]
+    assert all("winner_failed.png" not in item["uri"] for item in bundle["images"])
     assert all(item["source_type"] == "historical_image" for item in bundle["images"])
     assert all(item["channel"] == "tiktok" for item in bundle["images"])
     assert all(item["score"] is not None for item in bundle["images"])

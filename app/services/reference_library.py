@@ -17,6 +17,12 @@ def _file_to_data_url(path: Path) -> str | None:
     return f"data:{mime};base64,{encoded}"
 
 
+def _is_reference_eligible(asset: VariantAsset) -> bool:
+    visual_qa = (asset.payload or {}).get("visual_qa") or {}
+    status = visual_qa.get("status")
+    return status in (None, "pass", "warn")
+
+
 def build_reference_bundle(
     db: Session,
     *,
@@ -45,6 +51,8 @@ def build_reference_bundle(
     images: list[dict] = []
     frames: list[dict] = []
     for asset, score, asset_channel in rows:
+        if not _is_reference_eligible(asset):
+            continue
         data_url = _file_to_data_url(Path(asset.uri))
         if not data_url:
             continue
