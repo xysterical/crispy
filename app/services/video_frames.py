@@ -4,14 +4,26 @@ import subprocess
 from pathlib import Path
 
 
-def _write_frame_placeholders(output_dir: Path, prefix: str, count: int) -> list[str]:
-    from PIL import Image  # type: ignore
+def _clear_frame_outputs(output_dir: Path, prefix: str) -> None:
+    for path in output_dir.glob(f"{prefix}_frame_*.png"):
+        path.unlink(missing_ok=True)
+    for path in output_dir.glob(f"{prefix}_fallback_frame_*.png"):
+        path.unlink(missing_ok=True)
 
+
+def _write_frame_placeholders(output_dir: Path, prefix: str, count: int) -> list[str]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        from PIL import Image  # type: ignore
+    except Exception:
+        Image = None  # type: ignore
     paths: list[str] = []
     for idx in range(count):
         path = output_dir / f"{prefix}_frame_{idx + 1}.png"
-        Image.new("RGB", (720, 720), color=(255, 255, 255)).save(path, format="PNG")
+        if Image is None:
+            path.write_bytes(b"")
+        else:
+            Image.new("RGB", (720, 720), color=(255, 255, 255)).save(path, format="PNG")
         paths.append(str(path))
     return paths
 
@@ -25,6 +37,7 @@ def sample_video_frames(*, video_path: Path, output_dir: Path, prefix: str, coun
         return _write_frame_placeholders(output_dir, prefix, count)
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    _clear_frame_outputs(output_dir, prefix)
     output_pattern = output_dir / f"{prefix}_frame_%03d.png"
     cmd = [
         ffmpeg,
