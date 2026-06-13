@@ -5,11 +5,9 @@ from datetime import UTC, datetime, timedelta
 import json
 import logging
 from pathlib import Path
-import base64
-import mimetypes
 
 from sqlalchemy import desc, or_, select, update
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.agents.persona_contracts import build_compiled_persona
 from app.agents.registry import STAGE_CONTRACT_VERSION, stage_agent, stage_collaborators
@@ -68,6 +66,7 @@ from app.services.execution_memory import (
 from app.services.marketplace_qa import MARKETPLACE_REVIEW_TAGS, is_marketplace_main_image
 from app.services.personas import get_persona
 from app.services.gm_evolution import compile_run_outcome_reflection, resolve_active_gm_policy
+from app.services.reference_library import build_reference_bundle
 from app.services.visual_qa import inspect_visual_asset
 
 
@@ -665,40 +664,6 @@ def _analytics_insights(db: Session, run: PipelineRun) -> list[dict]:
         return insights
     except Exception:
         return []
-
-
-def _best_historical_reference_images(db: Session, product_code: str, limit: int = 2) -> list[dict]:
-    """Return top-scored historical variant images for a product as base64 data URL dicts."""
-    rows = (
-        db.query(VariantAsset)
-        .options(joinedload(VariantAsset.variant))
-        .join(RunVariant, VariantAsset.run_variant_id == RunVariant.id)
-        .join(PipelineRun, VariantAsset.run_id == PipelineRun.id)
-        .filter(
-            VariantAsset.asset_type == "image",
-            VariantAsset.uri.isnot(None),
-            RunVariant.current_score.isnot(None),
-            PipelineRun.product_code == product_code,
-        )
-        .order_by(RunVariant.current_score.desc())
-        .limit(limit)
-        .all()
-    )
-    results: list[dict] = []
-    for asset in rows:
-        path = Path(asset.uri) if asset.uri else None
-        if not path or not path.exists() or not path.is_file():
-            continue
-        raw = path.read_bytes()
-        mime = mimetypes.guess_type(str(path))[0] or "image/png"
-        encoded = base64.b64encode(raw).decode("ascii")
-        data_url = f"data:{mime};base64,{encoded}"
-        results.append({
-            "uri": data_url,
-            "description": "Previously generated winning product image",
-            "variant_score": asset.variant.current_score if asset.variant else None,
-        })
-    return results
 
 
 def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
@@ -1410,7 +1375,14 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
             variants = VariantSet.model_validate(task.input_payload["variants"])
             intake_payload = task.input_payload.get("intake") or {}
             intake = ProductIntake.model_validate(intake_payload) if intake_payload else None
-            historical_refs = _best_historical_reference_images(db, run.product_code, limit=2)
+            campaign = db.get(Campaign, run.campaign_id)
+            reference_bundle = build_reference_bundle(
+                db,
+                product_code=run.product_code,
+                channel=campaign.channel if campaign else "",
+                limit_images=2,
+                limit_frames=2,
+            )
             output = runtime.run_copy_image_generation(
                 run.id,
                 variants,
@@ -1422,12 +1394,20 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 provider=provider_name,
                 model=model_name,
                 runtime_config=runtime_config,
-                historical_references=historical_refs,
+                historical_references=reference_bundle["images"],
             )
         elif task.stage_name == "video_scripting":
             variants = VariantSet.model_validate(task.input_payload["variants"])
             intake_payload = task.input_payload.get("intake") or {}
             intake = ProductIntake.model_validate(intake_payload) if intake_payload else None
+            campaign = db.get(Campaign, run.campaign_id)
+            reference_bundle = build_reference_bundle(
+                db,
+                product_code=run.product_code,
+                channel=campaign.channel if campaign else "",
+                limit_images=2,
+                limit_frames=2,
+            )
             output = runtime.run_video_scripting(
                 run.id,
                 variants,
@@ -1438,6 +1418,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 creative_specs=task.input_payload.get("creative_specs", {}),
                 pipeline_mode=run.pipeline_mode,
                 runtime_config=runtime_config,
+                reference_bundle=reference_bundle,
             )
         elif task.stage_name == "storyboard_image_generation":
             scripts = VideoScriptPack.model_validate(task.input_payload["video_scripts"])
@@ -1455,7 +1436,14 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                     **(task.metadata_json or {}),
                     "storyboard_image_config_source": "copy_image_agent",
                 }
-            historical_refs = _best_historical_reference_images(db, run.product_code, limit=2)
+            campaign = db.get(Campaign, run.campaign_id)
+            reference_bundle = build_reference_bundle(
+                db,
+                product_code=run.product_code,
+                channel=campaign.channel if campaign else "",
+                limit_images=2,
+                limit_frames=2,
+            )
             output = runtime.run_storyboard_image_generation(
                 run.id,
                 scripts,
@@ -1463,7 +1451,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 provider=provider_name,
                 model=model_name,
                 runtime_config=storyboard_runtime_config,
-                historical_references=historical_refs,
+                historical_references=reference_bundle["frames"] or reference_bundle["images"],
             )
         elif task.stage_name == "video_generation":
             scripts = VideoScriptPack.model_validate(task.input_payload["video_scripts"])
@@ -2297,6 +2285,14 @@ def regenerate_variant_assets(
     if stage_name == "copy_image_generation":
         intake_payload = task.input_payload.get("intake") or {}
         intake = ProductIntake.model_validate(intake_payload) if intake_payload else None
+        campaign = db.get(Campaign, run.campaign_id)
+        reference_bundle = build_reference_bundle(
+            db,
+            product_code=run.product_code,
+            channel=campaign.channel if campaign else "",
+            limit_images=2,
+            limit_frames=2,
+        )
         output = runtime.run_copy_image_generation(
             run.id,
             _single_variant_set(db, run_id, variant_id),
@@ -2308,10 +2304,19 @@ def regenerate_variant_assets(
             provider=provider_name,
             model=model_name,
             runtime_config=runtime_config,
+            historical_references=reference_bundle["images"],
         )
     elif stage_name == "video_scripting":
         intake_payload = task.input_payload.get("intake") or {}
         intake = ProductIntake.model_validate(intake_payload) if intake_payload else None
+        campaign = db.get(Campaign, run.campaign_id)
+        reference_bundle = build_reference_bundle(
+            db,
+            product_code=run.product_code,
+            channel=campaign.channel if campaign else "",
+            limit_images=2,
+            limit_frames=2,
+        )
         output = runtime.run_video_scripting(
             run.id,
             _single_variant_set(db, run_id, variant_id),
@@ -2322,8 +2327,17 @@ def regenerate_variant_assets(
             creative_specs=task.input_payload.get("creative_specs", {}),
             pipeline_mode=run.pipeline_mode,
             runtime_config=runtime_config,
+            reference_bundle=reference_bundle,
         )
     elif stage_name == "storyboard_image_generation":
+        campaign = db.get(Campaign, run.campaign_id)
+        reference_bundle = build_reference_bundle(
+            db,
+            product_code=run.product_code,
+            channel=campaign.channel if campaign else "",
+            limit_images=2,
+            limit_frames=2,
+        )
         output = runtime.run_storyboard_image_generation(
             run.id,
             _single_script_pack(db, run_id, variant_id),
@@ -2331,6 +2345,7 @@ def regenerate_variant_assets(
             provider=provider_name,
             model=model_name,
             runtime_config=runtime_config,
+            historical_references=reference_bundle["frames"] or reference_bundle["images"],
         )
     elif stage_name == "video_generation":
         storyboard_output = _get_stage_output(db, run_id, "storyboard_image_generation")

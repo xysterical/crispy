@@ -1160,6 +1160,7 @@ class AgentsRuntime:
                 "error": error_text,
                 "provider_errors": provider_errors,
             }
+            image_payload["reference_source_count"] = len(historical_references or [])
             image_payload["visual_qa"] = self._local_media_qa(
                 asset_type="image",
                 uri=image_uri,
@@ -1285,9 +1286,11 @@ class AgentsRuntime:
         creative_specs: dict | None = None,
         pipeline_mode: str | None = None,
         runtime_config: dict | None = None,
+        reference_bundle: dict | None = None,
     ) -> StageOutput:
         business_context = business_context or {}
         creative_specs = creative_specs or {}
+        reference_bundle = reference_bundle or {}
         is_tiktok_shop = pipeline_mode == "tiktok_shop_video"
         tiktok_style = str(creative_specs.get("tiktok_video_style") or "ugc_demo")
         product_context = self._video_product_context(
@@ -1295,6 +1298,10 @@ class AgentsRuntime:
             business_context=business_context,
             creative_specs=creative_specs,
         )
+        reference_summary = {
+            "image_count": len(reference_bundle.get("images") or []),
+            "frame_count": len(reference_bundle.get("frames") or []),
+        }
         media_summary = str(product_context.get("media_summary") or "")
         product_name = str(product_context.get("product_name") or "the product")
         value_props = [str(item) for item in (product_context.get("value_props") or []) if str(item).strip()]
@@ -1308,6 +1315,7 @@ class AgentsRuntime:
                 "Generate video hooks and scripts with the product context. "
                 f"product={product_name}, audience={audience}, value_props={value_props}, "
                 f"media_summary={media_summary}, variants={variant_set.model_dump()}. "
+                f"reference_summary={reference_summary}. "
                 f"generation_spec={generation_spec}. "
                 "Make every shot filmable, product-specific, and constrained by realistic product handling. "
                 "For each variant, also output a structured shot_plan array with 3-4 shot objects. "
@@ -1450,6 +1458,7 @@ class AgentsRuntime:
         )
         payload = {
             **pack.model_dump(),
+            "reference_summary": reference_summary,
             "strategy_handoff": self._business_strategy_handoff(
                 stage="video_scripting",
                 decisions=[f"generated scripts for {len(scripts)} variants", "required close-up product handling and physical continuity"],
@@ -1478,6 +1487,9 @@ class AgentsRuntime:
     ) -> StageOutput:
         creative_specs = creative_specs or {}
         generation_spec = {**(script_pack.generation_spec or {}), **self._video_generation_spec(creative_specs)}
+        reference_summary = {
+            "image_count": len(historical_references or []),
+        }
         # Build reference URLs from historical best images
         historical_frame_refs: list[str] = []
         for ref in (historical_references or [])[:2]:
@@ -1492,6 +1504,7 @@ class AgentsRuntime:
             agent_role="Storyboard Agent",
             task_instruction=(
                 f"Create storyboard frames from scripts: {script_pack.model_dump()}. "
+                f"reference_summary={reference_summary}. "
                 "Treat storyboard as the visual QA plan before video generation: continuity, object logic, product visibility."
             ),
         )
@@ -1531,6 +1544,7 @@ class AgentsRuntime:
                     frame_prompt = (
                         f"Create a realistic storyboard frame for {product_name}. "
                         f"Variant {script.variant_id}. Shot: {shot}. Hook: {script.hook}. "
+                        f"Historical reference summary: {reference_summary}. "
                         f"{style_line}"
                         "Use a clean previsualization style suitable for human review before video generation. "
                         "No text overlay. Product-forward composition. "
@@ -1583,6 +1597,7 @@ class AgentsRuntime:
                     "error": frame_error,
                     "provider_errors": provider_errors,
                 }
+                frame["reference_source_count"] = len(historical_references or [])
                 frame["visual_qa"] = self._local_media_qa(
                     asset_type="storyboard_frame",
                     uri=frame_uri,
