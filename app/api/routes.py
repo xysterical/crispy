@@ -64,6 +64,7 @@ from app.schemas.api import (
     RunSummary,
     RunView,
     StageTaskView,
+    RunStatusExplanation,
     VariantRegenerateRequest,
     VariantReviewRequest,
     VariantSelectRequest,
@@ -389,8 +390,85 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
         stage_tasks=task_views,
         trace_events=trace_views,
         variant_summary=run_variants(db, run.id).get("summary", {}),
+        status_explanation=_run_status_explanation(run, tasks),
         latest_scorecard=scorecard,
         latest_forecast=forecast,
+    )
+
+
+def _stage_label(stage_name: str | None) -> str:
+    labels = {
+        "intake": "Intake",
+        "planning": "Planning",
+        "divergence": "Variant strategy",
+        "copy_image_generation": "Copy and image generation",
+        "video_scripting": "Video scripting",
+        "storyboard_image_generation": "Storyboard generation",
+        "video_generation": "Video generation",
+        "visual_quality_assessment": "Visual QA",
+        "evaluation_selection": "Evaluation",
+    }
+    return labels.get(stage_name or "", (stage_name or "Run").replace("_", " ").title())
+
+
+def _run_status_explanation(run: PipelineRun, tasks: list[StageTask]) -> RunStatusExplanation:
+    current_task = next((task for task in tasks if task.stage_name == run.current_stage), None)
+    failed_task = next((task for task in tasks if task.status == "failed"), None)
+    task = current_task or failed_task
+    stage_label = _stage_label(task.stage_name if task else run.current_stage)
+
+    if run.status == "completed":
+        return RunStatusExplanation(
+            tone="success",
+            headline="Run completed",
+            detail="Winner assets and scorecard are ready for review or scheduling.",
+            primary_action="Review deliverables",
+            next_actions=["Inspect winner assets", "Schedule approved creative", "Import performance feedback later"],
+        )
+
+    if run.status == "failed" or (task and task.status == "failed"):
+        detail = (task.error_message if task else None) or "The current stage failed before producing a reviewable output."
+        return RunStatusExplanation(
+            tone="danger",
+            headline=f"{stage_label} failed",
+            detail=detail,
+            primary_action="Reject to retry",
+            next_actions=["Read the stage error", "Fix provider/config/input issues", "Reject the stage to requeue it"],
+        )
+
+    if task and task.status == "waiting_review":
+        return RunStatusExplanation(
+            tone="review",
+            headline=f"{stage_label} is waiting for review",
+            detail="The agent produced a stage handoff and needs an operator decision before the run can continue.",
+            primary_action="Review and approve",
+            next_actions=["Inspect the stage output", "Approve to continue", "Reject with notes if the output needs regeneration"],
+        )
+
+    if task and task.status == "running":
+        return RunStatusExplanation(
+            tone="info",
+            headline=f"{stage_label} is running",
+            detail="The worker has claimed this stage. New trace events will appear as the agent progresses.",
+            primary_action="Wait for completion",
+            next_actions=["Watch Agent Trace", "Refresh async assets if media generation is pending"],
+        )
+
+    if task and task.status == "queued":
+        return RunStatusExplanation(
+            tone="info",
+            headline=f"Queued for {stage_label.lower()}",
+            detail="This stage is ready for the background worker. It will start when a worker slot is available.",
+            primary_action="Wait for worker",
+            next_actions=["Check queue health", "Confirm worker is enabled if it stays queued"],
+        )
+
+    return RunStatusExplanation(
+        tone="info",
+        headline="Run is preparing the next stage",
+        detail="The pipeline state is being updated. Refresh if this state does not change shortly.",
+        primary_action="Refresh run",
+        next_actions=["Refresh run detail", "Check Stage Timeline for the last completed stage"],
     )
 
 
@@ -1211,6 +1289,29 @@ def _dashboard_shared_js() -> str:
               </div>
             `;
           }
+          function statusExplanationClass(tone){
+            if (tone === "danger") return "status-explainer danger";
+            if (tone === "review") return "status-explainer review";
+            if (tone === "success") return "status-explainer success";
+            return "status-explainer info";
+          }
+          function renderStatusExplanation(run){
+            const info = run.status_explanation || {};
+            const actions = (info.next_actions || []).map((item) => `<li>${esc(item)}</li>`).join("");
+            return `
+              <section class="${statusExplanationClass(info.tone)}">
+                <div class="status-explainer-main">
+                  <div>
+                    <div class="status-explainer-kicker">Current state</div>
+                    <h3>${esc(info.headline || statusLabel(run.status))}</h3>
+                    <p>${esc(info.detail || "No additional status detail is available yet.")}</p>
+                  </div>
+                  <div class="status-explainer-action">${esc(info.primary_action || "Review run")}</div>
+                </div>
+                ${actions ? `<ol>${actions}</ol>` : ""}
+              </section>
+            `;
+          }
           function isNearTraceLeftEdge(container){
             if (!container) return true;
             return container.scrollLeft <= 48;
@@ -1341,10 +1442,9 @@ def _dashboard_shared_js() -> str:
                 <div><span class="${statusPillClass(run.status)}">${statusLabel(run.status)}</span> <span class="pill">stage: ${esc(run.current_stage || "-")}</span><span class="pill">mode: ${esc(run.pipeline_mode)}</span><span class="pill">approval: ${esc(run.approval_mode || "manual")}</span></div>
                 <div class="muted">provider/model: ${esc(run.model_provider)} / ${esc(run.model_name)} | budget: ${esc(run.budget_used)}</div>
                 <div class="muted">product_code: ${esc(run.product_code)} | industry_code: ${esc(run.industry_code)} | creative_preset: ${esc(run.creative_preset)}</div>
-                <div class="muted">creative_specs: ${esc(JSON.stringify(run.creative_specs || {}))}</div>
-                <div class="muted">variant_summary: ${esc(JSON.stringify(run.variant_summary || {}))}</div>
                 <div style="margin-top:8px;"><button onclick="refreshAsyncAssets('${run.id}')">Refresh async assets</button></div>
               </div>
+              ${renderStatusExplanation(run)}
               ${renderExecutionMemory(executionMemory)}
               ${renderDeliverables(deliverables)}
               ${renderVariantBoard(run.id, variants)}

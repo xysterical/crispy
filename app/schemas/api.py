@@ -75,6 +75,14 @@ class AgentTraceEventView(BaseModel):
     created_at: datetime
 
 
+class RunStatusExplanation(BaseModel):
+    tone: Literal["info", "review", "danger", "success"] = "info"
+    headline: str
+    detail: str = ""
+    primary_action: str = ""
+    next_actions: list[str] = Field(default_factory=list)
+
+
 class RunView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -106,6 +114,7 @@ class RunView(BaseModel):
     stage_tasks: list[StageTaskView] = Field(default_factory=list)
     trace_events: list[AgentTraceEventView] = Field(default_factory=list)
     variant_summary: dict = Field(default_factory=dict)
+    status_explanation: RunStatusExplanation
     latest_scorecard: ScoreCard | None = None
     latest_forecast: ConversionForecast | None = None
 

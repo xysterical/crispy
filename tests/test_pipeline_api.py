@@ -40,6 +40,53 @@ def test_channel_is_included_in_agent_task_input(client):
         assert _build_task_input(db, run, task)["channel"] == "tiktok"
 
 
+def test_run_status_explanation_guides_operator_next_steps(client):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "status_w",
+            "project_name": "status_p",
+            "product_name": "pet wipes",
+            "product_code": "STATUS-001",
+            "industry_code": "pet_care",
+            "campaign_name": "status-campaign",
+            "creative_preset": "meta_square_5s",
+            "pipeline_mode": "copy_image_only",
+        },
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+    run_id = created["id"]
+
+    assert created["status_explanation"]["tone"] == "info"
+    assert created["status_explanation"]["headline"] == "Queued for intake"
+    assert created["status_explanation"]["primary_action"] == "Wait for worker"
+
+    _run_worker_once()
+    waiting = client.get(f"/runs/{run_id}").json()
+    assert waiting["status"] == "waiting_review"
+    assert waiting["status_explanation"]["tone"] == "review"
+    assert waiting["status_explanation"]["headline"] == "Intake is waiting for review"
+    assert waiting["status_explanation"]["primary_action"] == "Review and approve"
+    assert "Approve to continue" in waiting["status_explanation"]["next_actions"]
+
+    with SessionLocal() as db:
+        from app.data.models import PipelineRun, RunStatus, StageTask, TaskStatus
+
+        run = db.get(PipelineRun, run_id)
+        task = db.query(StageTask).filter_by(run_id=run_id, stage_name="intake").one()
+        run.status = RunStatus.FAILED.value
+        task.status = TaskStatus.FAILED.value
+        task.error_message = "provider timeout"
+        db.commit()
+
+    failed = client.get(f"/runs/{run_id}").json()
+    assert failed["status_explanation"]["tone"] == "danger"
+    assert failed["status_explanation"]["headline"] == "Intake failed"
+    assert failed["status_explanation"]["detail"] == "provider timeout"
+    assert failed["status_explanation"]["primary_action"] == "Reject to retry"
+
+
 def test_pipeline_run_can_progress_with_human_gates(client):
     create_resp = client.post(
         "/runs",
