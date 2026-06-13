@@ -816,15 +816,56 @@ CREATE_RUN_JS = """
     return spec;
   }
 
+  function escapeCreateRunHtml(value) {
+    return String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
+  function preflightRowsHtml(preflight) {
+    const rows = ((preflight && preflight.checks) || []).filter(function(row) {
+      return row.severity !== 'ok';
+    });
+    if (!rows.length) {
+      return '<div>' + escapeCreateRunHtml((preflight && preflight.summary) || 'No compatibility risk detected.') + '</div>';
+    }
+    return '<ul style="margin:8px 0 0 18px;padding:0;">' + rows.map(function(row) {
+      const scope = [row.stage_name, row.agent_name].filter(Boolean).join(' / ');
+      return '<li style="margin-bottom:6px;">'
+        + '<b>' + escapeCreateRunHtml(String(row.severity || '').toUpperCase()) + '</b> '
+        + (scope ? '<span class="muted">' + escapeCreateRunHtml(scope) + ':</span> ' : '')
+        + escapeCreateRunHtml(row.message || '')
+        + '</li>';
+    }).join('') + '</ul>';
+  }
+
+  function renderCreateRunMessage(kind, title, detailHtml) {
+    const msg = document.getElementById('create-msg');
+    const color = kind === 'error' ? 'var(--danger)' : kind === 'warn' ? 'var(--warning)' : 'var(--accent)';
+    const bg = kind === 'error' ? 'var(--danger-light)' : kind === 'warn' ? 'var(--warning-light)' : '#ecfdf5';
+    msg.className = 'status-msg';
+    msg.style.color = color;
+    msg.style.background = bg;
+    msg.style.border = '1px solid ' + (kind === 'error' ? '#fecaca' : kind === 'warn' ? '#fde68a' : '#bbf7d0');
+    msg.style.borderRadius = '8px';
+    msg.style.padding = '10px 12px';
+    msg.style.overflowWrap = 'anywhere';
+    msg.style.lineHeight = '1.45';
+    msg.innerHTML = '<div style="font-weight:700;">' + escapeCreateRunHtml(title) + '</div>' + (detailHtml || '');
+  }
+
   function submitCreateRun() {
     const msg = document.getElementById('create-msg');
     msg.textContent = 'Creating run...';
     msg.className = 'status-msg';
+    msg.removeAttribute('style');
 
     const validationError = validateCreateRunForm();
     if (validationError) {
-      msg.textContent = validationError;
-      msg.style.color = 'var(--danger)';
+      renderCreateRunMessage('error', validationError, '');
       return;
     }
 
@@ -880,26 +921,34 @@ CREATE_RUN_JS = """
       .then(function(r) { return r.json().then(function(data) { return { status: r.status, data: data }; }); })
       .then(function(result) {
         if (result.status >= 400) {
-          msg.textContent = 'Error: ' + (result.data.detail || 'unknown');
-          msg.style.color = 'var(--danger)';
+          const detail = result.data.detail || {};
+          if (detail.preflight) {
+            renderCreateRunMessage(
+              'error',
+              'Run creation blocked by preflight checks.',
+              '<div class="muted" style="margin-top:4px;">Fix the items below, then create the run again.</div>' + preflightRowsHtml(detail.preflight)
+            );
+          } else {
+            renderCreateRunMessage('error', typeof detail === 'string' ? detail : 'Run creation failed.', '');
+          }
           return;
         }
         // Show preflight warnings inline if any
         const pf = result.data._preflight;
         if (pf && pf.checks && pf.checks.some(function(c) { return c.severity !== 'ok'; })) {
-          const warns = pf.checks.filter(function(c) { return c.severity !== 'ok'; }).map(function(c) { return c.message; }).join('\\n');
-          msg.innerHTML = 'Run created (id: <b>' + result.data.id + '</b>).<br>Preflight notes:<br>' + warns;
-          msg.style.color = pf.severity === 'error' ? 'var(--danger)' : '#b8860b';
+          renderCreateRunMessage(
+            pf.severity === 'error' ? 'error' : 'warn',
+            'Run created with preflight notes: ' + result.data.id,
+            preflightRowsHtml(pf)
+          );
         } else {
-          msg.innerHTML = 'Run created! (id: <b>' + result.data.id + '</b>)';
-          msg.style.color = 'var(--accent)';
+          renderCreateRunMessage('ok', 'Run created: ' + result.data.id, '');
         }
         setTimeout(closeDrawer, 1400);
         if (typeof refreshRuns === 'function') refreshRuns();
       })
       .catch(function(err) {
-        msg.textContent = 'Error: ' + err.message;
-        msg.style.color = 'var(--danger)';
+        renderCreateRunMessage('error', 'Run creation failed.', '<div>' + escapeCreateRunHtml(err.message) + '</div>');
       });
   }
 

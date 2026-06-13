@@ -60,6 +60,35 @@ def test_rich_run_includes_preflight_warnings(client):
     assert "severity" in body["_preflight"]
 
 
+def test_rich_run_blocks_preflight_errors_before_creating_run(client):
+    resp = client.post(
+        "/runs/rich",
+        data={
+            "workspace_name": "pf_block_ws",
+            "project_name": "pf_block_project",
+            "product_name": "pf_block_product",
+            "product_code": "PF-BLOCK-001",
+            "industry_code": "pet",
+            "campaign_name": "pf_block_camp",
+            "creative_preset": "marketplace_main_image_pack",
+            "pipeline_mode": "marketplace_main_image",
+            "variant_count": 4,
+        },
+    )
+
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert detail["error"] == "preflight_failed"
+    assert detail["preflight"]["severity"] == "error"
+    assert any(
+        row["key"] == "marketplace_main_image.reference_media"
+        for row in detail["preflight"]["checks"]
+    )
+
+    runs = client.get("/runs").json()
+    assert all(run["product_code"] != "PF-BLOCK-001" for run in runs)
+
+
 def test_tiktok_shop_preflight_reports_reference_ratio_and_duration_warnings(client):
     resp = client.post(
         "/runs/preflight",

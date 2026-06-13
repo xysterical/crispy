@@ -2425,6 +2425,15 @@ async def create_pipeline_run_rich(
         has_video_inputs=has_video,
         creative_specs=creative_specs_payload,
     )
+    if preflight_result.get("severity") == "error":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "preflight_failed",
+                "message": "Run creation blocked by preflight checks.",
+                "preflight": preflight_result,
+            },
+        )
     # -- end inline preflight --
 
     try:
