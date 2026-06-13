@@ -161,3 +161,72 @@ def inspect_visual_asset(
         "metrics": metrics,
         "inspected_at": _now_iso(),
     }
+
+
+def inspect_extracted_video_frames(
+    *,
+    frame_uris: list[str] | None,
+    social_review_contract: dict | None = None,
+    shot_plan: list[dict] | None = None,
+) -> dict[str, Any]:
+    frame_uris = [str(uri) for uri in (frame_uris or []) if str(uri).strip()]
+    social_review_contract = social_review_contract or {}
+    shot_plan = [dict(item) for item in (shot_plan or []) if isinstance(item, dict)]
+
+    checks: list[dict[str, Any]] = []
+    flags: list[str] = []
+    score = 100.0
+    required_checks = {str(item).strip() for item in (social_review_contract.get("required_checks") or []) if str(item).strip()}
+
+    if not frame_uris:
+        checks.append(
+            {
+                "key": "frame_sequence",
+                "status": "manual_review",
+                "message": "Completed video has no extracted frames; review after frame sampling.",
+            }
+        )
+        flags.append("visual_qa_needs_frame_review")
+        score -= 10
+    else:
+        checks.append(
+            {
+                "key": "frame_sequence",
+                "status": "pass",
+                "message": f"Frame sequence available with {len(frame_uris)} sampled frames.",
+            }
+        )
+
+    if "first_frame_clarity" in required_checks:
+        checks.append(
+            {
+                "key": "first_frame_clarity",
+                "status": "manual_review",
+                "message": "Review the first sampled frame for immediate product clarity and hook readability.",
+            }
+        )
+        flags.append("visual_qa_first_frame_clarity_check")
+        score -= 5
+
+    if shot_plan:
+        checks.append(
+            {
+                "key": "shot_plan_continuity",
+                "status": "manual_review",
+                "message": "Review sampled frames against shot intent and product continuity constraints.",
+            }
+        )
+        flags.append("visual_qa_shot_plan_frame_check")
+        score -= 5
+
+    has_manual_review = any(check["status"] == "manual_review" for check in checks)
+    status = "warn" if has_manual_review else "pass"
+    return {
+        "status": status,
+        "score": max(0.0, round(score, 2)),
+        "flags": sorted(set(flags)),
+        "checks": checks,
+        "inspected_at": _now_iso(),
+        "frame_count": len(frame_uris),
+        "first_frame_uri": frame_uris[0] if frame_uris else None,
+    }

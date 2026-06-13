@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+from pathlib import Path
+
 import pytest
 
 from app.agents.runtime import AgentsRuntime
@@ -166,6 +169,138 @@ def test_storyboard_and_video_generation_do_not_inject_leash_defaults_and_use_st
     assert fake_provider.last_request.tools == [{"type": "web_search"}]
     assert fake_provider.last_request.image_urls == ["https://example.com/reference-image.png"]
     assert fake_provider.last_request.audio_urls == ["https://example.com/reference-audio.wav"]
+
+
+def test_video_generation_samples_frames_for_completed_local_videos(tmp_path, monkeypatch):
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ('{"video_prompts":[{"variant_id":"V1","prompt":"demo prompt"}]}', "stub-model", 0.0)
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="Show the result immediately",
+                script="Open with the product in use and end on a clean CTA.",
+                shot_list=["Open on product close-up", "Demonstrate use", "Finish with CTA"],
+            )
+        ],
+        product_context={"product_name": "travel toiletry bag"},
+        generation_spec={"size": "9:16", "resolution": "720p", "duration": 5},
+    )
+
+    fake_video_bytes = b"\x00\x00\x00\x20ftypisom" + (b"0" * 2048)
+
+    monkeypatch.setattr(
+        runtime,
+        "_generate_video_submit_only",
+        lambda **kwargs: (
+            VideoGenResult(
+                model_used="stub-video-model",
+                status="completed",
+                videos=[
+                    GeneratedVideo(
+                        b64_data=base64.b64encode(fake_video_bytes).decode("ascii"),
+                        task_id="video-task-1",
+                        status="completed",
+                    )
+                ],
+            ),
+            "stub-video-provider",
+            "stub-video-model",
+        ),
+    )
+
+    def fake_sample_video_frames(*, video_path, output_dir, prefix, count=3):
+        output_dir.mkdir(parents=True, exist_ok=True)
+        frames = []
+        for idx in range(count):
+            frame = output_dir / f"{prefix}_frame_{idx + 1}.png"
+            frame.write_bytes(f"frame-{idx + 1}".encode("ascii"))
+            frames.append(str(frame))
+        return frames
+
+    monkeypatch.setattr("app.agents.runtime.sample_video_frames", fake_sample_video_frames)
+
+    output = runtime.run_video_generation(
+        run_id="runtime-video-frame-sampling",
+        script_pack=script_pack,
+        creative_specs={"video_size": "9:16", "resolution": "720p", "video_duration_seconds": 5},
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    video_payload = output.payload["videos"][0]
+    assert video_payload["generation_status"] == "completed"
+    assert len(video_payload["frame_uris"]) == 3
+    assert len(video_payload["generated_video_frames"]) == 3
+    assert all(Path(frame["uri"]).exists() for frame in video_payload["generated_video_frames"])
+    assert video_payload["frame_uris"] == [frame["uri"] for frame in video_payload["generated_video_frames"]]
+
+
+def test_visual_quality_assessment_uses_frame_review_for_completed_videos(tmp_path):
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("frame review notes", "stub-model", 0.0)
+
+    video_path = tmp_path / "completed.mp4"
+    video_path.write_bytes(b"\x00\x00\x00\x20ftypisom" + (b"1" * 2048))
+
+    variant_set = VariantSet(
+        variants=[
+            VariantCandidate(
+                variant_id="V1",
+                angle="show the product immediately",
+                hook="The first second should explain the product",
+                message="Lead with the product and keep continuity clean.",
+            )
+        ]
+    )
+
+    output = runtime.run_visual_quality_assessment(
+        run_id="runtime-video-frame-review",
+        variant_set=variant_set,
+        videos={
+            "videos": [
+                {
+                    "variant_id": "V1",
+                    "video_uri": str(video_path),
+                    "uri": str(video_path),
+                    "generation_status": "completed",
+                    "source": "local_file",
+                }
+            ]
+        },
+        video_scripts={
+            "scripts": [
+                {
+                    "variant_id": "V1",
+                    "hook": "The first second should explain the product",
+                    "shot_plan": [
+                        {
+                            "shot_id": "shot-1",
+                            "intent": "thumb_stop",
+                            "duration_seconds": 1.5,
+                            "product_continuity_constraints": ["same blue bottle", "same cap shape"],
+                        }
+                    ],
+                }
+            ]
+        },
+        social_review_contract={
+            "review_profile": "social_video",
+            "required_checks": ["first_frame_clarity", "continuity"],
+        },
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    summary = output.payload["variant_summaries"][0]
+    report = output.payload["reports"][0]
+    asset_report = report["asset_reports"][0]
+
+    assert summary["recommended_action"] == "manual_review"
+    assert summary["qa_status"] == "warn"
+    assert "visual_qa_needs_frame_review" in asset_report["flags"]
+    assert any(check["status"] == "manual_review" for check in asset_report["checks"])
 
 
 # ---------------------------------------------------------------------------

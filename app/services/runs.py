@@ -1520,6 +1520,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 intake=task.input_payload.get("intake", {}),
                 business_context=task.input_payload.get("business_context", {}),
                 creative_specs=task.input_payload.get("creative_specs", {}),
+                social_review_contract=task.input_payload.get("social_review_contract", {}),
                 gm_policy=task.input_payload.get("gm_policy", {}),
                 provider=provider_name,
                 model=model_name,
@@ -1769,6 +1770,7 @@ def _variant_quality_summary(
     media_issues: list[dict] = []
     visual_qa_flags: list[str] = []
     visual_qa_scores: list[float] = []
+    frame_review_flags: list[str] = []
     for asset in assets:
         if asset.asset_type == "image":
             issue = _uri_file_issue(asset.uri)
@@ -1783,6 +1785,8 @@ def _variant_quality_summary(
         visual_qa = (asset.payload or {}).get("visual_qa") or {}
         for flag in visual_qa.get("flags") or []:
             visual_qa_flags.append(str(flag))
+            if "frame" in str(flag):
+                frame_review_flags.append(str(flag))
         if isinstance(visual_qa.get("score"), (int, float)):
             visual_qa_scores.append(float(visual_qa["score"]))
         if visual_qa.get("status") == "fail":
@@ -1798,6 +1802,14 @@ def _variant_quality_summary(
     evaluation = _latest_score(scores, "evaluation")
     compliance = _latest_score(scores, "compliance")
     visual_quality = _latest_score(scores, "visual_quality")
+    if visual_quality:
+        payload = visual_quality.payload or {}
+        for asset_report in payload.get("asset_reports") or []:
+            if not isinstance(asset_report, dict):
+                continue
+            for flag in asset_report.get("flags") or []:
+                if "frame" in str(flag):
+                    frame_review_flags.append(str(flag))
     compliance_level = (compliance.compliance_level if compliance else None) or (evaluation.compliance_level if evaluation else None)
     score = row.current_score if row.current_score is not None else (evaluation.total_score if evaluation else None)
     operator_tags = sorted({tag for review in reviews for tag in (review.tags or [])})
@@ -1876,6 +1888,7 @@ def _variant_quality_summary(
         "missing_required_assets": missing_required_assets,
         "media_issues": media_issues,
         "visual_qa_flags": sorted(set(visual_qa_flags)),
+        "frame_review_flags": sorted(set(frame_review_flags)),
         "visual_qa_min_score": min(visual_qa_scores) if visual_qa_scores else None,
         "visual_quality_score": visual_quality.total_score if visual_quality else None,
         "visual_quality_status": visual_quality.compliance_level if visual_quality else None,
@@ -2136,6 +2149,12 @@ def refresh_video_task_assets(db: Session, run_id: str) -> dict:
                 payload["video_uri"] = uri
                 payload["source"] = source
                 payload["generation_status"] = "completed"
+                payload = runtime._attach_generated_video_frames(run_id=run_id, video_payload=payload)
+                payload["visual_qa"] = runtime._local_media_qa(
+                    asset_type="video",
+                    uri=payload.get("video_uri"),
+                    payload=payload,
+                )
                 asset.uri = uri
                 completed += 1
         failure_category, error_message = _generated_asset_failure(payload, payload.get("video_uri"))

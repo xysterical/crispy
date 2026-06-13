@@ -885,3 +885,102 @@ def test_assets_refresh_recovers_external_video_task(client, monkeypatch):
     assert video["payload"]["generation_status"] == "completed"
     assert Path(video["uri"]).exists()
     assert Path(video["uri"]).read_bytes() == b"fake-video-bytes"
+
+
+def test_variant_quality_summary_exposes_frame_review_flags(client):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "frame-review-w",
+            "project_name": "frame-review-p",
+            "product_name": "travel organizer",
+            "product_code": "FRAME-001",
+            "industry_code": "travel",
+            "campaign_name": "frame-review-campaign",
+            "pipeline_mode": "video_only",
+            "creative_preset": "meta_vertical_5s",
+        },
+    )
+    run_id = create_resp.json()["id"]
+
+    with SessionLocal() as db:
+        from app.data.models import RunVariant, VariantScore
+
+        run_variant = RunVariant(
+            run_id=run_id,
+            variant_id="V1",
+            angle="product-first opening",
+            hook="Show the organizer before the mess",
+            message="Lead with a clear first frame and keep continuity stable.",
+        )
+        db.add(run_variant)
+        db.flush()
+        db.add(
+            VariantAsset(
+                run_variant_id=run_variant.id,
+                run_id=run_id,
+                stage_name="video_generation",
+                asset_type="video",
+                uri=f"assets/{run_id}/V1_sample.mp4",
+                provider_name="stub",
+                model_name="stub-video",
+                prompt_summary="video asset for V1",
+                idempotency_key="frame-review-v1-video",
+                payload={
+                    "variant_id": "V1",
+                    "video_uri": f"assets/{run_id}/V1_sample.mp4",
+                    "generation_status": "completed",
+                    "visual_qa": {
+                        "status": "warn",
+                        "score": 84,
+                        "flags": [
+                            "visual_qa_needs_frame_review",
+                            "visual_qa_first_frame_clarity_check",
+                        ],
+                        "checks": [
+                            {
+                                "key": "frame_sequence",
+                                "status": "manual_review",
+                                "message": "Review the opening frame for hook clarity.",
+                            }
+                        ],
+                    },
+                },
+            )
+        )
+        db.add(
+            VariantScore(
+                run_variant_id=run_variant.id,
+                run_id=run_id,
+                stage_name="visual_quality_assessment",
+                score_type="visual_quality",
+                total_score=84,
+                compliance_level="warn",
+                recommended_action="manual_review",
+                sub_scores={"visual_score": 84, "blocking_issue_count": 0},
+                reasons=["visual_qa_needs_frame_review"],
+                forecast={},
+                payload={
+                    "variant_id": "V1",
+                    "asset_reports": [
+                        {
+                            "asset_type": "video",
+                            "flags": [
+                                "visual_qa_needs_frame_review",
+                                "visual_qa_first_frame_clarity_check",
+                            ],
+                        }
+                    ],
+                },
+            )
+        )
+        db.commit()
+
+    variants = client.get(f"/runs/{run_id}/variants")
+    assert variants.status_code == 200
+    payload = variants.json()
+    item = next(entry for entry in payload["items"] if entry["variant_id"] == "V1")
+    assert item["quality_summary"]["frame_review_flags"] == [
+        "visual_qa_first_frame_clarity_check",
+        "visual_qa_needs_frame_review",
+    ]

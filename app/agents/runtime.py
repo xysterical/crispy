@@ -26,7 +26,8 @@ from app.services.marketplace_qa import (
     is_marketplace_main_image,
     normalize_platform_targets,
 )
-from app.services.visual_qa import inspect_visual_asset
+from app.services.video_frames import sample_video_frames
+from app.services.visual_qa import inspect_extracted_video_frames, inspect_visual_asset
 from app.schemas.contracts import (
     ComplianceLevel,
     ConversionForecast,
@@ -390,6 +391,84 @@ class AgentsRuntime:
             return False
         path = Path(uri)
         return path.exists() and path.is_file() and path.stat().st_size > min_bytes
+
+    def _sample_generated_video_frames(
+        self,
+        *,
+        run_id: str,
+        variant_id: str,
+        video_uri: str | None,
+        generation_status: str | None,
+    ) -> tuple[list[str], list[dict]]:
+        status = str(generation_status or "").lower()
+        if status not in {"completed", "succeeded", "success", "ready"}:
+            return [], []
+        if not video_uri or video_uri.startswith(("http://", "https://", "data:")):
+            return [], []
+        video_path = Path(video_uri)
+        if not video_path.exists() or not video_path.is_file():
+            return [], []
+        output_dir = self.media.settings.assets_dir / run_id
+        frame_uris = sample_video_frames(
+            video_path=video_path,
+            output_dir=output_dir,
+            prefix=f"{variant_id}_generated_video",
+            count=3,
+        )
+        frames = [
+            {
+                "frame_id": f"{variant_id}_generated_video_frame_{idx + 1}",
+                "variant_id": variant_id,
+                "uri": uri,
+                "source_video_uri": video_uri,
+                "frame_index": idx + 1,
+            }
+            for idx, uri in enumerate(frame_uris)
+        ]
+        return frame_uris, frames
+
+    def _attach_generated_video_frames(self, *, run_id: str, video_payload: dict) -> dict:
+        enriched = dict(video_payload or {})
+        variant_id = str(enriched.get("variant_id") or "variant")
+        frame_uris, frames = self._sample_generated_video_frames(
+            run_id=run_id,
+            variant_id=variant_id,
+            video_uri=enriched.get("video_uri"),
+            generation_status=enriched.get("generation_status"),
+        )
+        if frame_uris:
+            enriched["frame_uris"] = frame_uris
+            enriched["generated_video_frames"] = frames
+        return enriched
+
+    def _merge_video_frame_review(
+        self,
+        *,
+        qa: dict[str, object],
+        frame_review: dict[str, object],
+    ) -> dict[str, object]:
+        checks = [*(qa.get("checks") or []), *(frame_review.get("checks") or [])]
+        flags = sorted({str(flag) for flag in [*(qa.get("flags") or []), *(frame_review.get("flags") or [])]})
+        qa_score = float(qa.get("score") or 0.0)
+        frame_score = float(frame_review.get("score") or qa_score)
+        fail_count = sum(1 for check in checks if isinstance(check, dict) and check.get("status") == "fail")
+        warn_count = sum(
+            1 for check in checks if isinstance(check, dict) and check.get("status") in {"warn", "manual_review"}
+        )
+        status = "fail" if fail_count else "warn" if warn_count else "pass"
+        metrics = dict(qa.get("metrics") or {})
+        metrics["frame_review"] = {
+            "frame_count": frame_review.get("frame_count"),
+            "first_frame_uri": frame_review.get("first_frame_uri"),
+        }
+        return {
+            **qa,
+            "status": status,
+            "score": round(min(qa_score, frame_score), 2),
+            "flags": flags,
+            "checks": checks,
+            "metrics": metrics,
+        }
 
     def _normalize_text_list(self, value: object) -> list[str]:
         if isinstance(value, str):
@@ -1762,6 +1841,7 @@ class AgentsRuntime:
                 },
                 "generation_spec": generation_spec,
             }
+            video_payload = self._attach_generated_video_frames(run_id=run_id, video_payload=video_payload)
             video_payload["visual_qa"] = self._local_media_qa(
                 asset_type="video",
                 uri=video_uri,
@@ -1810,6 +1890,7 @@ class AgentsRuntime:
         intake: dict | None = None,
         business_context: dict | None = None,
         creative_specs: dict | None = None,
+        social_review_contract: dict | None = None,
         gm_policy: dict | None = None,
         provider: str,
         model: str,
@@ -1822,6 +1903,7 @@ class AgentsRuntime:
         intake = intake or {}
         business_context = business_context or {}
         creative_specs = creative_specs or {}
+        social_review_contract = social_review_contract or {}
         gm_policy = gm_policy or {}
         marketplace_goal = is_marketplace_main_image(creative_specs)
         review_hints = get_dtc_site_review_hints(creative_specs)
@@ -1898,6 +1980,25 @@ class AgentsRuntime:
                         payload=asset,
                         expected_ratio=expected_ratio,
                     )
+                if asset_type == "video" and str(asset.get("generation_status") or "").lower() in {
+                    "completed",
+                    "succeeded",
+                    "success",
+                    "ready",
+                }:
+                    frame_uris = [str(uri) for uri in (asset.get("frame_uris") or []) if str(uri).strip()]
+                    if not frame_uris:
+                        frame_uris = [
+                            str(frame.get("uri"))
+                            for frame in (asset.get("generated_video_frames") or [])
+                            if isinstance(frame, dict) and str(frame.get("uri") or "").strip()
+                        ]
+                    frame_review = inspect_extracted_video_frames(
+                        frame_uris=frame_uris,
+                        social_review_contract=social_review_contract,
+                        shot_plan=shot_plan_by_variant.get(variant.variant_id) or [],
+                    )
+                    qa = self._merge_video_frame_review(qa=qa, frame_review=frame_review)
                 flags = qa.get("flags") or []
                 status = str(qa.get("status") or "warn")
                 if isinstance(qa.get("score"), (int, float)):
@@ -1974,6 +2075,7 @@ class AgentsRuntime:
                         "external_task_id": asset.get("external_task_id"),
                         "qa_status": status,
                         "visual_score": qa.get("score"),
+                        "frame_uris": asset.get("frame_uris") or [],
                         "flags": flags,
                         "checks": qa.get("checks") or [],
                         "marketplace_qa": marketplace_qa if marketplace_goal and asset_type == "image" else None,
@@ -2030,6 +2132,14 @@ class AgentsRuntime:
                     "blocking_issue_count": len(report["blocking_issues"]),
                     "recommended_action": recommended_action,
                     "issues": report["blocking_issues"],
+                    "frame_review_flags": sorted(
+                        {
+                            str(flag)
+                            for asset_report in asset_reports
+                            for flag in (asset_report.get("flags") or [])
+                            if "frame" in str(flag)
+                        }
+                    ),
                     "platform_readiness": platform_readiness,
                     "export_ready": export_ready,
                     "review_hints": review_hints,
