@@ -529,6 +529,8 @@ class CreativePresetCreate(BaseModel):
     resolution: str | None = None
     video_duration_seconds: int | None = None
     storyboard_candidate_count: int | None = None
+    tiktok_video_style: str | None = None
+    site_surface: str | None = None
     platform_targets: dict = Field(default_factory=dict)
 
 
@@ -539,6 +541,8 @@ class CreativePresetUpdate(BaseModel):
     resolution: str | None = None
     video_duration_seconds: int | None = None
     storyboard_candidate_count: int | None = None
+    tiktok_video_style: str | None = None
+    site_surface: str | None = None
     platform_targets: dict | None = None
 
 
@@ -553,6 +557,8 @@ class CreativePresetView(BaseModel):
     resolution: str | None = None
     video_duration_seconds: int | None = None
     storyboard_candidate_count: int = 1
+    tiktok_video_style: str | None = None
+    site_surface: str | None = None
     platform_targets: dict
     created_at: datetime
     updated_at: datetime

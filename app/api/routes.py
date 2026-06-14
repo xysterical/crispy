@@ -115,13 +115,15 @@ from app.services.marketplace_qa import is_marketplace_main_image
 from app.services.personas import get_persona, list_persona_catalog, persona_info, update_persona
 from app.services.creative_specs import (
     create_creative_preset,
+    extract_site_surface,
     delete_creative_preset,
     extract_storyboard_candidate_count,
+    extract_tiktok_video_style,
     get_creative_preset,
     list_system_presets,
     list_user_presets,
     update_creative_preset,
-    with_storyboard_candidate_count,
+    with_preset_metadata,
 )
 from app.services.capability_preflight import preflight_run_capabilities
 from app.services.templates import (
@@ -2175,6 +2177,8 @@ def _creative_preset_view(preset) -> CreativePresetView:
         resolution=preset.resolution,
         video_duration_seconds=preset.video_duration_seconds,
         storyboard_candidate_count=extract_storyboard_candidate_count(preset.platform_targets),
+        tiktok_video_style=extract_tiktok_video_style(preset.platform_targets),
+        site_surface=extract_site_surface(preset.platform_targets),
         platform_targets=preset.platform_targets or {},
         created_at=preset.created_at,
         updated_at=preset.updated_at,
@@ -2192,9 +2196,11 @@ def create_preset(payload: CreativePresetCreate, db: Session = Depends(get_db)) 
             video_size=payload.video_size,
             resolution=payload.resolution,
             video_duration_seconds=payload.video_duration_seconds,
-            platform_targets=with_storyboard_candidate_count(
+            platform_targets=with_preset_metadata(
                 payload.platform_targets,
-                payload.storyboard_candidate_count,
+                storyboard_candidate_count=payload.storyboard_candidate_count,
+                tiktok_video_style=payload.tiktok_video_style,
+                site_surface=payload.site_surface,
             ),
         )
         db.commit()
@@ -2217,16 +2223,19 @@ def update_preset(preset_id: str, payload: CreativePresetUpdate, db: Session = D
             video_size=payload.video_size,
             resolution=payload.resolution,
             video_duration_seconds=payload.video_duration_seconds,
-            platform_targets=with_storyboard_candidate_count(
+            platform_targets=with_preset_metadata(
                 payload.platform_targets if payload.platform_targets is not None else (existing.platform_targets or {}),
-                payload.storyboard_candidate_count if payload.storyboard_candidate_count is not None else extract_storyboard_candidate_count(existing.platform_targets),
+                storyboard_candidate_count=payload.storyboard_candidate_count if payload.storyboard_candidate_count is not None else extract_storyboard_candidate_count(existing.platform_targets),
+                tiktok_video_style=payload.tiktok_video_style if payload.tiktok_video_style is not None else extract_tiktok_video_style(existing.platform_targets),
+                site_surface=payload.site_surface if payload.site_surface is not None else extract_site_surface(existing.platform_targets),
             ),
         )
         db.commit()
         db.refresh(preset)
     except ValueError as exc:
         db.rollback()
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        status = 409 if "already exists" in str(exc) else 404
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
     return _creative_preset_view(preset)
 
 

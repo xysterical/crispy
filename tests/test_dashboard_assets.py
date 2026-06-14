@@ -158,7 +158,19 @@ def test_dashboard_storyboard_candidate_control_is_advanced_and_persisted(client
     assert "'storyboard_candidate_count'" in html
     assert "storyboard_candidate_count: p.storyboard_candidate_count" in html
     assert "storyboard_candidate_count: parseInt(document.getElementById('storyboard_candidate_count').value, 10) || 1" in html
+    assert "tiktok_video_style: p.tiktok_video_style" in html
+    assert "site_surface: p.site_surface" in html
     assert "style.display = visible.includes('field-video-advanced') ? 'block' : 'none'" not in html
+
+
+def test_dashboard_quick_fill_keeps_tiktok_system_preset_metadata(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "sys_tiktok_shop_conversion_12s" in html
+    assert "tiktok_video_style: 'ugc_demo'" in html
+    assert "platform: 'tiktok'" in html
+    assert "creative_goal: 'shop_conversion_video'" in html
 
 
 def test_dashboard_create_run_labels_pipeline_and_specs_clearly(client):

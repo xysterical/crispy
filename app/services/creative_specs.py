@@ -11,6 +11,8 @@ TIKTOK_SHOP_VIDEO_DEFAULT_STYLE = "ugc_demo"
 TIKTOK_SHOP_VIDEO_PRESET = "tiktok_shop_conversion_12s"
 DTC_SITE_IMAGE_PRESET = "dtc_site_image_pack"
 CREATIVE_PRESET_STORYBOARD_CANDIDATE_KEY = "storyboard_candidate_count"
+CREATIVE_PRESET_TIKTOK_STYLE_KEY = "tiktok_video_style"
+CREATIVE_PRESET_SITE_SURFACE_KEY = "site_surface"
 
 DTC_SITE_SURFACE_LIBRARY: dict[str, dict] = {
     "homepage_hero": {
@@ -183,6 +185,17 @@ def create_creative_preset(db: Session, workspace_name: str, name: str, image_si
 
 def update_creative_preset(db: Session, preset_id: str, **kwargs) -> CreativePreset:
     preset = get_creative_preset(db, preset_id)
+    next_name = kwargs.get("name")
+    if next_name and next_name != preset.name:
+        existing = db.scalar(
+            select(CreativePreset).where(
+                CreativePreset.workspace_name == preset.workspace_name,
+                CreativePreset.name == next_name,
+                CreativePreset.id != preset.id,
+            )
+        )
+        if existing:
+            raise ValueError(f"creative preset already exists: {next_name}")
     for key, value in kwargs.items():
         if value is not None and hasattr(preset, key):
             setattr(preset, key, value)
@@ -234,9 +247,39 @@ def extract_storyboard_candidate_count(platform_targets: object | None) -> int:
     return 1
 
 
-def with_storyboard_candidate_count(platform_targets: dict | None, storyboard_candidate_count: object | None) -> dict:
+def extract_tiktok_video_style(platform_targets: object | None) -> str | None:
+    if isinstance(platform_targets, dict):
+        value = platform_targets.get(CREATIVE_PRESET_TIKTOK_STYLE_KEY)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def extract_site_surface(platform_targets: object | None) -> str | None:
+    if isinstance(platform_targets, dict):
+        value = platform_targets.get(CREATIVE_PRESET_SITE_SURFACE_KEY)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def with_preset_metadata(
+    platform_targets: dict | None,
+    *,
+    storyboard_candidate_count: object | None,
+    tiktok_video_style: object | None = None,
+    site_surface: object | None = None,
+) -> dict:
     merged = dict(platform_targets or {})
     merged[CREATIVE_PRESET_STORYBOARD_CANDIDATE_KEY] = normalize_storyboard_candidate_count(storyboard_candidate_count)
+    if isinstance(tiktok_video_style, str) and tiktok_video_style.strip():
+        merged[CREATIVE_PRESET_TIKTOK_STYLE_KEY] = tiktok_video_style.strip()
+    elif tiktok_video_style is not None:
+        merged.pop(CREATIVE_PRESET_TIKTOK_STYLE_KEY, None)
+    if isinstance(site_surface, str) and site_surface.strip():
+        merged[CREATIVE_PRESET_SITE_SURFACE_KEY] = site_surface.strip()
+    elif site_surface is not None:
+        merged.pop(CREATIVE_PRESET_SITE_SURFACE_KEY, None)
     return merged
 
 
@@ -295,5 +338,7 @@ def resolve_creative_specs_from_user_preset(db: Session, preset_id: str) -> dict
         "resolution": preset.resolution or "720p",
         "video_duration_seconds": preset.video_duration_seconds or 5,
         "storyboard_candidate_count": extract_storyboard_candidate_count(preset.platform_targets),
+        "tiktok_video_style": extract_tiktok_video_style(preset.platform_targets),
+        "site_surface": extract_site_surface(preset.platform_targets),
         "platform_targets": preset.platform_targets or {},
     }
