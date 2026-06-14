@@ -992,6 +992,108 @@ def test_assets_refresh_updates_stage_output_and_downstream_inputs(client, monke
         assert rebuilt_video["frame_uris"] == refreshed_video["frame_uris"]
 
 
+def test_assets_refresh_requeues_full_auto_visual_qa_after_materialization(client, monkeypatch):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-refresh-resume",
+            "project_name": "p-refresh-resume",
+            "product_name": "travel organizer",
+            "product_code": "REFRESH-RESUME-001",
+            "industry_code": "travel",
+            "campaign_name": "video-refresh-resume",
+            "pipeline_mode": "video_only",
+            "approval_mode": "full_auto",
+            "creative_preset": "meta_vertical_5s",
+        },
+    )
+    run_id = create_resp.json()["id"]
+    for stage in ["intake", "planning", "divergence"]:
+        _run_worker_once()
+        client.post(f"/runs/{run_id}/advance", json={"notes": "ok"})
+
+    with SessionLocal() as db:
+        from app.data.models import PipelineRun, RunStatus, RunVariant, StageTask, TaskStatus
+
+        run = db.get(PipelineRun, run_id)
+        run.status = RunStatus.WAITING_REVIEW.value
+        run.current_stage = "visual_quality_assessment"
+        run_variant = db.query(RunVariant).filter(RunVariant.run_id == run_id, RunVariant.variant_id == "V1").one()
+        video_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="video_generation").one()
+        visual_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="visual_quality_assessment").one()
+        stale_payload = {
+            "variant_id": "V1",
+            "video_uri": f"assets/{run_id}/V1_sample.mp4",
+            "external_task_id": "task_refresh_resume_1",
+            "generation_status": "processing",
+            "source": "external_task_pending",
+        }
+        video_task.output_payload = {"videos": [dict(stale_payload)]}
+        db.add(
+            VariantAsset(
+                run_variant_id=run_variant.id,
+                run_id=run_id,
+                stage_name="video_generation",
+                asset_type="video",
+                uri=stale_payload["video_uri"],
+                provider_name="stub",
+                model_name="stub-video",
+                prompt_summary="video asset for V1",
+                idempotency_key="test-refresh-resume-v1",
+                payload=dict(stale_payload),
+            )
+        )
+        visual_task.status = TaskStatus.WAITING_REVIEW.value
+        visual_task.output_payload = {
+            "variant_summaries": [
+                {"variant_id": "V1", "recommended_action": "wait_for_asset", "qa_status": "pending"}
+            ]
+        }
+        visual_task.input_payload = _build_task_input(db, run, visual_task)
+        db.commit()
+
+    class FakeProvider:
+        def poll_video_task(self, **kwargs):
+            return VideoGenResult(
+                model_used="stub-video",
+                task_id=kwargs["task_id"],
+                status="completed",
+                videos=[
+                    GeneratedVideo(
+                        url="https://example.com/video.mp4",
+                        task_id=kwargs["task_id"],
+                        status="completed",
+                    )
+                ],
+            )
+
+    monkeypatch.setattr("app.services.runs.runtime.providers.get", lambda _name: FakeProvider())
+    monkeypatch.setattr("app.services.runs.runtime._materialize_generated_video", lambda _selected: (b"fake-video-bytes", "url"))
+    monkeypatch.setattr(
+        "app.services.runs.runtime._sample_generated_video_frames",
+        lambda **kwargs: (
+            [f"assets/{run_id}/V1_generated_video_frame_1.png"],
+            [{"frame_id": "f1", "variant_id": "V1", "uri": f"assets/{run_id}/V1_generated_video_frame_1.png", "frame_index": 1}],
+        ),
+    )
+
+    resp = client.post(f"/runs/{run_id}/assets/refresh")
+    assert resp.status_code == 200
+
+    with SessionLocal() as db:
+        from app.data.models import PipelineRun, StageTask, TaskStatus
+
+        run = db.get(PipelineRun, run_id)
+        visual_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="visual_quality_assessment").one()
+        assert run.status == "running"
+        assert run.current_stage == "visual_quality_assessment"
+        assert visual_task.status == TaskStatus.QUEUED.value
+        assert visual_task.input_payload["videos"]["videos"][0]["generation_status"] == "completed"
+        assert visual_task.input_payload["videos"]["videos"][0]["frame_uris"] == [
+            f"assets/{run_id}/V1_generated_video_frame_1.png"
+        ]
+
+
 def test_variant_quality_summary_exposes_frame_review_flags(client):
     create_resp = client.post(
         "/runs",

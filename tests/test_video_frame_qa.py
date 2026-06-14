@@ -6,6 +6,7 @@ import pytest
 
 from app.services.intake_assets import process_uploaded_payloads
 from app.services.video_frames import sample_video_frames
+from app.services.visual_qa import inspect_extracted_video_frames
 
 
 def test_sample_video_frames_falls_back_for_invalid_video(tmp_path):
@@ -108,6 +109,25 @@ def test_sample_video_frames_clears_stale_prefix_frames_before_sampling(tmp_path
     assert all(Path(frame).exists() for frame in frames)
     assert str(stale) not in frames
     assert not stale.exists()
+
+
+def test_sample_video_frames_fallback_does_not_pass_frame_review(tmp_path):
+    fake = tmp_path / "fake.mp4"
+    fake.write_bytes(b"not a real video")
+
+    frames = sample_video_frames(
+        video_path=fake,
+        output_dir=tmp_path / "fallback_review",
+        prefix="fallback",
+        count=3,
+    )
+    review = inspect_extracted_video_frames(frame_uris=frames, social_review_contract={}, shot_plan=[])
+
+    assert len(frames) == 3
+    assert review["status"] == "warn"
+    assert "visual_qa_needs_frame_review" in review["flags"]
+    assert "visual_qa_unusable_frame_sequence" in review["flags"]
+    assert any(check["status"] == "manual_review" for check in review["checks"])
 
 
 def test_process_uploaded_payloads_keeps_duplicate_video_filenames_distinct():

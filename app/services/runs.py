@@ -601,6 +601,50 @@ def _sync_refreshed_video_generation_state(
             task.input_payload = _build_task_input(db, run, task)
 
 
+def _resume_full_auto_visual_qa_after_refresh(db: Session, run: PipelineRun) -> None:
+    if run.approval_mode != "full_auto":
+        return
+    try:
+        visual_task = get_stage_task(db, run.id, "visual_quality_assessment")
+        video_task = get_stage_task(db, run.id, "video_generation")
+    except ValueError:
+        return
+    if run.current_stage != "visual_quality_assessment":
+        return
+    if visual_task.status != TaskStatus.WAITING_REVIEW.value:
+        return
+    summaries = (visual_task.output_payload or {}).get("variant_summaries") or []
+    has_pending_review = any(
+        isinstance(summary, dict)
+        and (
+            summary.get("recommended_action") == "wait_for_asset"
+            or str(summary.get("qa_status") or "").lower() == "pending"
+        )
+        for summary in summaries
+    )
+    if not has_pending_review:
+        return
+    videos = (video_task.output_payload or {}).get("videos") or []
+    if any(
+        isinstance(video, dict)
+        and str(video.get("generation_status") or "").lower() in {"submitted", "queued", "pending", "processing", "running"}
+        for video in videos
+    ):
+        return
+    visual_task.status = TaskStatus.QUEUED.value
+    visual_task.priority = 1
+    visual_task.retry_at = None
+    visual_task.input_payload = _build_task_input(db, run, visual_task)
+    visual_task.metadata_json = {
+        **(visual_task.metadata_json or {}),
+        "full_auto_visual_qa_pending_assets": False,
+        "full_auto_visual_qa_resumed_after_refresh": True,
+    }
+    run.status = RunStatus.RUNNING.value
+    run.current_stage = "visual_quality_assessment"
+    run.updated_at = utcnow()
+
+
 def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[dict]:
     product_rows = db.scalars(
         select(GmMemory)
@@ -2214,6 +2258,7 @@ def refresh_video_task_assets(db: Session, run_id: str) -> dict:
         refreshed_payloads_by_variant[variant_id] = dict(payload)
     if refreshed_payloads_by_variant:
         _sync_refreshed_video_generation_state(db, run, refreshed_payloads_by_variant)
+        _resume_full_auto_visual_qa_after_refresh(db, run)
     db.flush()
     return {"refreshed": refreshed, "completed": completed, "summary": _variant_summary(db, run_id)}
 

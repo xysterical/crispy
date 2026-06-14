@@ -23,7 +23,8 @@ def _write_frame_placeholders(output_dir: Path, prefix: str, count: int) -> list
         if Image is None:
             path.write_bytes(b"")
         else:
-            Image.new("RGB", (720, 720), color=(255, 255, 255)).save(path, format="PNG")
+            # Use a 1x1 image so downstream QA can reliably recognize fallback frames as placeholders.
+            Image.new("RGB", (1, 1), color=(255, 255, 255)).save(path, format="PNG")
         paths.append(str(path))
     return paths
 
