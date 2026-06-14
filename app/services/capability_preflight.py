@@ -8,7 +8,11 @@ from app.agents.registry import stage_agent
 from app.orchestrator.state_machine import stage_plan_for
 from app.services.marketplace_qa import is_marketplace_main_image
 from app.services.agent_api_configs import resolve_agent_config
-from app.services.creative_specs import TIKTOK_SHOP_VIDEO_DEFAULT_STYLE, TIKTOK_SHOP_VIDEO_STYLES
+from app.services.creative_specs import (
+    TIKTOK_SHOP_VIDEO_DEFAULT_STYLE,
+    TIKTOK_SHOP_VIDEO_STYLES,
+    normalize_storyboard_candidate_count,
+)
 
 Severity = Literal["ok", "warn", "error"]
 
@@ -371,6 +375,32 @@ def preflight_run_capabilities(
                         "Generated images will be held for marketplace QA and human review if fidelity cannot be trusted."
                     ),
                     stage_name="copy_image_generation",
+                    agent_name=agent_name,
+                )
+
+    if "storyboard_image_generation" in stage_plan:
+        agent_name, cfg = resolved("storyboard_image_generation")
+        try:
+            candidate_count = normalize_storyboard_candidate_count(
+                creative_specs.get("storyboard_candidate_count")
+            )
+        except ValueError:
+            candidate_count = 1
+        if candidate_count > 1:
+            support = _assess_image_generation(
+                cfg.get("image_provider_name"),
+                cfg.get("image_model_name"),
+                cfg.get("image_api_base_url"),
+            )
+            if support is not True:
+                add_check(
+                    key="storyboard_image_generation.candidate_selection",
+                    severity="warn",
+                    message=(
+                        "Storyboard multi-candidate selection is enabled, but image generation support is not known-good. "
+                        "Expect weaker automatic candidate ranking and rely on operator review."
+                    ),
+                    stage_name="storyboard_image_generation",
                     agent_name=agent_name,
                 )
 

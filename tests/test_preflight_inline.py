@@ -109,3 +109,34 @@ def test_tiktok_shop_preflight_reports_reference_ratio_and_duration_warnings(cli
     assert keys["tiktok_shop_video.reference_media"]["severity"] == "warn"
     assert keys["tiktok_shop_video.video_size"]["severity"] == "warn"
     assert keys["tiktok_shop_video.duration"]["severity"] == "warn"
+
+
+def test_preflight_warns_when_storyboard_candidate_selection_support_is_unknown(client):
+    patch_resp = client.patch(
+        "/agent-configs/storyboard_agent",
+        json={
+            "image_provider_name": "openai",
+            "image_model_name": "mystery-image-model",
+            "image_api_base_url": "https://example.com/v1/chat/completions",
+        },
+    )
+    assert patch_resp.status_code == 200
+
+    resp = client.post(
+        "/runs/preflight",
+        json={
+            "pipeline_mode": "tiktok_shop_video",
+            "has_image_inputs": True,
+            "has_video_inputs": False,
+            "creative_specs": {
+                "video_size": "9:16",
+                "video_duration_seconds": 12,
+                "tiktok_video_style": "ugc_demo",
+                "storyboard_candidate_count": 3,
+            },
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    keys = {row["key"]: row for row in payload["checks"]}
+    assert keys["storyboard_image_generation.candidate_selection"]["severity"] == "warn"

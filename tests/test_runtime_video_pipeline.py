@@ -171,6 +171,73 @@ def test_storyboard_and_video_generation_do_not_inject_leash_defaults_and_use_st
     assert fake_provider.last_request.audio_urls == ["https://example.com/reference-audio.wav"]
 
 
+def test_storyboard_generation_can_store_multiple_candidates_and_pick_one(monkeypatch):
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    candidate_scores = {
+        "_cand_1": 61.0,
+        "_cand_2": 93.0,
+        "_cand_3": 77.0,
+    }
+
+    def fake_generate_image(*, prompt, **kwargs):
+        image_result = type(
+            "ImageResult",
+            (),
+            {
+                "estimated_cost": 0.0,
+                "images": [
+                    type(
+                        "GeneratedImage",
+                        (),
+                        {
+                            "b64_json": base64.b64encode(b"candidate-image-bytes").decode("ascii"),
+                            "url": None,
+                        },
+                    )()
+                ],
+            },
+        )()
+        return image_result, "stub-image-provider", "stub-image-model"
+
+    def fake_local_media_qa(*, uri, **kwargs):
+        score = next((value for marker, value in candidate_scores.items() if marker in str(uri)), 0.0)
+        return {"status": "pass", "score": score, "flags": []}
+
+    monkeypatch.setattr(runtime, "_generate_image", fake_generate_image)
+    monkeypatch.setattr(runtime, "_local_media_qa", fake_local_media_qa)
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="Pack faster without messy leaks",
+                script="Show the travel toiletry bag holding upright bottles in clear compartments.",
+                shot_list=["Open the bag", "Show bottles upright", "Packshot CTA"],
+            )
+        ],
+        product_context={"product_name": "travel toiletry bag", "audience": "frequent travelers"},
+        generation_spec={"size": "9:16", "resolution": "720p", "duration": 5},
+    )
+
+    output = runtime.run_storyboard_image_generation(
+        run_id="storyboard-candidates",
+        script_pack=script_pack,
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"video_size": "9:16", "storyboard_candidate_count": 3},
+    )
+
+    frame = output.payload["frames"][0]
+    assert frame["selected_candidate_index"] == 1
+    assert len(frame["candidate_frames"]) == 3
+    assert [candidate["candidate_index"] for candidate in frame["candidate_frames"]] == [0, 1, 2]
+    assert frame["candidate_frames"][1]["image_uri"] == frame["image_uri"]
+    assert frame["candidate_frames"][1]["visual_qa"]["score"] == frame["visual_qa"]["score"] == 93.0
+    assert frame["candidate_frames"][1]["source"] == "b64_json"
+
+
 def test_video_generation_samples_frames_for_completed_local_videos(tmp_path, monkeypatch):
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ('{"video_prompts":[{"variant_id":"V1","prompt":"demo prompt"}]}', "stub-model", 0.0)

@@ -19,7 +19,11 @@ from app.providers.llm import (
     decode_placeholder_png,
 )
 from app.providers.media import LocalMediaProvider
-from app.services.creative_specs import get_dtc_site_review_hints, get_dtc_site_surface_strategy
+from app.services.creative_specs import (
+    get_dtc_site_review_hints,
+    get_dtc_site_surface_strategy,
+    normalize_storyboard_candidate_count,
+)
 from app.services.marketplace_qa import (
     infer_visual_identity,
     inspect_marketplace_image,
@@ -1576,6 +1580,10 @@ class AgentsRuntime:
             if isinstance(data_url, str) and data_url:
                 historical_frame_refs.append(data_url)
         image_size = str(generation_spec.get("size") or creative_specs.get("video_size") or creative_specs.get("image_size") or "9:16")
+        runtime_extra = dict((runtime_config or {}).get("extra") or {})
+        candidate_count = normalize_storyboard_candidate_count(
+            creative_specs.get("storyboard_candidate_count", runtime_extra.get("storyboard_candidate_count"))
+        )
         product_context = script_pack.product_context or {}
         product_name = str(product_context.get("product_name") or "the product")
         prompt = self._compose_stage_prompt(
@@ -1634,37 +1642,76 @@ class AgentsRuntime:
                 image_model = ""
                 frame_error = error_text
                 provider_errors: list[dict] = []
-                try:
-                    image_result, image_provider, image_model = self._generate_image(
-                        fallback_provider=provider,
-                        fallback_model=model,
-                        prompt=frame_prompt,
-                        size=image_size,
-                        runtime_config=runtime_config,
-                        reference_image_urls=historical_frame_refs if historical_frame_refs else None,
+                asset_suffix = str((runtime_config or {}).get("asset_name_suffix") or "")
+                candidate_frames: list[dict] = []
+                for candidate_idx in range(candidate_count):
+                    candidate_prompt = frame_prompt if candidate_count == 1 else f"{frame_prompt}\nCandidate index: {candidate_idx + 1}."
+                    candidate_source = "placeholder"
+                    candidate_provider = ""
+                    candidate_model = ""
+                    candidate_error = error_text
+                    candidate_provider_errors: list[dict] = []
+                    candidate_uri = ""
+                    try:
+                        image_result, candidate_provider, candidate_model = self._generate_image(
+                            fallback_provider=provider,
+                            fallback_model=model,
+                            prompt=candidate_prompt,
+                            size=image_size,
+                            runtime_config=runtime_config,
+                            reference_image_urls=historical_frame_refs if historical_frame_refs else None,
+                        )
+                        estimated_cost += image_result.estimated_cost
+                        selected = image_result.images[0] if image_result.images else None
+                        if selected:
+                            frame_bytes, candidate_source = self._materialize_generated_image(selected)
+                        else:
+                            frame_bytes, candidate_source = decode_placeholder_png(), "placeholder"
+                        candidate_uri = self.media.write_binary_artifact(
+                            run_id,
+                            f"{script.variant_id}_storyboard_{idx + 1}_cand_{candidate_idx + 1}{asset_suffix}.png",
+                            frame_bytes,
+                        )
+                        if candidate_source != "placeholder":
+                            candidate_error = None
+                    except Exception as exc:
+                        candidate_error = str(exc)
+                        candidate_provider_errors = getattr(exc, "errors", []) or []
+                        candidate_uri = self._generation_error_artifact(
+                            run_id,
+                            f"{script.variant_id}_storyboard_{idx + 1}_cand_{candidate_idx + 1}",
+                            candidate_error,
+                        )
+                    candidate_payload = {
+                        "variant_id": script.variant_id,
+                        "frame_id": frame_id,
+                        "candidate_index": candidate_idx,
+                        "prompt": candidate_prompt,
+                        "image_uri": candidate_uri,
+                        "source": candidate_source,
+                        "image_provider": candidate_provider,
+                        "image_model": candidate_model,
+                        "error": candidate_error,
+                        "provider_errors": candidate_provider_errors,
+                    }
+                    candidate_payload["visual_qa"] = self._local_media_qa(
+                        asset_type="storyboard_frame",
+                        uri=candidate_uri,
+                        payload=candidate_payload,
+                        expected_ratio=image_size,
                     )
-                    estimated_cost += image_result.estimated_cost
-                    selected = image_result.images[0] if image_result.images else None
-                    if selected:
-                        frame_bytes, source = self._materialize_generated_image(selected)
-                    else:
-                        frame_bytes, source = decode_placeholder_png(), "placeholder"
-                    asset_suffix = str((runtime_config or {}).get("asset_name_suffix") or "")
-                    frame_uri = self.media.write_binary_artifact(
-                        run_id,
-                        f"{script.variant_id}_storyboard_{idx + 1}{asset_suffix}.png",
-                        frame_bytes,
-                    )
-                    if source != "placeholder":
-                        frame_error = None
-                except Exception as exc:
-                    frame_error = str(exc)
-                    provider_errors = getattr(exc, "errors", []) or []
-                    frame_uri = self._generation_error_artifact(
-                        run_id,
-                        f"{script.variant_id}_storyboard_{idx + 1}",
-                        frame_error,
-                    )
+                    candidate_frames.append(candidate_payload)
+
+                best_candidate = max(
+                    candidate_frames,
+                    key=lambda item: float(((item.get("visual_qa") or {}).get("score")) or 0.0),
+                )
+                source = str(best_candidate.get("source") or source)
+                image_provider = str(best_candidate.get("image_provider") or "")
+                image_model = str(best_candidate.get("image_model") or "")
+                frame_error = best_candidate.get("error")
+                provider_errors = list(best_candidate.get("provider_errors") or [])
+                frame_uri = str(best_candidate.get("image_uri") or "")
                 frame = {
                     "variant_id": script.variant_id,
                     "frame_id": frame_id,
@@ -1675,9 +1722,11 @@ class AgentsRuntime:
                     "image_model": image_model,
                     "error": frame_error,
                     "provider_errors": provider_errors,
+                    "selected_candidate_index": int(best_candidate.get("candidate_index") or 0),
+                    "candidate_frames": candidate_frames,
                 }
                 frame["reference_source_count"] = len(historical_references or [])
-                frame["visual_qa"] = self._local_media_qa(
+                frame["visual_qa"] = best_candidate.get("visual_qa") or self._local_media_qa(
                     asset_type="storyboard_frame",
                     uri=frame_uri,
                     payload=frame,

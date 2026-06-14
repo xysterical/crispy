@@ -202,6 +202,11 @@ CREATE_RUN_HTML = """
                             <label>Seed</label>
                             <input id="seed" type="number" step="1" placeholder="Optional integer seed" />
                           </div>
+                          <div class="spec-field" id="field-storyboard-candidate-count" style="display:none;">
+                            <label>Storyboard Candidates</label>
+                            <input id="storyboard_candidate_count" type="number" min="1" max="4" value="1" />
+                            <div class="hint muted">Generate multiple storyboard candidates per shot before selecting the best frame.</div>
+                          </div>
                         </div>
                         <div class="spec-row">
                           <div class="spec-field">
@@ -414,9 +419,10 @@ CREATE_RUN_JS = """
   function refreshPipelineFields() {
     const mode = document.getElementById('pipeline_mode').value;
     const visible = PIPELINE_FIELD_MAP[mode] || [];
-    ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback', 'field-video-size', 'field-video-duration', 'field-dtc-site-surface', 'field-tiktok-video-style', 'field-video-advanced'].forEach(id => {
+    ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback', 'field-video-size', 'field-video-duration', 'field-dtc-site-surface', 'field-tiktok-video-style', 'field-video-advanced', 'field-storyboard-candidate-count'].forEach(id => {
       document.getElementById(id).style.display = visible.includes(id) ? 'block' : 'none';
     });
+    document.getElementById('field-storyboard-candidate-count').style.display = visible.includes('field-video-advanced') ? 'block' : 'none';
     if (mode === 'dtc_site_image') {
       applySpecs(DTC_SITE_IMAGE_SPEC);
       document.getElementById('channel').value = 'shopify';
@@ -800,6 +806,8 @@ CREATE_RUN_JS = """
       spec.platform_targets = ['tiktok', 'tiktok_shop'];
     }
     if (['full_multimodal', 'video_only', 'tiktok_shop_video'].includes(document.getElementById('pipeline_mode').value)) {
+      const candidateCount = Math.min(4, Math.max(1, parseInt(document.getElementById('storyboard_candidate_count').value, 10) || 1));
+      spec.storyboard_candidate_count = candidateCount;
       if (document.getElementById('generate_audio').checked) spec.generate_audio = true;
       if (document.getElementById('return_last_frame').checked) spec.return_last_frame = true;
       if (seedRaw) spec.seed = parseInt(seedRaw, 10);

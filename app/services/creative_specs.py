@@ -227,6 +227,18 @@ def get_social_review_contract(channel: str | None, pipeline_mode: str | None, c
     return base
 
 
+def normalize_storyboard_candidate_count(value: object | None) -> int:
+    if value in (None, ""):
+        return 1
+    try:
+        candidate_count = int(value)
+    except Exception as exc:
+        raise ValueError("creative_specs.storyboard_candidate_count must be integer") from exc
+    if candidate_count < 1 or candidate_count > 4:
+        raise ValueError("creative_specs.storyboard_candidate_count must be within 1..4")
+    return candidate_count
+
+
 def resolve_creative_specs(creative_preset: str, creative_specs: dict | None = None) -> dict:
     preset = (creative_preset or "").strip()
     custom = dict(creative_specs or {})
@@ -250,6 +262,9 @@ def resolve_creative_specs(creative_preset: str, creative_specs: dict | None = N
     if duration_int <= 0 or duration_int > 60:
         raise ValueError("creative_specs.video_duration_seconds must be within 1..60")
     resolved["video_duration_seconds"] = duration_int
+    resolved["storyboard_candidate_count"] = normalize_storyboard_candidate_count(
+        resolved.get("storyboard_candidate_count")
+    )
 
     if resolved.get("asset_goal") == "dtc_site_image" or "site_surface" in resolved:
         surface = str(resolved.get("site_surface") or "").strip().lower()
@@ -266,5 +281,6 @@ def resolve_creative_specs_from_user_preset(db: Session, preset_id: str) -> dict
         "video_size": preset.video_size or "1:1",
         "resolution": preset.resolution or "720p",
         "video_duration_seconds": preset.video_duration_seconds or 5,
+        "storyboard_candidate_count": 1,
         "platform_targets": preset.platform_targets or {},
     }
