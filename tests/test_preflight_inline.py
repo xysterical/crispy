@@ -140,3 +140,28 @@ def test_preflight_warns_when_storyboard_candidate_selection_support_is_unknown(
     payload = resp.json()
     keys = {row["key"]: row for row in payload["checks"]}
     assert keys["storyboard_image_generation.candidate_selection"]["severity"] == "warn"
+
+
+def test_preflight_reports_storyboard_image_generation_incompatibility_for_default_runs(client):
+    patch_resp = client.patch(
+        "/agent-configs/storyboard_agent",
+        json={
+            "image_provider_name": "deepseek",
+            "image_model_name": "deepseek-v3.2",
+            "image_api_base_url": "https://api.deepseek.com/v1/chat/completions",
+        },
+    )
+    assert patch_resp.status_code == 200
+
+    resp = client.post(
+        "/runs/preflight",
+        json={
+            "pipeline_mode": "video_only",
+            "has_image_inputs": False,
+            "has_video_inputs": False,
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    keys = {row["key"]: row for row in payload["checks"]}
+    assert keys["storyboard_image_generation.image_generation"]["severity"] == "error"

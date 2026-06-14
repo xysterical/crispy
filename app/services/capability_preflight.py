@@ -380,6 +380,43 @@ def preflight_run_capabilities(
 
     if "storyboard_image_generation" in stage_plan:
         agent_name, cfg = resolved("storyboard_image_generation")
+        if not cfg.get("image_api_key_available"):
+            add_check(
+                key="storyboard_image_generation.image_api_key",
+                severity="warn",
+                message=(
+                    f"Storyboard image API key is not loaded ({cfg.get('image_api_key_env') or 'unset'}). "
+                    "Storyboard generation may fallback or fail."
+                ),
+                stage_name="storyboard_image_generation",
+                agent_name=agent_name,
+            )
+        support = _assess_image_generation(
+            cfg.get("image_provider_name"),
+            cfg.get("image_model_name"),
+            cfg.get("image_api_base_url"),
+        )
+        if support is False:
+            add_check(
+                key="storyboard_image_generation.image_generation",
+                severity="error",
+                message=(
+                    f"Storyboard image model config looks incompatible: `{cfg.get('image_provider_name')}/{cfg.get('image_model_name')}` "
+                    f"with base_url `{cfg.get('image_api_base_url') or 'unset'}`."
+                ),
+                stage_name="storyboard_image_generation",
+                agent_name=agent_name,
+            )
+        elif support is None:
+            add_check(
+                key="storyboard_image_generation.image_generation",
+                severity="warn",
+                message=(
+                    f"Storyboard image generation compatibility is unknown for `{cfg.get('image_provider_name')}/{cfg.get('image_model_name')}`."
+                ),
+                stage_name="storyboard_image_generation",
+                agent_name=agent_name,
+            )
         try:
             candidate_count = normalize_storyboard_candidate_count(
                 creative_specs.get("storyboard_candidate_count")
@@ -387,11 +424,6 @@ def preflight_run_capabilities(
         except ValueError:
             candidate_count = 1
         if candidate_count > 1:
-            support = _assess_image_generation(
-                cfg.get("image_provider_name"),
-                cfg.get("image_model_name"),
-                cfg.get("image_api_base_url"),
-            )
             if support is not True:
                 add_check(
                     key="storyboard_image_generation.candidate_selection",

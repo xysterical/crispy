@@ -156,6 +156,8 @@ def test_dashboard_storyboard_candidate_control_is_advanced_and_persisted(client
     assert "collectFormConfig()" in html
     assert "document.getElementById('storyboard_candidate_count').value" in html
     assert "'storyboard_candidate_count'" in html
+    assert "storyboard_candidate_count: p.storyboard_candidate_count" in html
+    assert "storyboard_candidate_count: parseInt(document.getElementById('storyboard_candidate_count').value, 10) || 1" in html
     assert "style.display = visible.includes('field-video-advanced') ? 'block' : 'none'" not in html
 
 

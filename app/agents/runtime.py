@@ -440,9 +440,8 @@ class AgentsRuntime:
             video_uri=enriched.get("video_uri"),
             generation_status=enriched.get("generation_status"),
         )
-        if frame_uris:
-            enriched["frame_uris"] = frame_uris
-            enriched["generated_video_frames"] = frames
+        enriched["frame_uris"] = frame_uris
+        enriched["generated_video_frames"] = frames
         return enriched
 
     def _merge_video_frame_review(

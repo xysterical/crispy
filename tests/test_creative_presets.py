@@ -63,6 +63,29 @@ def test_create_and_list_user_preset(client):
     assert any(p["id"] == preset_id for p in user_presets)
 
 
+def test_storyboard_candidate_count_round_trips_for_user_preset(client):
+    resp = client.post(
+        "/creative-presets",
+        json={
+            "name": "Storyboard Heavy Video",
+            "workspace_name": "test_ws",
+            "image_size": "9:16",
+            "video_size": "9:16",
+            "resolution": "720p",
+            "video_duration_seconds": 12,
+            "storyboard_candidate_count": 3,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["storyboard_candidate_count"] == 3
+
+    list_resp = client.get("/creative-presets?workspace_name=test_ws")
+    assert list_resp.status_code == 200
+    user_presets = {p["id"]: p for p in list_resp.json()["user"]}
+    assert user_presets[data["id"]]["storyboard_candidate_count"] == 3
+
+
 def test_update_preset(client):
     resp = client.post(
         "/creative-presets",
@@ -77,6 +100,21 @@ def test_update_preset(client):
     assert update.status_code == 200
     assert update.json()["name"] == "New Name"
     assert update.json()["resolution"] == "1080p"
+
+
+def test_update_preset_can_change_storyboard_candidate_count(client):
+    resp = client.post(
+        "/creative-presets",
+        json={"name": "Candidate Count Preset", "workspace_name": "test_ws", "image_size": "1:1"},
+    )
+    preset_id = resp.json()["id"]
+
+    update = client.put(
+        f"/creative-presets/{preset_id}",
+        json={"storyboard_candidate_count": 4},
+    )
+    assert update.status_code == 200
+    assert update.json()["storyboard_candidate_count"] == 4
 
 
 def test_delete_preset(client):

@@ -304,6 +304,25 @@ def test_video_generation_samples_frames_for_completed_local_videos(tmp_path, mo
     assert video_payload["frame_uris"] == [frame["uri"] for frame in video_payload["generated_video_frames"]]
 
 
+def test_attach_generated_video_frames_clears_stale_frame_metadata_when_resampling_returns_none(monkeypatch):
+    runtime = AgentsRuntime()
+    monkeypatch.setattr(runtime, "_sample_generated_video_frames", lambda **kwargs: ([], []))
+
+    enriched = runtime._attach_generated_video_frames(
+        run_id="runtime-video-clear-stale-frames",
+        video_payload={
+            "variant_id": "V1",
+            "video_uri": "assets/runtime-video-clear-stale-frames/V1.mp4",
+            "generation_status": "completed",
+            "frame_uris": ["assets/old_frame_1.png"],
+            "generated_video_frames": [{"uri": "assets/old_frame_1.png"}],
+        },
+    )
+
+    assert enriched["frame_uris"] == []
+    assert enriched["generated_video_frames"] == []
+
+
 def test_visual_quality_assessment_uses_frame_review_for_completed_videos(tmp_path):
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("frame review notes", "stub-model", 0.0)

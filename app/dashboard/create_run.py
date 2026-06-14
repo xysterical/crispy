@@ -509,7 +509,7 @@ CREATE_RUN_JS = """
           const group = createOptgroup('My Presets', data.user.map(p => ({
             value: 'user_' + p.id,
             label: p.name + ' \u00b7 ' + (p.image_size || '?') + ' / ' + (p.video_size || '?') + ' / ' + (p.resolution || '?') + ' / ' + (p.video_duration_seconds || '?') + 's',
-            spec: { image_size: p.image_size, video_size: p.video_size, resolution: p.resolution, video_duration_seconds: p.video_duration_seconds, platform_targets: p.platform_targets },
+            spec: { image_size: p.image_size, video_size: p.video_size, resolution: p.resolution, video_duration_seconds: p.video_duration_seconds, storyboard_candidate_count: p.storyboard_candidate_count, platform_targets: p.platform_targets },
           })));
           sel.appendChild(group);
         }
@@ -557,6 +557,7 @@ CREATE_RUN_JS = """
     document.getElementById('video_size').value = s.video_size || '';
     document.getElementById('resolution').value = s.resolution || '';
     document.getElementById('video_duration_seconds').value = s.video_duration_seconds || '';
+    document.getElementById('storyboard_candidate_count').value = s.storyboard_candidate_count || 1;
     document.getElementById('dtc_site_surface').value = s.site_surface || 'pdp_primary';
     document.getElementById('marketplace-fields').style.display = s.marketplace ? 'block' : 'none';
   }
@@ -571,6 +572,7 @@ CREATE_RUN_JS = """
       video_size: document.getElementById('video_size').value,
       resolution: document.getElementById('resolution').value,
       video_duration_seconds: parseInt(document.getElementById('video_duration_seconds').value) || 5,
+      storyboard_candidate_count: parseInt(document.getElementById('storyboard_candidate_count').value, 10) || 1,
     };
     fetch('/creative-presets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       .then(r => { if (!r.ok) return r.text().then(d => { throw new Error(d); }); return r.json(); })

@@ -116,10 +116,12 @@ from app.services.personas import get_persona, list_persona_catalog, persona_inf
 from app.services.creative_specs import (
     create_creative_preset,
     delete_creative_preset,
+    extract_storyboard_candidate_count,
     get_creative_preset,
     list_system_presets,
     list_user_presets,
     update_creative_preset,
+    with_storyboard_candidate_count,
 )
 from app.services.capability_preflight import preflight_run_capabilities
 from app.services.templates import (
@@ -2158,9 +2160,25 @@ def list_presets(
 ) -> dict:
     system = []
     for key, spec in list_system_presets().items():
-        system.append({"key": key, **spec})
+        system.append({"key": key, "storyboard_candidate_count": int(spec.get("storyboard_candidate_count") or 1), **spec})
     user = list_user_presets(db, workspace_name)
-    return {"system": system, "user": [CreativePresetView.model_validate(p) for p in user]}
+    return {"system": system, "user": [_creative_preset_view(p) for p in user]}
+
+
+def _creative_preset_view(preset) -> CreativePresetView:
+    return CreativePresetView(
+        id=preset.id,
+        workspace_name=preset.workspace_name,
+        name=preset.name,
+        image_size=preset.image_size,
+        video_size=preset.video_size,
+        resolution=preset.resolution,
+        video_duration_seconds=preset.video_duration_seconds,
+        storyboard_candidate_count=extract_storyboard_candidate_count(preset.platform_targets),
+        platform_targets=preset.platform_targets or {},
+        created_at=preset.created_at,
+        updated_at=preset.updated_at,
+    )
 
 
 @router.post("/creative-presets", response_model=CreativePresetView, status_code=201)
@@ -2174,19 +2192,23 @@ def create_preset(payload: CreativePresetCreate, db: Session = Depends(get_db)) 
             video_size=payload.video_size,
             resolution=payload.resolution,
             video_duration_seconds=payload.video_duration_seconds,
-            platform_targets=payload.platform_targets,
+            platform_targets=with_storyboard_candidate_count(
+                payload.platform_targets,
+                payload.storyboard_candidate_count,
+            ),
         )
         db.commit()
         db.refresh(preset)
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return CreativePresetView.model_validate(preset)
+    return _creative_preset_view(preset)
 
 
 @router.put("/creative-presets/{preset_id}", response_model=CreativePresetView)
 def update_preset(preset_id: str, payload: CreativePresetUpdate, db: Session = Depends(get_db)) -> CreativePresetView:
     try:
+        existing = get_creative_preset(db, preset_id)
         preset = update_creative_preset(
             db,
             preset_id,
@@ -2195,14 +2217,17 @@ def update_preset(preset_id: str, payload: CreativePresetUpdate, db: Session = D
             video_size=payload.video_size,
             resolution=payload.resolution,
             video_duration_seconds=payload.video_duration_seconds,
-            platform_targets=payload.platform_targets,
+            platform_targets=with_storyboard_candidate_count(
+                payload.platform_targets if payload.platform_targets is not None else (existing.platform_targets or {}),
+                payload.storyboard_candidate_count if payload.storyboard_candidate_count is not None else extract_storyboard_candidate_count(existing.platform_targets),
+            ),
         )
         db.commit()
         db.refresh(preset)
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return CreativePresetView.model_validate(preset)
+    return _creative_preset_view(preset)
 
 
 @router.delete("/creative-presets/{preset_id}", status_code=204)

@@ -10,6 +10,7 @@ TIKTOK_SHOP_VIDEO_STYLES = {"ugc_demo", "direct_response_ad", "shop_account_cont
 TIKTOK_SHOP_VIDEO_DEFAULT_STYLE = "ugc_demo"
 TIKTOK_SHOP_VIDEO_PRESET = "tiktok_shop_conversion_12s"
 DTC_SITE_IMAGE_PRESET = "dtc_site_image_pack"
+CREATIVE_PRESET_STORYBOARD_CANDIDATE_KEY = "storyboard_candidate_count"
 
 DTC_SITE_SURFACE_LIBRARY: dict[str, dict] = {
     "homepage_hero": {
@@ -227,6 +228,18 @@ def get_social_review_contract(channel: str | None, pipeline_mode: str | None, c
     return base
 
 
+def extract_storyboard_candidate_count(platform_targets: object | None) -> int:
+    if isinstance(platform_targets, dict):
+        return normalize_storyboard_candidate_count(platform_targets.get(CREATIVE_PRESET_STORYBOARD_CANDIDATE_KEY))
+    return 1
+
+
+def with_storyboard_candidate_count(platform_targets: dict | None, storyboard_candidate_count: object | None) -> dict:
+    merged = dict(platform_targets or {})
+    merged[CREATIVE_PRESET_STORYBOARD_CANDIDATE_KEY] = normalize_storyboard_candidate_count(storyboard_candidate_count)
+    return merged
+
+
 def normalize_storyboard_candidate_count(value: object | None) -> int:
     if value in (None, ""):
         return 1
@@ -281,6 +294,6 @@ def resolve_creative_specs_from_user_preset(db: Session, preset_id: str) -> dict
         "video_size": preset.video_size or "1:1",
         "resolution": preset.resolution or "720p",
         "video_duration_seconds": preset.video_duration_seconds or 5,
-        "storyboard_candidate_count": 1,
+        "storyboard_candidate_count": extract_storyboard_candidate_count(preset.platform_targets),
         "platform_targets": preset.platform_targets or {},
     }
