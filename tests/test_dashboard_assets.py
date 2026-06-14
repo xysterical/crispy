@@ -144,6 +144,21 @@ def test_create_run_dashboard_has_tiktok_video_style_control(client):
     assert "spec.tiktok_video_style" in html
 
 
+def test_dashboard_storyboard_candidate_control_is_advanced_and_persisted(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    html = resp.text
+
+    assert 'id="field-storyboard-candidate-count" style="display:none;"' in html
+    assert "Storyboard Candidates" in html
+    assert "storyboard_candidate_count" in html
+    assert "applyLastConfig()" in html
+    assert "collectFormConfig()" in html
+    assert "document.getElementById('storyboard_candidate_count').value" in html
+    assert "'storyboard_candidate_count'" in html
+    assert "style.display = visible.includes('field-video-advanced') ? 'block' : 'none'" not in html
+
+
 def test_dashboard_create_run_labels_pipeline_and_specs_clearly(client):
     resp = client.get("/dashboard")
     assert resp.status_code == 200

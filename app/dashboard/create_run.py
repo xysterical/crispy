@@ -191,6 +191,9 @@ CREATE_RUN_HTML = """
                           </label>
                         </div>
                       </div>
+                      <div class="action-row" id="field-video-advanced-toggle" style="display:none;justify-content:flex-start;margin-top:8px;">
+                        <button type="button" id="video-advanced-toggle-btn" onclick="toggleVideoAdvanced()">Show Advanced Video Controls</button>
+                      </div>
                       <div id="field-video-advanced" style="display:none;margin-top:8px;">
                         <div class="spec-row">
                           <div class="spec-field">
@@ -368,6 +371,7 @@ CREATE_RUN_JS = """
   }
 
   // -- Wizard Navigation --
+  let videoAdvancedExpanded = false;
   function updateWizardSteps(step) {
     currentStep = step;
     document.querySelectorAll('.wizard-step').forEach(el => {
@@ -391,12 +395,12 @@ CREATE_RUN_JS = """
 
   // -- Pipeline-Creative Coupling --
   const PIPELINE_FIELD_MAP = {
-    'full_multimodal': ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback', 'field-video-size', 'field-video-duration', 'field-video-advanced'],
-    'video_only': ['field-video-size', 'field-video-duration', 'field-video-advanced'],
+    'full_multimodal': ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback', 'field-video-size', 'field-video-duration', 'field-video-advanced-toggle'],
+    'video_only': ['field-video-size', 'field-video-duration', 'field-video-advanced-toggle'],
     'copy_image_only': ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback'],
     'dtc_site_image': ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback', 'field-dtc-site-surface'],
     'marketplace_main_image': ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback'],
-    'tiktok_shop_video': ['field-video-size', 'field-video-duration', 'field-tiktok-video-style', 'field-video-advanced'],
+    'tiktok_shop_video': ['field-video-size', 'field-video-duration', 'field-tiktok-video-style', 'field-video-advanced-toggle'],
   };
 
   const DTC_SITE_IMAGE_SPEC = {
@@ -416,13 +420,31 @@ CREATE_RUN_JS = """
     marketplace: true,
   };
 
+  function setVideoAdvancedExpanded(expanded) {
+    videoAdvancedExpanded = !!expanded;
+    const panel = document.getElementById('field-video-advanced');
+    const btn = document.getElementById('video-advanced-toggle-btn');
+    const candidateField = document.getElementById('field-storyboard-candidate-count');
+    panel.style.display = videoAdvancedExpanded ? 'block' : 'none';
+    candidateField.style.display = videoAdvancedExpanded ? 'block' : 'none';
+    btn.textContent = videoAdvancedExpanded ? 'Hide Advanced Video Controls' : 'Show Advanced Video Controls';
+  }
+
+  function toggleVideoAdvanced() {
+    setVideoAdvancedExpanded(!videoAdvancedExpanded);
+  }
+
   function refreshPipelineFields() {
     const mode = document.getElementById('pipeline_mode').value;
     const visible = PIPELINE_FIELD_MAP[mode] || [];
-    ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback', 'field-video-size', 'field-video-duration', 'field-dtc-site-surface', 'field-tiktok-video-style', 'field-video-advanced', 'field-storyboard-candidate-count'].forEach(id => {
+    ['field-image-size', 'field-image-reference-urls', 'field-image-official-fallback', 'field-video-size', 'field-video-duration', 'field-dtc-site-surface', 'field-tiktok-video-style', 'field-video-advanced-toggle'].forEach(id => {
       document.getElementById(id).style.display = visible.includes(id) ? 'block' : 'none';
     });
-    document.getElementById('field-storyboard-candidate-count').style.display = visible.includes('field-video-advanced') ? 'block' : 'none';
+    if (visible.includes('field-video-advanced-toggle')) {
+      setVideoAdvancedExpanded(videoAdvancedExpanded);
+    } else {
+      setVideoAdvancedExpanded(false);
+    }
     if (mode === 'dtc_site_image') {
       applySpecs(DTC_SITE_IMAGE_SPEC);
       document.getElementById('channel').value = 'shopify';
@@ -590,6 +612,7 @@ CREATE_RUN_JS = """
       document.getElementById('video_size').value = lastProductConfig.creative_specs.video_size || '';
       document.getElementById('resolution').value = lastProductConfig.creative_specs.resolution || '';
       document.getElementById('video_duration_seconds').value = lastProductConfig.creative_specs.video_duration_seconds || '';
+      document.getElementById('storyboard_candidate_count').value = lastProductConfig.creative_specs.storyboard_candidate_count || 1;
       if (lastProductConfig.creative_specs.tiktok_video_style) {
         document.getElementById('tiktok_video_style').value = lastProductConfig.creative_specs.tiktok_video_style;
       }
@@ -694,7 +717,7 @@ CREATE_RUN_JS = """
     const fields = [
       'workspace_name', 'project_name', 'product_name', 'product_code', 'industry_code',
       'campaign_name', 'channel', 'objective', 'pipeline_mode', 'approval_mode',
-      'variant_count', 'image_size', 'video_size', 'resolution', 'video_duration_seconds', 'tiktok_video_style',
+      'variant_count', 'image_size', 'video_size', 'resolution', 'video_duration_seconds', 'storyboard_candidate_count', 'tiktok_video_style',
       'image_reference_urls', 'image_official_fallback', 'generate_audio', 'return_last_frame', 'seed',
       'video_image_reference_urls', 'video_first_frame_url', 'video_last_frame_url', 'video_reference_urls', 'audio_reference_urls',
       'target_audience', 'price_range', 'key_value_props', 'primary_cta', 'campaign_goal',
