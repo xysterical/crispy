@@ -41,3 +41,25 @@ def test_full_auto_visual_qa_regen_limit_is_scoped_per_task(monkeypatch):
             "reason": "full_auto_visual_qa_cycle_1",
         }
     ]
+
+
+def test_full_auto_visual_qa_blocks_auto_approval_when_assets_are_pending():
+    worker = PipelineWorker()
+    task = SimpleNamespace(
+        output_payload={
+            "variant_summaries": [
+                {"variant_id": "v1", "recommended_action": "wait_for_asset", "qa_status": "pending"},
+            ]
+        },
+        metadata_json={},
+        status=TaskStatus.WAITING_REVIEW.value,
+        retry_at=None,
+        priority=2,
+    )
+    run = SimpleNamespace(id="run-pending")
+
+    should_auto_approve = worker._full_auto_visual_qa_regen(db=None, run=run, task=task)
+
+    assert should_auto_approve is False
+    assert task.status == TaskStatus.WAITING_REVIEW.value
+    assert task.metadata_json["full_auto_visual_qa_pending_assets"] is True

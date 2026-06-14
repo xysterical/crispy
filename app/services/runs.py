@@ -553,6 +553,54 @@ def _stage_output_optional(db: Session, run_id: str, stage_name: str) -> dict:
     return task.output_payload or {}
 
 
+def _sync_refreshed_video_generation_state(
+    db: Session,
+    run: PipelineRun,
+    refreshed_payloads_by_variant: dict[str, dict],
+) -> None:
+    if not refreshed_payloads_by_variant:
+        return
+    try:
+        video_task = get_stage_task(db, run.id, "video_generation")
+    except ValueError:
+        return
+
+    current_payload = dict(video_task.output_payload or {})
+    existing_videos = [
+        dict(item)
+        for item in (current_payload.get("videos") or [])
+        if isinstance(item, dict)
+    ]
+    merged_videos: list[dict] = []
+    seen_variant_ids: set[str] = set()
+    for item in existing_videos:
+        variant_id = str(item.get("variant_id") or "")
+        if variant_id and variant_id in refreshed_payloads_by_variant:
+            merged_videos.append(dict(refreshed_payloads_by_variant[variant_id]))
+            seen_variant_ids.add(variant_id)
+        else:
+            merged_videos.append(item)
+    for variant_id, payload in refreshed_payloads_by_variant.items():
+        if variant_id not in seen_variant_ids:
+            merged_videos.append(dict(payload))
+    video_task.output_payload = {**current_payload, "videos": merged_videos}
+
+    for stage_name in ("visual_quality_assessment", "evaluation_selection"):
+        try:
+            task = get_stage_task(db, run.id, stage_name)
+        except ValueError:
+            continue
+        if task.status in {
+            TaskStatus.DRAFT.value,
+            TaskStatus.QUEUED.value,
+            TaskStatus.RUNNING.value,
+            TaskStatus.WAITING_REVIEW.value,
+            TaskStatus.REJECTED.value,
+            TaskStatus.FAILED.value,
+        }:
+            task.input_payload = _build_task_input(db, run, task)
+
+
 def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[dict]:
     product_rows = db.scalars(
         select(GmMemory)
@@ -2122,6 +2170,7 @@ def refresh_video_task_assets(db: Session, run_id: str) -> dict:
             VariantAsset.asset_type == "video",
         )
     ).all()
+    refreshed_payloads_by_variant: dict[str, dict] = {}
     for asset in assets:
         payload = dict(asset.payload or {})
         task_id = payload.get("external_task_id")
@@ -2161,6 +2210,10 @@ def refresh_video_task_assets(db: Session, run_id: str) -> dict:
         asset.payload = payload
         asset.failure_category = failure_category
         asset.error_message = error_message
+        variant_id = str(payload.get("variant_id") or asset.variant.variant_id)
+        refreshed_payloads_by_variant[variant_id] = dict(payload)
+    if refreshed_payloads_by_variant:
+        _sync_refreshed_video_generation_state(db, run, refreshed_payloads_by_variant)
     db.flush()
     return {"refreshed": refreshed, "completed": completed, "summary": _variant_summary(db, run_id)}
 

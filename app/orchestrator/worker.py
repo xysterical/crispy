@@ -305,6 +305,23 @@ class PipelineWorker:
         """Full-auto regeneration for visual_qa. Returns True if safe to auto-approve."""
         output_payload = task.output_payload or {}
         summaries = output_payload.get("variant_summaries") or []
+        pending_variants = [
+            s for s in summaries
+            if isinstance(s, dict) and (
+                s.get("recommended_action") == "wait_for_asset" or str(s.get("qa_status") or "").lower() == "pending"
+            )
+        ]
+        if pending_variants:
+            metadata = dict(task.metadata_json or {})
+            task.metadata_json = {
+                **metadata,
+                "full_auto_visual_qa_pending_assets": True,
+            }
+            logger.info(
+                "Full-auto visual_qa: pending assets still exist for run %s; holding for refresh",
+                run.id,
+            )
+            return False
         regen_variants = [
             s for s in summaries
             if isinstance(s, dict) and s.get("recommended_action") == "request_regeneration"
