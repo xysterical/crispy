@@ -618,6 +618,7 @@ CREATE_RUN_JS = """
       document.getElementById('resolution').value = lastProductConfig.creative_specs.resolution || '';
       document.getElementById('video_duration_seconds').value = lastProductConfig.creative_specs.video_duration_seconds || '';
       document.getElementById('storyboard_candidate_count').value = lastProductConfig.creative_specs.storyboard_candidate_count || 1;
+      document.getElementById('dtc_site_surface').value = lastProductConfig.creative_specs.site_surface || 'pdp_primary';
       if (lastProductConfig.creative_specs.tiktok_video_style) {
         document.getElementById('tiktok_video_style').value = lastProductConfig.creative_specs.tiktok_video_style;
       }
@@ -722,7 +723,7 @@ CREATE_RUN_JS = """
     const fields = [
       'workspace_name', 'project_name', 'product_name', 'product_code', 'industry_code',
       'campaign_name', 'channel', 'objective', 'pipeline_mode', 'approval_mode',
-      'variant_count', 'image_size', 'video_size', 'resolution', 'video_duration_seconds', 'storyboard_candidate_count', 'tiktok_video_style',
+      'variant_count', 'image_size', 'video_size', 'resolution', 'video_duration_seconds', 'storyboard_candidate_count', 'tiktok_video_style', 'dtc_site_surface',
       'image_reference_urls', 'image_official_fallback', 'generate_audio', 'return_last_frame', 'seed',
       'video_image_reference_urls', 'video_first_frame_url', 'video_last_frame_url', 'video_reference_urls', 'audio_reference_urls',
       'target_audience', 'price_range', 'key_value_props', 'primary_cta', 'campaign_goal',

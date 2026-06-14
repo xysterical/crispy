@@ -160,6 +160,8 @@ def test_dashboard_storyboard_candidate_control_is_advanced_and_persisted(client
     assert "storyboard_candidate_count: parseInt(document.getElementById('storyboard_candidate_count').value, 10) || 1" in html
     assert "tiktok_video_style: p.tiktok_video_style" in html
     assert "site_surface: p.site_surface" in html
+    assert "document.getElementById('dtc_site_surface').value = lastProductConfig.creative_specs.site_surface || 'pdp_primary';" in html
+    assert "'dtc_site_surface'" in html
     assert "style.display = visible.includes('field-video-advanced') ? 'block' : 'none'" not in html
 
 
