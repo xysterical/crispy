@@ -177,6 +177,26 @@ def inspect_extracted_video_frames(
     flags: list[str] = []
     score = 100.0
     required_checks = {str(item).strip() for item in (social_review_contract.get("required_checks") or []) if str(item).strip()}
+    unusable_frame_reasons: list[str] = []
+
+    required_review_copy = {
+        "first_frame_clarity": (
+            "visual_qa_first_frame_clarity_check",
+            "Review the first sampled frame for immediate product clarity and hook readability.",
+        ),
+        "continuity": (
+            "visual_qa_continuity_frame_check",
+            "Review sampled frames for continuity across product appearance, scale, and scene transitions.",
+        ),
+        "product_truth": (
+            "visual_qa_product_truth_frame_check",
+            "Review sampled frames to confirm the product depiction stays truthful to the submitted item.",
+        ),
+        "cta_clarity": (
+            "visual_qa_cta_clarity_frame_check",
+            "Review late sampled frames to confirm the CTA moment is clear and legible.",
+        ),
+    }
 
     if not frame_uris:
         checks.append(
@@ -189,23 +209,54 @@ def inspect_extracted_video_frames(
         flags.append("visual_qa_needs_frame_review")
         score -= 10
     else:
-        checks.append(
-            {
-                "key": "frame_sequence",
-                "status": "pass",
-                "message": f"Frame sequence available with {len(frame_uris)} sampled frames.",
-            }
-        )
+        for uri in frame_uris:
+            frame_qa = inspect_visual_asset(asset_type="image", uri=uri, payload={})
+            if str(frame_qa.get("status") or "") == "fail":
+                unusable_frame_reasons.append(f"{Path(uri).name}:asset_status=fail")
+                continue
+            for frame_flag in frame_qa.get("flags") or []:
+                if str(frame_flag) in {
+                    "visual_qa_placeholder",
+                    "visual_qa_decode_error",
+                    "visual_qa_empty_file",
+                    "visual_qa_missing_file",
+                    "visual_qa_missing_uri",
+                }:
+                    unusable_frame_reasons.append(f"{Path(uri).name}:{frame_flag}")
+                    break
+        if unusable_frame_reasons:
+            checks.append(
+                {
+                    "key": "frame_sequence_quality",
+                    "status": "manual_review",
+                    "message": "Extracted frames are missing, empty, or placeholder-like; resample or review manually.",
+                    "details": unusable_frame_reasons[:3],
+                }
+            )
+            flags.extend(["visual_qa_needs_frame_review", "visual_qa_unusable_frame_sequence"])
+            score -= 10
+        else:
+            checks.append(
+                {
+                    "key": "frame_sequence",
+                    "status": "pass",
+                    "message": f"Frame sequence available with {len(frame_uris)} sampled frames.",
+                }
+            )
 
-    if "first_frame_clarity" in required_checks:
+    for required_check in sorted(required_checks):
+        review_copy = required_review_copy.get(required_check)
+        if not review_copy:
+            continue
+        flag, message = review_copy
         checks.append(
             {
-                "key": "first_frame_clarity",
+                "key": required_check,
                 "status": "manual_review",
-                "message": "Review the first sampled frame for immediate product clarity and hook readability.",
+                "message": message,
             }
         )
-        flags.append("visual_qa_first_frame_clarity_check")
+        flags.append(flag)
         score -= 5
 
     if shot_plan:

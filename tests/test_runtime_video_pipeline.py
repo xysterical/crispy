@@ -303,6 +303,119 @@ def test_visual_quality_assessment_uses_frame_review_for_completed_videos(tmp_pa
     assert any(check["status"] == "manual_review" for check in asset_report["checks"])
 
 
+def test_visual_quality_assessment_treats_unusable_extracted_frames_as_manual_review(tmp_path):
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("frame review notes", "stub-model", 0.0)
+
+    video_path = tmp_path / "completed.mp4"
+    video_path.write_bytes(b"\x00\x00\x00\x20ftypisom" + (b"1" * 2048))
+
+    frame_paths = []
+    for idx in range(3):
+        frame_path = tmp_path / f"placeholder_{idx + 1}.png"
+        frame_path.write_bytes(b"")
+        frame_paths.append(str(frame_path))
+
+    variant_set = VariantSet(
+        variants=[
+            VariantCandidate(
+                variant_id="V1",
+                angle="clear product intro",
+                hook="Lead with the product immediately",
+                message="Open strong and keep the edit truthful.",
+            )
+        ]
+    )
+
+    output = runtime.run_visual_quality_assessment(
+        run_id="runtime-video-unusable-frames",
+        variant_set=variant_set,
+        videos={
+            "videos": [
+                {
+                    "variant_id": "V1",
+                    "video_uri": str(video_path),
+                    "uri": str(video_path),
+                    "generation_status": "completed",
+                    "source": "local_file",
+                    "frame_uris": frame_paths,
+                }
+            ]
+        },
+        social_review_contract={"review_profile": "social_video", "required_checks": []},
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    summary = output.payload["variant_summaries"][0]
+    asset_report = output.payload["reports"][0]["asset_reports"][0]
+
+    assert summary["recommended_action"] == "manual_review"
+    assert summary["qa_status"] == "warn"
+    assert "visual_qa_unusable_frame_sequence" in asset_report["flags"]
+    assert any(check["key"] == "frame_sequence_quality" and check["status"] == "manual_review" for check in asset_report["checks"])
+
+
+def test_visual_quality_assessment_surfaces_required_frame_checks_without_shot_plan(tmp_path):
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("frame review notes", "stub-model", 0.0)
+
+    video_path = tmp_path / "completed.mp4"
+    video_path.write_bytes(b"\x00\x00\x00\x20ftypisom" + (b"1" * 2048))
+
+    frame_paths = []
+    for idx in range(3):
+        frame_path = tmp_path / f"usable_{idx + 1}.png"
+        frame_path.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mP8z/CfAQgwgImBASwAAB0JAgm1nxsAAAAASUVORK5CYII="))
+        frame_paths.append(str(frame_path))
+
+    variant_set = VariantSet(
+        variants=[
+            VariantCandidate(
+                variant_id="V1",
+                angle="truthful demo",
+                hook="Show what the buyer gets",
+                message="Keep continuity and CTA readable.",
+            )
+        ]
+    )
+
+    output = runtime.run_visual_quality_assessment(
+        run_id="runtime-video-required-checks",
+        variant_set=variant_set,
+        videos={
+            "videos": [
+                {
+                    "variant_id": "V1",
+                    "video_uri": str(video_path),
+                    "uri": str(video_path),
+                    "generation_status": "completed",
+                    "source": "local_file",
+                    "frame_uris": frame_paths,
+                }
+            ]
+        },
+        social_review_contract={
+            "review_profile": "social_video",
+            "required_checks": ["continuity", "product_truth", "cta_clarity"],
+        },
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    summary = output.payload["variant_summaries"][0]
+    asset_report = output.payload["reports"][0]["asset_reports"][0]
+
+    assert summary["recommended_action"] == "manual_review"
+    assert summary["qa_status"] == "warn"
+    assert "visual_qa_continuity_frame_check" in asset_report["flags"]
+    assert "visual_qa_product_truth_frame_check" in asset_report["flags"]
+    assert "visual_qa_cta_clarity_frame_check" in asset_report["flags"]
+    assert any(check["key"] == "continuity" and check["status"] == "manual_review" for check in asset_report["checks"])
+    assert any(check["key"] == "product_truth" and check["status"] == "manual_review" for check in asset_report["checks"])
+    assert any(check["key"] == "cta_clarity" and check["status"] == "manual_review" for check in asset_report["checks"])
+
+
 # ---------------------------------------------------------------------------
 # _parse_llm_json tests
 # ---------------------------------------------------------------------------
