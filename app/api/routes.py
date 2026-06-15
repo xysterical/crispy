@@ -219,6 +219,46 @@ def _load_json_dict(raw: str | None, field_name: str) -> dict:
     return parsed
 
 
+def _preflight_media_flags_from_urls(url_references: list[object]) -> tuple[bool, bool]:
+    has_image = False
+    has_video = False
+    for ref in url_references:
+        if not isinstance(ref, str):
+            continue
+        mime, _ = mimetypes.guess_type(ref)
+        if (mime or "").startswith("image/"):
+            has_image = True
+        elif (mime or "").startswith("video/"):
+            has_video = True
+    return has_image, has_video
+
+
+def _enforce_run_creation_preflight(
+    db: Session,
+    *,
+    payload: RunCreateRequest,
+    has_image_inputs: bool,
+    has_video_inputs: bool,
+) -> dict:
+    preflight_result = preflight_run_capabilities(
+        db,
+        pipeline_mode=payload.pipeline_mode,
+        has_image_inputs=has_image_inputs,
+        has_video_inputs=has_video_inputs,
+        creative_specs=payload.creative_specs,
+    )
+    if preflight_result.get("severity") == "error":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "preflight_failed",
+                "message": "Run creation blocked by preflight checks.",
+                "preflight": preflight_result,
+            },
+        )
+    return preflight_result
+
+
 def _stage_task_summary(task: StageTask) -> str:
     payload = task.output_payload or {}
     if task.error_message:
@@ -787,6 +827,14 @@ def _dashboard_shared_js() -> str:
             if (["failed_assets", "media_issue", "operator_quality_issue", "needs_regeneration", "rejected", "visual_qa_failed", "visual_qa_placeholder", "visual_qa_empty_video", "visual_qa_decode_error", "visual_qa_empty_file", "visual_qa_missing_file"].includes(flag)) return "bad";
             return "";
           }
+          function qualitySurfaceBadges(summary){
+            const badges = [];
+            const frameFlags = summary?.frame_review_flags || [];
+            const refCount = Number(summary?.reference_source_count || 0);
+            if (frameFlags.length) badges.push('<span class="quality-chip warn">Frame review</span>');
+            if (refCount > 0) badges.push(`<span class="quality-chip good">Ref-backed${refCount > 1 ? ` ${esc(refCount)}` : ""}</span>`);
+            return badges.join("");
+          }
 
           function variantMatchesOperationalFilters(item){
             const quality = variantBoardFilters.quality;
@@ -966,6 +1014,7 @@ def _dashboard_shared_js() -> str:
             const qSummary = qualitySummary(item);
             const flags = qualityFlags(item);
             const qualityChips = flags.map((flag) => `<span class="quality-chip ${qualityChipClass(flag)}">${esc(flag)}</span>`).join("");
+            const surfaceBadges = qualitySurfaceBadges(qSummary);
             return `
               <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
                 <div>
@@ -992,7 +1041,7 @@ def _dashboard_shared_js() -> str:
                     <span class="quality-chip ${qualityChipClass(qSummary.quality_status)}">${esc(qSummary.quality_status || "-")}</span>
                   </div>
                   <div class="variant-score-breakdown">${renderScoreBreakdown(item)}</div>
-                  <div class="quality-row" style="margin-top:10px;">${qualityChips}</div>
+                  <div class="quality-row" style="margin-top:10px;">${surfaceBadges}${qualityChips}</div>
                 </div>
               </div>
               <div style="margin-top:14px;">
@@ -1149,6 +1198,7 @@ def _dashboard_shared_js() -> str:
               const evaluation = latestScore(item, "evaluation");
               const score = evaluation?.total_score;
               const qSummary = qualitySummary(item);
+              const surfaceBadges = qualitySurfaceBadges(qSummary);
               const execSummary = item.execution_summary || {};
               const lastDecision = execSummary.last_decision?.summary || "-";
               const blocker = execSummary.active_blockers?.[0]?.summary || "-";
@@ -1163,6 +1213,7 @@ def _dashboard_shared_js() -> str:
                   <div class="quality-row" style="justify-content:center;">
                     ${item.is_winner ? '<span class="quality-chip good">Winner</span>' : ''}
                     ${item.shortlisted && !item.is_winner ? '<span class="quality-chip good">Shortlisted</span>' : ''}
+                    ${surfaceBadges}
                     <span class="quality-chip ${qualityChipClass(qSummary.quality_status)}">${esc(qSummary.quality_status || "-")}</span>
                   </div>
                   <div class="muted" style="font-size:11px;margin-top:6px;">Decision: ${esc(lastDecision)}</div>
@@ -2479,6 +2530,14 @@ def post_gm_policy_promote(
 
 @router.post("/runs", response_model=RunView)
 def create_pipeline_run(payload: RunCreateRequest, db: Session = Depends(get_db)) -> RunView:
+    url_references = (payload.context or {}).get("url_references") or []
+    has_image_inputs, has_video_inputs = _preflight_media_flags_from_urls(url_references)
+    _enforce_run_creation_preflight(
+        db,
+        payload=payload,
+        has_image_inputs=has_image_inputs,
+        has_video_inputs=has_video_inputs,
+    )
     try:
         run = create_run(db, payload)
         db.commit()
@@ -2552,22 +2611,12 @@ async def create_pipeline_run_rich(
     has_video = any(
         (f.content_type or "").startswith("video/") for f in files
     )
-    preflight_result = preflight_run_capabilities(
+    preflight_result = _enforce_run_creation_preflight(
         db,
-        pipeline_mode=pipeline_mode,
+        payload=payload,
         has_image_inputs=has_image,
         has_video_inputs=has_video,
-        creative_specs=creative_specs_payload,
     )
-    if preflight_result.get("severity") == "error":
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "preflight_failed",
-                "message": "Run creation blocked by preflight checks.",
-                "preflight": preflight_result,
-            },
-        )
     # -- end inline preflight --
 
     try:

@@ -11,6 +11,7 @@ from app.services.agent_api_configs import resolve_agent_config
 from app.services.creative_specs import (
     TIKTOK_SHOP_VIDEO_DEFAULT_STYLE,
     TIKTOK_SHOP_VIDEO_STYLES,
+    get_social_review_contract,
     normalize_storyboard_candidate_count,
 )
 
@@ -424,6 +425,16 @@ def preflight_run_capabilities(
         except ValueError:
             candidate_count = 1
         if candidate_count > 1:
+            add_check(
+                key="storyboard_image_generation.multi_candidate_cost",
+                severity="warn",
+                message=(
+                    f"Storyboard multi-candidate generation is set to {candidate_count} candidates per beat. "
+                    "Expect higher image cost and a slower review surface."
+                ),
+                stage_name="storyboard_image_generation",
+                agent_name=agent_name,
+            )
             if support is not True:
                 add_check(
                     key="storyboard_image_generation.candidate_selection",
@@ -435,6 +446,29 @@ def preflight_run_capabilities(
                     stage_name="storyboard_image_generation",
                     agent_name=agent_name,
                 )
+
+    if "visual_quality_assessment" in stage_plan and "video_generation" in stage_plan:
+        review_agent_name, _ = resolved("visual_quality_assessment")
+        social_review_contract = get_social_review_contract(
+            creative_specs.get("platform") or "",
+            pipeline_mode,
+            creative_specs,
+        )
+        required_checks = {
+            str(check).strip().lower()
+            for check in (social_review_contract.get("required_checks") or [])
+            if str(check).strip()
+        }
+        if not required_checks or {"first_frame_clarity", "continuity"} & required_checks:
+            add_check(
+                key="visual_quality_assessment.frame_review",
+                severity="warn",
+                message=(
+                    "Video outputs may still need frame review in visual QA for first-frame clarity, continuity, or remote provider gaps."
+                ),
+                stage_name="visual_quality_assessment",
+                agent_name=review_agent_name,
+            )
 
     if "video_generation" in stage_plan:
         agent_name, cfg = resolved("video_generation")

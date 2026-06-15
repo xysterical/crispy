@@ -140,6 +140,27 @@ def test_preflight_warns_when_storyboard_candidate_selection_support_is_unknown(
     payload = resp.json()
     keys = {row["key"]: row for row in payload["checks"]}
     assert keys["storyboard_image_generation.candidate_selection"]["severity"] == "warn"
+    assert keys["storyboard_image_generation.multi_candidate_cost"]["severity"] == "warn"
+
+
+def test_preflight_surfaces_frame_review_warning_for_tiktok_shop_video(client):
+    resp = client.post(
+        "/runs/preflight",
+        json={
+            "pipeline_mode": "tiktok_shop_video",
+            "has_image_inputs": True,
+            "has_video_inputs": False,
+            "creative_specs": {
+                "video_size": "9:16",
+                "video_duration_seconds": 12,
+                "tiktok_video_style": "ugc_demo",
+            },
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    keys = {row["key"]: row for row in payload["checks"]}
+    assert keys["visual_quality_assessment.frame_review"]["severity"] == "warn"
 
 
 def test_preflight_reports_storyboard_image_generation_incompatibility_for_default_runs(client):

@@ -1126,6 +1126,31 @@ def test_variant_quality_summary_exposes_frame_review_flags(client):
             VariantAsset(
                 run_variant_id=run_variant.id,
                 run_id=run_id,
+                stage_name="copy_image_generation",
+                asset_type="image",
+                uri=f"assets/{run_id}/V1_reference.png",
+                provider_name="stub",
+                model_name="stub-image",
+                prompt_summary="reference-backed image asset for V1",
+                idempotency_key="frame-review-v1-image",
+                payload={
+                    "variant_id": "V1",
+                    "image_uri": f"assets/{run_id}/V1_reference.png",
+                    "generation_status": "completed",
+                    "reference_source_count": 2,
+                    "visual_qa": {
+                        "status": "pass",
+                        "score": 91,
+                        "flags": [],
+                        "checks": [],
+                    },
+                },
+            )
+        )
+        db.add(
+            VariantAsset(
+                run_variant_id=run_variant.id,
+                run_id=run_id,
                 stage_name="video_generation",
                 asset_type="video",
                 uri=f"assets/{run_id}/V1_sample.mp4",
@@ -1191,3 +1216,50 @@ def test_variant_quality_summary_exposes_frame_review_flags(client):
         "visual_qa_first_frame_clarity_check",
         "visual_qa_needs_frame_review",
     ]
+    assert item["quality_summary"]["reference_source_count"] == 2
+
+
+def test_dashboard_variant_board_exposes_compact_social_quality_badges(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "Frame review" in html
+    assert "Ref-backed" in html
+
+
+def test_plain_runs_blocks_preflight_errors_before_creating_run(client):
+    patch_resp = client.patch(
+        "/agent-configs/video_generation_agent",
+        json={
+            "video_provider_name": "deepseek",
+            "video_model_name": "deepseek-v3.2",
+            "video_api_base_url": "https://api.deepseek.com/v1/chat/completions",
+        },
+    )
+    assert patch_resp.status_code == 200
+
+    resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "plain-preflight-ws",
+            "project_name": "plain-preflight-project",
+            "product_name": "plain-preflight-product",
+            "product_code": "PLAIN-PF-001",
+            "industry_code": "pet",
+            "campaign_name": "plain-preflight-campaign",
+            "creative_preset": "meta_square_5s",
+            "pipeline_mode": "video_only",
+        },
+    )
+
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert detail["error"] == "preflight_failed"
+    assert detail["preflight"]["severity"] == "error"
+    assert any(
+        row["key"] == "video_generation.video_generation"
+        for row in detail["preflight"]["checks"]
+    )
+
+    runs = client.get("/runs").json()
+    assert all(run["product_code"] != "PLAIN-PF-001" for run in runs)

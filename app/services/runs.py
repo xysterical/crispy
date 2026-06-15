@@ -1863,6 +1863,7 @@ def _variant_quality_summary(
     visual_qa_flags: list[str] = []
     visual_qa_scores: list[float] = []
     frame_review_flags: list[str] = []
+    reference_source_count = 0
     for asset in assets:
         if asset.asset_type == "image":
             issue = _uri_file_issue(asset.uri)
@@ -1875,6 +1876,13 @@ def _variant_quality_summary(
         if issue:
             media_issues.append({"asset_id": asset.id, "asset_type": asset.asset_type, "issue": issue, "uri": asset.uri})
         visual_qa = (asset.payload or {}).get("visual_qa") or {}
+        try:
+            reference_source_count = max(
+                reference_source_count,
+                int((asset.payload or {}).get("reference_source_count") or 0),
+            )
+        except (TypeError, ValueError):
+            pass
         for flag in visual_qa.get("flags") or []:
             visual_qa_flags.append(str(flag))
             if "frame" in str(flag):
@@ -1981,6 +1989,7 @@ def _variant_quality_summary(
         "media_issues": media_issues,
         "visual_qa_flags": sorted(set(visual_qa_flags)),
         "frame_review_flags": sorted(set(frame_review_flags)),
+        "reference_source_count": reference_source_count,
         "visual_qa_min_score": min(visual_qa_scores) if visual_qa_scores else None,
         "visual_quality_score": visual_quality.total_score if visual_quality else None,
         "visual_quality_status": visual_quality.compliance_level if visual_quality else None,
