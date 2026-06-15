@@ -1263,3 +1263,32 @@ def test_plain_runs_blocks_preflight_errors_before_creating_run(client):
 
     runs = client.get("/runs").json()
     assert all(run["product_code"] != "PLAIN-PF-001" for run in runs)
+
+
+def test_plain_runs_accept_remote_reference_media_from_creative_specs(client):
+    resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "plain-remote-media-ws",
+            "project_name": "plain-remote-media-project",
+            "product_name": "plain-remote-media-product",
+            "product_code": "PLAIN-REMOTE-001",
+            "industry_code": "pet",
+            "campaign_name": "plain-remote-media-campaign",
+            "creative_preset": "marketplace_main_image_pack",
+            "pipeline_mode": "marketplace_main_image",
+            "creative_specs": {
+                "image_urls": [
+                    "https://cdn.example.com/reference/front-shot.png?width=1600&v=2"
+                ],
+                "video_urls": [
+                    "https://cdn.example.com/reference/demo.mp4?download=1"
+                ],
+            },
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["id"]
+    assert payload["product_code"] == "PLAIN-REMOTE-001"

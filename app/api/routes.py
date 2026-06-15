@@ -8,7 +8,7 @@ import asyncio
 import zipfile
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
@@ -219,18 +219,55 @@ def _load_json_dict(raw: str | None, field_name: str) -> dict:
     return parsed
 
 
+def _infer_media_kind_from_reference(value: object) -> str | None:
+    if isinstance(value, str):
+        ref = value.strip()
+    elif isinstance(value, dict):
+        for key in ("url", "image_url", "video_url"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                ref = candidate.strip()
+                break
+        else:
+            return None
+    else:
+        return None
+    if not ref:
+        return None
+    lowered = ref.lower()
+    if lowered.startswith("data:image/"):
+        return "image"
+    if lowered.startswith("data:video/"):
+        return "video"
+    parsed = urlsplit(ref)
+    guess_target = parsed.path or ref
+    mime, _ = mimetypes.guess_type(guess_target)
+    if (mime or "").startswith("image/"):
+        return "image"
+    if (mime or "").startswith("video/"):
+        return "video"
+    return None
+
+
 def _preflight_media_flags_from_urls(url_references: list[object]) -> tuple[bool, bool]:
     has_image = False
     has_video = False
     for ref in url_references:
-        if not isinstance(ref, str):
-            continue
-        mime, _ = mimetypes.guess_type(ref)
-        if (mime or "").startswith("image/"):
+        kind = _infer_media_kind_from_reference(ref)
+        if kind == "image":
             has_image = True
-        elif (mime or "").startswith("video/"):
+        elif kind == "video":
             has_video = True
     return has_image, has_video
+
+
+def _preflight_media_flags_for_payload(payload: RunCreateRequest) -> tuple[bool, bool]:
+    creative_specs = payload.creative_specs or {}
+    context = payload.context or {}
+    candidates: list[object] = [*(context.get("url_references") or [])]
+    for key in ("image_urls", "reference_image_urls", "video_image_urls", "video_urls"):
+        candidates.extend(creative_specs.get(key) or [])
+    return _preflight_media_flags_from_urls(candidates)
 
 
 def _enforce_run_creation_preflight(
@@ -2530,8 +2567,7 @@ def post_gm_policy_promote(
 
 @router.post("/runs", response_model=RunView)
 def create_pipeline_run(payload: RunCreateRequest, db: Session = Depends(get_db)) -> RunView:
-    url_references = (payload.context or {}).get("url_references") or []
-    has_image_inputs, has_video_inputs = _preflight_media_flags_from_urls(url_references)
+    has_image_inputs, has_video_inputs = _preflight_media_flags_for_payload(payload)
     _enforce_run_creation_preflight(
         db,
         payload=payload,
