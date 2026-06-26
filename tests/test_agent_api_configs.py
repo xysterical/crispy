@@ -106,6 +106,60 @@ def test_agent_api_generation_image_config(client):
     assert gen["video_api_base_url"] == "https://api.video-provider.ai/v1/videos/generations"
 
 
+def test_storyboard_agent_text_and_image_configs_are_separate(client):
+    client.patch(
+        "/agent-configs/storyboard_agent",
+        json={
+            "provider_name": "deepseek",
+            "model_name": "deepseek-v4-pro",
+            "api_base_url": "https://api.deepseek.com",
+            "api_key_env": "CRISPY_API_KEY_DEEPSEEK",
+        },
+    )
+    client.patch(
+        "/agent-configs/copy_image_agent",
+        json={
+            "image_provider_name": "openai",
+            "image_model_name": "gpt-image-2",
+            "image_api_base_url": "https://api.apimart.ai/v1/images/generations",
+            "image_api_key_env": "CRISPY_API_KEY_IMAGE",
+        },
+    )
+
+    from app.data.session import SessionLocal
+    from app.services.agent_api_configs import (
+        has_resolved_image_config,
+        resolve_agent_config,
+        with_fallback_image_config,
+    )
+
+    with SessionLocal() as db:
+        storyboard = resolve_agent_config(
+            db,
+            agent_name="storyboard_agent",
+            run_provider="openai",
+            run_model="gpt-4.1",
+        )
+        copy_image = resolve_agent_config(
+            db,
+            agent_name="copy_image_agent",
+            run_provider="openai",
+            run_model="gpt-4.1",
+        )
+
+    assert storyboard["provider_name"] == "deepseek"
+    assert storyboard["image_api_base_url"] is None
+    assert has_resolved_image_config(storyboard) is False
+
+    storyboard_with_image = with_fallback_image_config(
+        storyboard,
+        copy_image,
+        source="copy_image_agent",
+    )
+    assert storyboard_with_image["image_model_name"] == "gpt-image-2"
+    assert storyboard_with_image["image_api_base_url"] == "https://api.apimart.ai/v1/images/generations"
+
+
 def test_agent_api_patch_can_clear_values_and_runtime_falls_back(client):
     default_resp = client.patch(
         "/agent-configs/default",
@@ -191,6 +245,8 @@ def test_agent_api_page_loads(client, monkeypatch):
     assert "CRISPY_API_KEY_KIMI" in resp.text
     assert "Copy Image Agent - Text" in resp.text
     assert "Copy Image Agent - Image" in resp.text
+    assert "Storyboard Agent - Text" in resp.text
+    assert "Storyboard Agent - Image" in resp.text
     assert "Video Generation Agent - Video" in resp.text
     assert "Visual QA Agent" in resp.text
 

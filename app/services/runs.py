@@ -44,7 +44,12 @@ from app.schemas.contracts import (
     VideoBundle,
     VideoScriptPack,
 )
-from app.services.agent_api_configs import resolve_agent_config, resolve_agent_runtime
+from app.services.agent_api_configs import (
+    has_resolved_image_config,
+    resolve_agent_config,
+    resolve_agent_runtime,
+    with_fallback_image_config,
+)
 from app.services.creative_specs import (
     DTC_SITE_IMAGE_PRESET,
     TIKTOK_SHOP_VIDEO_DEFAULT_STYLE,
@@ -1515,20 +1520,25 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
             )
         elif task.stage_name == "storyboard_image_generation":
             scripts = VideoScriptPack.model_validate(task.input_payload["video_scripts"])
-            storyboard_runtime_config = runtime_config
-            if not ((storyboard_runtime_config.get("image") or {}).get("api_base_url")):
+            storyboard_resolved = resolved
+            if not has_resolved_image_config(storyboard_resolved):
                 image_resolved = resolve_agent_config(
                     db,
                     agent_name="copy_image_agent",
                     run_provider=run.model_provider,
                     run_model=run.model_name,
                 )
-                image_runtime = resolve_agent_runtime(image_resolved).get("image") or {}
-                storyboard_runtime_config = {**runtime_config, "image": image_runtime}
+                storyboard_resolved = with_fallback_image_config(
+                    storyboard_resolved,
+                    image_resolved,
+                    source="copy_image_agent",
+                )
                 task.metadata_json = {
                     **(task.metadata_json or {}),
                     "storyboard_image_config_source": "copy_image_agent",
+                    "resolved_api": storyboard_resolved,
                 }
+            storyboard_runtime_config = resolve_agent_runtime(storyboard_resolved)
             campaign = db.get(Campaign, run.campaign_id)
             reference_bundle = build_reference_bundle(
                 db,
@@ -2317,6 +2327,18 @@ def regenerate_variant_assets(
         run_provider=run.model_provider,
         run_model=run.model_name,
     )
+    if stage_name == "storyboard_image_generation" and not has_resolved_image_config(resolved):
+        image_resolved = resolve_agent_config(
+            db,
+            agent_name="copy_image_agent",
+            run_provider=run.model_provider,
+            run_model=run.model_name,
+        )
+        resolved = with_fallback_image_config(
+            resolved,
+            image_resolved,
+            source="copy_image_agent",
+        )
     runtime_config = resolve_agent_runtime(resolved)
     provider_name = resolved["provider_name"]
     model_name = resolved["model_name"]
@@ -2338,15 +2360,6 @@ def regenerate_variant_assets(
         "regeneration_reason": reason,
         "regeneration_variant_id": variant_id,
     }
-    if stage_name == "storyboard_image_generation" and not ((runtime_config.get("image") or {}).get("api_base_url")):
-        image_resolved = resolve_agent_config(
-            db,
-            agent_name="copy_image_agent",
-            run_provider=run.model_provider,
-            run_model=run.model_name,
-        )
-        runtime_config = {**runtime_config, "image": resolve_agent_runtime(image_resolved).get("image") or {}}
-
     task.input_payload = _build_task_input(db, run, task)
     task.input_payload = append_execution_memory_payload(
         task.input_payload,

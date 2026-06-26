@@ -7,7 +7,11 @@ from sqlalchemy.orm import Session
 from app.agents.registry import stage_agent
 from app.orchestrator.state_machine import stage_plan_for
 from app.services.marketplace_qa import is_marketplace_main_image
-from app.services.agent_api_configs import resolve_agent_config
+from app.services.agent_api_configs import (
+    has_resolved_image_config,
+    resolve_agent_config,
+    with_fallback_image_config,
+)
 from app.services.creative_specs import (
     TIKTOK_SHOP_VIDEO_DEFAULT_STYLE,
     TIKTOK_SHOP_VIDEO_STYLES,
@@ -246,6 +250,9 @@ def preflight_run_capabilities(
 
     if "storyboard_image_generation" in stage_plan:
         agent_name, cfg = resolved("storyboard_image_generation")
+        if not has_resolved_image_config(cfg):
+            _, fallback_cfg = resolved("copy_image_generation")
+            cfg = with_fallback_image_config(cfg, fallback_cfg, source="copy_image_agent")
         if not cfg.get("image_api_key_available"):
             add_check(
                 key="storyboard_image_generation.image_api_key",

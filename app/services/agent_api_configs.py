@@ -302,28 +302,24 @@ def upsert_agent_config(
     return row
 
 
-def _resolved_image_config(default_cfg: AgentApiConfig, agent_cfg: AgentApiConfig | None, text_fallback: dict) -> dict:
+def _resolved_image_config(default_cfg: AgentApiConfig, agent_cfg: AgentApiConfig | None) -> dict:
     default_image = _modality_config_from_extra(default_cfg.extra, "image_config")
     agent_image = _modality_config_from_extra(agent_cfg.extra if agent_cfg else None, "image_config")
     image_provider_name = (
         agent_image.get("provider_name")
         or default_image.get("provider_name")
-        or text_fallback["provider_name"]
     )
     image_model_name = (
         agent_image.get("model_name")
         or default_image.get("model_name")
-        or "gpt-image-2"
     )
     image_api_base_url = (
         agent_image.get("api_base_url")
         or default_image.get("api_base_url")
-        or text_fallback["api_base_url"]
     )
     image_api_key_env = (
         agent_image.get("api_key_env")
         or default_image.get("api_key_env")
-        or text_fallback["api_key_env"]
     )
     return {
         "provider_name": image_provider_name,
@@ -396,7 +392,7 @@ def resolve_agent_config(
         "api_base_url": api_base_url,
         "api_key_env": api_key_env,
     }
-    image = _resolved_image_config(default_cfg, agent_cfg, text_fallback)
+    image = _resolved_image_config(default_cfg, agent_cfg)
     video = _resolved_video_config(default_cfg, agent_cfg, text_fallback)
     thinking_mode = (agent_cfg.thinking_mode if agent_cfg and agent_cfg.thinking_mode else default_cfg.thinking_mode) or "auto"
     streaming_enabled = (
@@ -443,6 +439,39 @@ def resolve_agent_config(
         "video_api_key_available": video["api_key_available"],
         "source": "agent_override" if agent_cfg else "default",
     }
+
+
+def has_resolved_image_config(config: dict) -> bool:
+    return any(
+        config.get(field)
+        for field in (
+            "image_provider_name",
+            "image_model_name",
+            "image_api_base_url",
+            "image_api_key_env",
+        )
+    )
+
+
+def with_fallback_image_config(config: dict, fallback_config: dict, *, source: str) -> dict:
+    if has_resolved_image_config(config):
+        return config
+    merged = dict(config)
+    for field in (
+        "image_provider_name",
+        "image_model_name",
+        "image_api_base_url",
+        "image_api_key_env",
+        "image_api_key_available",
+    ):
+        merged[field] = fallback_config.get(field)
+    extra = dict(merged.get("extra") or {})
+    fallback_image_extra = ((fallback_config.get("extra") or {}).get("image_config") or {})
+    if fallback_image_extra:
+        extra["image_config"] = dict(fallback_image_extra)
+    merged["extra"] = extra
+    merged["image_config_source"] = source
+    return merged
 
 
 def resolve_agent_runtime(config: dict) -> dict:

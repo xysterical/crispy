@@ -260,6 +260,12 @@
           { row_key: "copy_image_agent__image", agent_name: "copy_image_agent", mode: "image", title: "Copy Image Agent - Image", source: "copy_image_agent" },
         ];
       }
+      if (r.agent_name === "storyboard_agent") {
+        return [
+          { row_key: "storyboard_agent__text", agent_name: "storyboard_agent", mode: "text", title: "Storyboard Agent - Text", source: "storyboard_agent" },
+          { row_key: "storyboard_agent__image", agent_name: "storyboard_agent", mode: "image", title: "Storyboard Agent - Image", source: "storyboard_agent" },
+        ];
+      }
       if (r.agent_name === "video_generation_agent") {
         return [
           { row_key: "video_generation_agent__text", agent_name: "video_generation_agent", mode: "text", title: "Video Generation Agent - Text", source: "video_generation_agent" },
