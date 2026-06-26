@@ -72,6 +72,44 @@ class AgentsRuntime:
         self.providers = ProviderRegistry()
         self.media = LocalMediaProvider()
 
+    def _trace_provider_selection(
+        self,
+        runtime_config: dict | None,
+        *,
+        capability: str,
+        selected_provider: str,
+        selected_model: str,
+        fallback_provider: str,
+        fallback_model: str,
+        operation: str,
+        reason: str,
+        extra: dict | None = None,
+    ) -> None:
+        trace_callback = (runtime_config or {}).get("trace_callback")
+        if not trace_callback:
+            return
+        alternatives = []
+        fallback = f"{fallback_provider}/{fallback_model}"
+        selected = f"{selected_provider}/{selected_model}"
+        if fallback != selected:
+            alternatives.append(fallback)
+        trace_callback(
+            "provider_selection",
+            f"Selected {selected_provider}/{selected_model} for {capability}.",
+            {
+                "decision_type": "generation_provider_selection",
+                "capability": capability,
+                "operation": operation,
+                "selected": selected,
+                "selected_provider_name": selected_provider,
+                "selected_model_name": selected_model,
+                "fallback": fallback,
+                "options_considered": [selected, *alternatives],
+                "reason": reason,
+                **(extra or {}),
+            },
+        )
+
     def _chat_complete(
         self,
         provider: str,
@@ -153,6 +191,21 @@ class AgentsRuntime:
         image_runtime = runtime.get("image") or {}
         provider_name = image_runtime.get("provider_name") or fallback_provider
         model_name = image_runtime.get("model_name") or fallback_model
+        self._trace_provider_selection(
+            runtime_config,
+            capability="image_generation",
+            selected_provider=provider_name,
+            selected_model=model_name,
+            fallback_provider=fallback_provider,
+            fallback_model=fallback_model,
+            operation=mode,
+            reason="Using image-specific runtime config." if image_runtime.get("provider_name") or image_runtime.get("model_name") else "Using stage text model fallback for image generation.",
+            extra={
+                "has_reference_images": bool(reference_image_urls),
+                "reference_image_count": len(reference_image_urls or []),
+                "size": size,
+            },
+        )
         llm = self.providers.get(provider_name)
         result = llm.generate_image(
             ImageGenRequest(
@@ -217,6 +270,22 @@ class AgentsRuntime:
         video_runtime = runtime.get("video") or {}
         provider_name = video_runtime.get("provider_name") or fallback_provider
         model_name = video_runtime.get("model_name") or fallback_model
+        self._trace_provider_selection(
+            runtime_config,
+            capability="video_generation",
+            selected_provider=provider_name,
+            selected_model=model_name,
+            fallback_provider=fallback_provider,
+            fallback_model=fallback_model,
+            operation="submit_only" if (video_runtime.get("extra") or {}).get("submit_only") else "generate",
+            reason="Using video-specific runtime config." if video_runtime.get("provider_name") or video_runtime.get("model_name") else "Using stage text model fallback for video generation.",
+            extra={
+                "size": size,
+                "resolution": resolution,
+                "duration_seconds": duration_seconds,
+                "has_image_references": bool((video_payload or {}).get("image_urls") or (video_payload or {}).get("image_with_roles")),
+            },
+        )
         llm = self.providers.get(provider_name)
         extra = dict(video_runtime.get("extra") or runtime.get("extra") or {})
         video_payload = video_payload or {}

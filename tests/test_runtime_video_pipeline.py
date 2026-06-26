@@ -35,6 +35,37 @@ class _FakeRegistry:
         return self.provider
 
 
+def test_video_generation_traces_selected_provider_decision():
+    runtime = AgentsRuntime()
+    fake_provider = _FakeVideoProvider()
+    runtime.providers = _FakeRegistry(fake_provider)
+    events = []
+
+    result, provider_name, model_name = runtime._generate_video(
+        fallback_provider="openai",
+        fallback_model="gpt-4.1",
+        prompt="show product",
+        size="9:16",
+        resolution="720p",
+        duration_seconds=8,
+        video_payload={"image_with_roles": [{"role": "first_frame", "image_url": "https://example.com/frame.png"}]},
+        runtime_config={
+            "video": {"provider_name": "apimart", "model_name": "doubao-seedance-2.0"},
+            "trace_callback": lambda *args: events.append(args),
+        },
+    )
+
+    assert result.task_id == "task-video-001"
+    assert provider_name == "apimart"
+    assert model_name == "doubao-seedance-2.0"
+    event_type, _, payload = events[0]
+    assert event_type == "provider_selection"
+    assert payload["decision_type"] == "generation_provider_selection"
+    assert payload["selected"] == "apimart/doubao-seedance-2.0"
+    assert payload["options_considered"] == ["apimart/doubao-seedance-2.0", "openai/gpt-4.1"]
+    assert payload["has_image_references"] is True
+
+
 def test_video_scripting_uses_submitted_product_context_without_leash_defaults():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)

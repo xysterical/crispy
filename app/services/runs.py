@@ -1416,6 +1416,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
         )
 
         def trace_model_event(event_type: str, message: str, payload: dict | None = None) -> None:
+            payload = payload or {}
             add_agent_trace_event(
                 db,
                 run_id=run.id,
@@ -1424,9 +1425,9 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 agent_name=lead_agent,
                 event_type=event_type,
                 message=_truncate_text(message, 500),
-                provider_name=provider_name,
-                model_name=model_name,
-                payload=payload or {},
+                provider_name=payload.get("selected_provider_name") or provider_name,
+                model_name=payload.get("selected_model_name") or model_name,
+                payload=payload,
             )
             db.flush()
 
@@ -2392,6 +2393,7 @@ def regenerate_variant_assets(
     )
 
     def trace_regeneration_model_event(event_type: str, message: str, payload: dict | None = None) -> None:
+        payload = payload or {}
         add_agent_trace_event(
             db,
             run_id=run.id,
@@ -2400,9 +2402,9 @@ def regenerate_variant_assets(
             agent_name=lead_agent,
             event_type=event_type,
             message=_truncate_text(message, 500),
-            provider_name=provider_name,
-            model_name=model_name,
-            payload=payload or {},
+            provider_name=payload.get("selected_provider_name") or provider_name,
+            model_name=payload.get("selected_model_name") or model_name,
+            payload=payload,
         )
         db.flush()
 

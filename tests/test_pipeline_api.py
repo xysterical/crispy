@@ -130,6 +130,11 @@ def test_pipeline_run_can_progress_with_human_gates(client):
         assert any(event["event_type"] == "input_summary" for event in stage_events)
         assert any(event["event_type"] == "handoff" for event in stage_events)
         assert any(event["event_type"] == "completed" for event in stage_events)
+        if stage in {"copy_image_generation", "storyboard_image_generation", "video_generation"}:
+            provider_events = [event for event in stage_events if event["event_type"] == "provider_selection"]
+            assert provider_events
+            assert all(event["payload"]["decision_type"] == "generation_provider_selection" for event in provider_events)
+            assert all(event["provider_name"] == event["payload"]["selected_provider_name"] for event in provider_events)
 
         if stage == "divergence":
             assert run["variant_summary"]["total"] == run["variant_count"]
