@@ -487,11 +487,27 @@ class CapabilityCheckItem(BaseModel):
     agent_name: str | None = None
 
 
+class CapabilitySpecItem(BaseModel):
+    key: str
+    capability: str
+    stage_name: str
+    agent_name: str
+    provider_name: str | None = None
+    model_name: str | None = None
+    api_base_url: str | None = None
+    api_key_env: str | None = None
+    api_key_available: bool = False
+    supported: bool | None = None
+    supports: dict[str, bool | None] = Field(default_factory=dict)
+    setup_hint: str = ""
+
+
 class RunPreflightResponse(BaseModel):
     ok: bool = True
     severity: Literal["ok", "warn", "error"] = "ok"
     summary: str = ""
     checks: list[CapabilityCheckItem] = Field(default_factory=list)
+    capabilities: list[CapabilitySpecItem] = Field(default_factory=list)
 
 
 class QueueStatusResponse(BaseModel):

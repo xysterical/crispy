@@ -14,147 +14,9 @@ from app.services.creative_specs import (
     get_social_review_contract,
     normalize_storyboard_candidate_count,
 )
+from app.services.capability_registry import capability_spec
 
 Severity = Literal["ok", "warn", "error"]
-
-
-def _norm(value: str | None) -> str:
-    return (value or "").strip().lower()
-
-
-def _contains_any(value: str, hints: tuple[str, ...]) -> bool:
-    return any(hint in value for hint in hints)
-
-
-def _assess_image_understanding(provider: str | None, model: str | None) -> bool | None:
-    p = _norm(provider)
-    m = _norm(model)
-    if not m and not p:
-        return None
-    if "deepseek" in m and not _contains_any(m, ("vl", "vision", "janus")):
-        return False
-    if _contains_any(
-        m,
-        (
-            "kimi-k2.6",
-            "kimi-k2.5",
-            "gpt-4o",
-            "gpt-4.1",
-            "gpt-5",
-            "gemini",
-            "claude",
-            "vision",
-            "vl",
-            "janus",
-        ),
-    ):
-        return True
-    if p in {"kimi", "openai", "xai"}:
-        return None
-    return None
-
-
-def _assess_video_understanding(provider: str | None, model: str | None) -> bool | None:
-    p = _norm(provider)
-    m = _norm(model)
-    if not m and not p:
-        return None
-    if "deepseek" in m and not _contains_any(m, ("vl", "vision", "janus")):
-        return False
-    if _contains_any(
-        m,
-        (
-            "kimi-k2.6",
-            "kimi-k2.5",
-            "gemini",
-            "qwen-vl",
-            "video-understand",
-        ),
-    ):
-        return True
-    if p in {"kimi"}:
-        return True
-    if p in {"openai", "xai"}:
-        return None
-    return None
-
-
-def _assess_image_generation(provider: str | None, model: str | None, api_base_url: str | None) -> bool | None:
-    p = _norm(provider)
-    m = _norm(model)
-    b = _norm(api_base_url)
-    if "/images/" in b:
-        return True
-    if _contains_any(
-        m,
-        (
-            "gpt-image",
-            "flux",
-            "sdxl",
-            "stable-diffusion",
-            "recraft",
-            "imagen",
-            "dall",
-        ),
-    ):
-        return True
-    if _contains_any(m, ("deepseek", "kimi-k2", "gpt-4.1", "gpt-5", "claude")):
-        return False
-    if p in {"openai", "apimart"}:
-        return None
-    return None
-
-
-def _assess_reference_image_edit(
-    provider: str | None,
-    model: str | None,
-    api_base_url: str | None,
-    extra: dict | None,
-) -> bool | None:
-    image_extra = ((extra or {}).get("image_config") or {}) if isinstance(extra, dict) else {}
-    for key in ("supports_reference_edit", "reference_edit_supported", "supports_image_references"):
-        if key in image_extra:
-            return bool(image_extra.get(key))
-    p = _norm(provider)
-    m = _norm(model)
-    b = _norm(api_base_url)
-    if "/images/" in b and _contains_any(m, ("gpt-image", "flux-kontext", "qwen-image-edit", "seedream", "recraft")):
-        return True
-    if _contains_any(m, ("gpt-image", "flux-kontext", "qwen-image-edit", "image-edit", "seedream", "recraft")):
-        return True
-    if _contains_any(m, ("dall", "sdxl", "stable-diffusion")):
-        return None
-    if p in {"openai", "apimart", "xai", "kimi"}:
-        return None
-    return None
-
-
-def _assess_video_generation(provider: str | None, model: str | None, api_base_url: str | None) -> bool | None:
-    p = _norm(provider)
-    m = _norm(model)
-    b = _norm(api_base_url)
-    if "/videos/" in b:
-        return True
-    if _contains_any(
-        m,
-        (
-            "seedance",
-            "doubao-seedance",
-            "sora",
-            "veo",
-            "kling",
-            "hunyuan-video",
-            "runway",
-            "pika",
-            "vidu",
-        ),
-    ):
-        return True
-    if _contains_any(m, ("deepseek", "kimi-k2", "gpt-4.1", "gpt-5", "claude", "gemini")):
-        return False
-    if p in {"openai", "apimart"}:
-        return None
-    return None
 
 
 def _merge_severity(a: Severity, b: Severity) -> Severity:
@@ -174,6 +36,7 @@ def preflight_run_capabilities(
     creative_specs = creative_specs or {}
     marketplace_goal = pipeline_mode == "marketplace_main_image" or is_marketplace_main_image(creative_specs)
     checks: list[dict] = []
+    capabilities: list[dict] = []
     overall: Severity = "ok"
 
     def add_check(
@@ -200,6 +63,17 @@ def preflight_run_capabilities(
         agent_name = stage_agent(stage_name)
         cfg = resolve_agent_config(db, agent_name=agent_name, run_provider="openai", run_model="gpt-4.1")
         return agent_name, cfg
+
+    def add_capability(key: str, capability: str, stage_name: str, agent_name: str, cfg: dict) -> bool | None:
+        spec = capability_spec(
+            key=key,
+            capability=capability,
+            stage_name=stage_name,
+            agent_name=agent_name,
+            cfg=cfg,
+        )
+        capabilities.append(spec.as_dict())
+        return spec.supported
 
     if pipeline_mode == "tiktok_shop_video":
         style = str(creative_specs.get("tiktok_video_style") or TIKTOK_SHOP_VIDEO_DEFAULT_STYLE)
@@ -257,7 +131,7 @@ def preflight_run_capabilities(
                 agent_name=agent_name,
             )
         if has_image_inputs:
-            support = _assess_image_understanding(cfg.get("provider_name"), cfg.get("model_name"))
+            support = add_capability("intake.image_understanding", "image_understanding", "intake", agent_name, cfg)
             if support is False:
                 add_check(
                     key="intake.image_understanding",
@@ -280,7 +154,7 @@ def preflight_run_capabilities(
                     agent_name=agent_name,
                 )
         if has_video_inputs:
-            support = _assess_video_understanding(cfg.get("provider_name"), cfg.get("model_name"))
+            support = add_capability("intake.video_understanding", "video_understanding", "intake", agent_name, cfg)
             if support is False:
                 add_check(
                     key="intake.video_understanding",
@@ -324,11 +198,7 @@ def preflight_run_capabilities(
                 stage_name="copy_image_generation",
                 agent_name=agent_name,
             )
-        support = _assess_image_generation(
-            cfg.get("image_provider_name"),
-            cfg.get("image_model_name"),
-            cfg.get("image_api_base_url"),
-        )
+        support = add_capability("copy_image_generation.image_generation", "image_generation", "copy_image_generation", agent_name, cfg)
         if support is False:
             add_check(
                 key="copy_image_generation.image_generation",
@@ -351,12 +221,7 @@ def preflight_run_capabilities(
                 agent_name=agent_name,
             )
         if marketplace_goal:
-            reference_support = _assess_reference_image_edit(
-                cfg.get("image_provider_name"),
-                cfg.get("image_model_name"),
-                cfg.get("image_api_base_url"),
-                cfg.get("extra"),
-            )
+            reference_support = add_capability("copy_image_generation.reference_edit", "reference_image_edit", "copy_image_generation", agent_name, cfg)
             if reference_support is False:
                 add_check(
                     key="copy_image_generation.reference_edit",
@@ -392,11 +257,7 @@ def preflight_run_capabilities(
                 stage_name="storyboard_image_generation",
                 agent_name=agent_name,
             )
-        support = _assess_image_generation(
-            cfg.get("image_provider_name"),
-            cfg.get("image_model_name"),
-            cfg.get("image_api_base_url"),
-        )
+        support = add_capability("storyboard_image_generation.image_generation", "image_generation", "storyboard_image_generation", agent_name, cfg)
         if support is False:
             add_check(
                 key="storyboard_image_generation.image_generation",
@@ -483,11 +344,7 @@ def preflight_run_capabilities(
                 stage_name="video_generation",
                 agent_name=agent_name,
             )
-        support = _assess_video_generation(
-            cfg.get("video_provider_name"),
-            cfg.get("video_model_name"),
-            cfg.get("video_api_base_url"),
-        )
+        support = add_capability("video_generation.video_generation", "video_generation", "video_generation", agent_name, cfg)
         if support is False:
             add_check(
                 key="video_generation.video_generation",
@@ -529,4 +386,5 @@ def preflight_run_capabilities(
         "severity": overall,
         "summary": summary,
         "checks": checks,
+        "capabilities": capabilities,
     }
