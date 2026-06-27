@@ -79,6 +79,11 @@ def preflight_run_capabilities(
         capabilities.append(spec.as_dict())
         return spec.supported
 
+    try:
+        requested_duration_seconds = int(creative_specs.get("video_duration_seconds") or 12)
+    except (TypeError, ValueError):
+        requested_duration_seconds = 0
+
     if pipeline_mode == "tiktok_shop_video":
         style = str(creative_specs.get("tiktok_video_style") or TIKTOK_SHOP_VIDEO_DEFAULT_STYLE)
         if style not in TIKTOK_SHOP_VIDEO_STYLES:
@@ -108,11 +113,7 @@ def preflight_run_capabilities(
                 stage_name="video_generation",
                 agent_name="video_generation_agent",
             )
-        try:
-            duration_seconds = int(creative_specs.get("video_duration_seconds") or 12)
-        except (TypeError, ValueError):
-            duration_seconds = 0
-        if duration_seconds < 6 or duration_seconds > 20:
+        if requested_duration_seconds < 6 or requested_duration_seconds > 20:
             add_check(
                 key="tiktok_shop_video.duration",
                 severity="warn",
@@ -120,6 +121,15 @@ def preflight_run_capabilities(
                 stage_name="video_scripting",
                 agent_name="video_script_agent",
             )
+
+    if "video_generation" in stage_plan and requested_duration_seconds > 15:
+        add_check(
+            key="video_generation.segmented_long_video",
+            severity="warn",
+            message="Requested duration exceeds the video provider 15-second clip limit; Crispy will generate shorter segments and stitch them.",
+            stage_name="video_generation",
+            agent_name="video_generation_agent",
+        )
 
     if "intake" in stage_plan and (has_image_inputs or has_video_inputs):
         agent_name, cfg = resolved("intake")

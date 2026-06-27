@@ -109,6 +109,7 @@ def test_tiktok_shop_preflight_reports_reference_ratio_and_duration_warnings(cli
     assert keys["tiktok_shop_video.reference_media"]["severity"] == "warn"
     assert keys["tiktok_shop_video.video_size"]["severity"] == "warn"
     assert keys["tiktok_shop_video.duration"]["severity"] == "warn"
+    assert keys["video_generation.segmented_long_video"]["severity"] == "warn"
 
 
 def test_preflight_warns_when_storyboard_candidate_selection_support_is_unknown(client):
