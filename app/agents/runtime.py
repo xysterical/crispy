@@ -30,7 +30,7 @@ from app.services.marketplace_qa import (
     is_marketplace_main_image,
     normalize_platform_targets,
 )
-from app.services.video_frames import sample_video_frames
+from app.services.video_frames import extract_last_video_frame, sample_video_frames, stitch_video_files
 from app.services.visual_qa import inspect_extracted_video_frames, inspect_visual_asset
 from app.schemas.contracts import (
     ComplianceLevel,
@@ -1914,6 +1914,95 @@ class AgentsRuntime:
             artifacts=artifacts,
         )
 
+    def _generate_video_clip_payload(
+        self,
+        *,
+        run_id: str,
+        variant_id: str,
+        video_prompt: str,
+        video_size: str,
+        resolution: str,
+        duration_seconds: int,
+        generation_spec: dict,
+        provider: str,
+        model: str,
+        runtime_config: dict | None,
+        video_filename: str,
+        force_regenerate: bool,
+    ) -> tuple[dict, float, str]:
+        source = "placeholder"
+        error_text = None
+        model_used = ""
+        provider_used = ""
+        generation_status = None
+        external_task_id = None
+        result_url = None
+        raw_response: dict = {}
+        provider_errors: list[dict] = []
+        estimated_cost = 0.0
+        video_uri = ""
+        existing_video_path = self.media.settings.assets_dir / run_id / video_filename
+        try:
+            if not force_regenerate and self._artifact_has_payload(str(existing_video_path)):
+                video_uri = str(existing_video_path)
+                source = "reused_existing"
+                generation_status = "completed"
+            else:
+                video_result, provider_used, model_used = self._generate_video_submit_only(
+                    fallback_provider=provider,
+                    fallback_model=model,
+                    prompt=video_prompt,
+                    size=video_size,
+                    resolution=resolution,
+                    duration_seconds=duration_seconds,
+                    video_payload=generation_spec,
+                    runtime_config=runtime_config,
+                )
+                estimated_cost += video_result.estimated_cost
+                selected = video_result.videos[0] if video_result.videos else None
+                external_task_id = video_result.task_id
+                generation_status = video_result.status
+                raw_response = video_result.raw_response or {}
+                if selected:
+                    external_task_id = selected.task_id or external_task_id
+                    generation_status = selected.status or generation_status
+                    result_url = selected.url
+                    raw_response = selected.raw_response or raw_response
+                if selected and (selected.url or selected.b64_data):
+                    video_bytes, source = self._materialize_generated_video(selected)
+                    video_uri = self.media.write_binary_artifact(run_id, video_filename, video_bytes)
+                elif external_task_id:
+                    source = "external_task_pending"
+                    video_uri = self.media.reserve_binary_artifact(run_id, video_filename)
+                else:
+                    error_text = "Video generation returned no data, no URL, and no external task ID."
+                    video_uri = self._generation_error_artifact(run_id, variant_id, error_text)
+                    source = "generation_error"
+        except Exception as exc:
+            error_text = str(exc)
+            provider_errors = getattr(exc, "errors", []) or []
+            video_uri = self._generation_error_artifact(run_id, variant_id, error_text)
+        asset = VideoAsset(variant_id=variant_id, video_uri=video_uri, duration_seconds=float(duration_seconds))
+        payload = {
+            **asset.model_dump(),
+            "source": source,
+            "video_provider": provider_used,
+            "video_model": model_used,
+            "error": error_text,
+            "prompt": video_prompt,
+            "external_task_id": external_task_id,
+            "generation_status": generation_status,
+            "result_url": result_url,
+            "raw_response": raw_response,
+            "provider_errors": provider_errors,
+            "quality_constraints": {
+                "preserve_submitted_product_identity": True,
+                "require_physical_plausibility": True,
+            },
+            "generation_spec": generation_spec,
+        }
+        return payload, estimated_cost, model_used
+
     def run_video_generation(
         self,
         run_id: str,
@@ -1978,80 +2067,95 @@ class AgentsRuntime:
                     f"target resolution {resolution}, duration {duration_seconds} seconds. "
                     f"{self._video_prompt_quality_block(product_context)}"
                 )
-            source = "placeholder"
-            error_text = None
-            model_used = ""
-            provider_used = ""
-            generation_status = None
-            external_task_id = None
-            result_url = None
-            raw_response: dict = {}
-            provider_errors: list[dict] = []
-            video_uri = ""
             asset_suffix = str((runtime_config or {}).get("asset_name_suffix") or "")
             force_regenerate = bool((runtime_config or {}).get("force_regenerate"))
-            video_filename = f"{script.variant_id}_sample{asset_suffix}.mp4"
-            existing_video_path = self.media.settings.assets_dir / run_id / video_filename
-            try:
-                if not force_regenerate and self._artifact_has_payload(str(existing_video_path)):
-                    video_uri = str(existing_video_path)
-                    source = "reused_existing"
-                    generation_status = "completed"
-                else:
-                    video_result, provider_used, model_used = self._generate_video_submit_only(
-                        fallback_provider=provider,
-                        fallback_model=model,
-                        prompt=video_prompt,
-                        size=video_size,
-                        resolution=resolution,
-                        duration_seconds=duration_seconds,
-                        video_payload=generation_spec,
-                        runtime_config=runtime_config,
+            if script.segments:
+                segment_payloads: list[dict] = []
+                completed_segment_paths: list[Path] = []
+                bridge_frame_uri: str | None = None
+                for segment in script.segments:
+                    segment_duration = int(segment.duration_seconds)
+                    segment_spec = {**generation_spec, "duration": segment_duration}
+                    if bridge_frame_uri:
+                        bridge_data_url = self._local_image_to_data_url(bridge_frame_uri)
+                        if bridge_data_url:
+                            segment_spec["image_urls"] = [bridge_data_url]
+                    segment_prompt = (
+                        f"{video_prompt}\n\nSegment {segment.segment_id}: {segment.motion_prompt}. "
+                        f"First frame: {segment.first_frame_prompt}. Last frame target: {segment.last_frame_prompt}. "
+                        f"Continuity constraints: {segment.continuity_constraints}. "
+                        f"Transition to next: {segment.transition_to_next}."
                     )
-                    estimated_cost += video_result.estimated_cost
-                    selected = video_result.videos[0] if video_result.videos else None
-                    external_task_id = video_result.task_id
-                    generation_status = video_result.status
-                    raw_response = video_result.raw_response or {}
-                    if selected:
-                        external_task_id = selected.task_id or external_task_id
-                        generation_status = selected.status or generation_status
-                        result_url = selected.url
-                        raw_response = selected.raw_response or raw_response
-                    if selected and (selected.url or selected.b64_data):
-                        video_bytes, source = self._materialize_generated_video(selected)
-                        video_uri = self.media.write_binary_artifact(run_id, video_filename, video_bytes)
-                    elif external_task_id:
-                        source = "external_task_pending"
-                        video_uri = self.media.reserve_binary_artifact(run_id, video_filename)
-                    else:
-                        error_text = "Video generation returned no data, no URL, and no external task ID."
-                        video_uri = self._generation_error_artifact(run_id, script.variant_id, error_text)
-                        source = "generation_error"
-                    video_models_used.add(video_result.model_used or model_used)
-            except Exception as exc:
-                error_text = str(exc)
-                provider_errors = getattr(exc, "errors", []) or []
-                video_uri = self._generation_error_artifact(run_id, script.variant_id, error_text)
-            asset = VideoAsset(variant_id=script.variant_id, video_uri=video_uri, duration_seconds=float(duration_seconds))
-            video_payload = {
-                **asset.model_dump(),
-                "source": source,
-                "video_provider": provider_used,
-                "video_model": model_used,
-                "error": error_text,
-                "prompt": video_prompt,
-                "external_task_id": external_task_id,
-                "generation_status": generation_status,
-                "result_url": result_url,
-                "raw_response": raw_response,
-                "provider_errors": provider_errors,
-                "quality_constraints": {
-                    "preserve_submitted_product_identity": True,
-                    "require_physical_plausibility": True,
-                },
-                "generation_spec": generation_spec,
-            }
+                    segment_payload, segment_cost, segment_model = self._generate_video_clip_payload(
+                        run_id=run_id,
+                        variant_id=script.variant_id,
+                        video_prompt=segment_prompt,
+                        video_size=video_size,
+                        resolution=resolution,
+                        duration_seconds=segment_duration,
+                        generation_spec=segment_spec,
+                        provider=provider,
+                        model=model,
+                        runtime_config=runtime_config,
+                        video_filename=f"{segment.segment_id}{asset_suffix}.mp4",
+                        force_regenerate=force_regenerate,
+                    )
+                    estimated_cost += segment_cost
+                    if segment_model:
+                        video_models_used.add(segment_model)
+                    segment_payload["segment_id"] = segment.segment_id
+                    segment_payload["transition_to_next"] = segment.transition_to_next
+                    status = str(segment_payload.get("generation_status") or "").lower()
+                    if status in {"completed", "succeeded", "success", "ready"} and self._artifact_has_payload(segment_payload.get("video_uri")):
+                        segment_path = Path(str(segment_payload["video_uri"]))
+                        completed_segment_paths.append(segment_path)
+                        bridge_frame_uri = extract_last_video_frame(
+                            video_path=segment_path,
+                            output_path=self.media.settings.assets_dir / run_id / f"{segment.segment_id}_last_frame.png",
+                        )
+                        segment_payload["last_frame_uri"] = bridge_frame_uri
+                    segment_payloads.append(segment_payload)
+                    if not bridge_frame_uri:
+                        break
+
+                stitched_uri = None
+                if len(completed_segment_paths) == len(script.segments):
+                    stitched_uri = stitch_video_files(
+                        video_paths=completed_segment_paths,
+                        output_path=self.media.settings.assets_dir / run_id / f"{script.variant_id}_stitched{asset_suffix}.mp4",
+                    )
+                video_payload = {
+                    "variant_id": script.variant_id,
+                    "video_uri": stitched_uri or (segment_payloads[-1]["video_uri"] if segment_payloads else ""),
+                    "duration_seconds": float(sum(segment.duration_seconds for segment in script.segments)),
+                    "source": "stitched_segments" if stitched_uri else "segmented_pending",
+                    "generation_status": "completed" if stitched_uri else "pending",
+                    "segments": segment_payloads,
+                    "generation_spec": generation_spec,
+                    "quality_constraints": {
+                        "preserve_submitted_product_identity": True,
+                        "require_physical_plausibility": True,
+                    },
+                }
+            else:
+                video_payload, clip_cost, clip_model = self._generate_video_clip_payload(
+                    run_id=run_id,
+                    variant_id=script.variant_id,
+                    video_prompt=video_prompt,
+                    video_size=video_size,
+                    resolution=resolution,
+                    duration_seconds=duration_seconds,
+                    generation_spec=generation_spec,
+                    provider=provider,
+                    model=model,
+                    runtime_config=runtime_config,
+                    video_filename=f"{script.variant_id}_sample{asset_suffix}.mp4",
+                    force_regenerate=force_regenerate,
+                )
+                estimated_cost += clip_cost
+                if clip_model:
+                    video_models_used.add(clip_model)
+            video_uri = str(video_payload.get("video_uri") or "")
             video_payload = self._attach_generated_video_frames(run_id=run_id, video_payload=video_payload)
             video_payload["visual_qa"] = self._local_media_qa(
                 asset_type="video",

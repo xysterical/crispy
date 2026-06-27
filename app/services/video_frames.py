@@ -4,6 +4,15 @@ import subprocess
 from pathlib import Path
 
 
+def _ffmpeg_exe() -> str | None:
+    try:
+        import imageio_ffmpeg  # type: ignore
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+
 def _clear_frame_outputs(output_dir: Path, prefix: str) -> None:
     for path in output_dir.glob(f"{prefix}_frame_*.png"):
         path.unlink(missing_ok=True)
@@ -30,11 +39,8 @@ def _write_frame_placeholders(output_dir: Path, prefix: str, count: int) -> list
 
 
 def sample_video_frames(*, video_path: Path, output_dir: Path, prefix: str, count: int = 3) -> list[str]:
-    try:
-        import imageio_ffmpeg  # type: ignore
-
-        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception:
+    ffmpeg = _ffmpeg_exe()
+    if not ffmpeg:
         return _write_frame_placeholders(output_dir, prefix, count)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -66,3 +72,66 @@ def sample_video_frames(*, video_path: Path, output_dir: Path, prefix: str, coun
         fallback = _write_frame_placeholders(output_dir, f"{prefix}_fallback", count - len(frames))
         return [str(path) for path in frames] + fallback
     return [str(path) for path in frames]
+
+
+def extract_last_video_frame(*, video_path: Path, output_path: Path) -> str | None:
+    ffmpeg = _ffmpeg_exe()
+    if not ffmpeg or not video_path.exists():
+        return None
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-sseof",
+        "-0.1",
+        "-i",
+        str(video_path),
+        "-frames:v",
+        "1",
+        str(output_path),
+    ]
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+    except Exception:
+        return None
+    return str(output_path) if output_path.exists() else None
+
+
+def stitch_video_files(*, video_paths: list[Path], output_path: Path) -> str | None:
+    ffmpeg = _ffmpeg_exe()
+    if not ffmpeg or not video_paths or any(not path.exists() for path in video_paths):
+        return None
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    list_path = output_path.with_suffix(".concat.txt")
+    def concat_line(path: Path) -> str:
+        safe = str(path.resolve()).replace("'", "'\\''")
+        return f"file '{safe}'\n"
+
+    list_path.write_text(
+        "".join(concat_line(path) for path in video_paths),
+        encoding="utf-8",
+    )
+    cmd = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(list_path),
+        "-c",
+        "copy",
+        str(output_path),
+    ]
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+    except Exception:
+        return None
+    return str(output_path) if output_path.exists() else None

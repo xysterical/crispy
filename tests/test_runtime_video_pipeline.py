@@ -27,6 +27,21 @@ class _FakeVideoProvider:
         )
 
 
+class _FakeCompletedVideoProvider:
+    def __init__(self) -> None:
+        self.requests = []
+
+    def generate_video(self, request, *, api_base_url=None, api_key=None, extra=None):
+        self.requests.append(request)
+        payload = base64.b64encode((f"video-{len(self.requests)}".encode("utf-8") * 256)).decode("ascii")
+        return VideoGenResult(
+            model_used=request.model,
+            videos=[GeneratedVideo(b64_data=payload, status="completed")],
+            status="completed",
+            raw_response={"status": "completed"},
+        )
+
+
 class _FakeRegistry:
     def __init__(self, provider) -> None:
         self.provider = provider
@@ -148,6 +163,78 @@ def test_video_scripting_splits_long_duration_into_segments():
     assert [segment["duration_seconds"] for segment in segments] == [12.0, 12.0, 11.0]
     assert all(segment["duration_seconds"] <= 15 for segment in segments)
     assert segments[-1]["transition_to_next"] == "none"
+
+
+def test_video_generation_stitches_completed_segments(monkeypatch):
+    runtime = AgentsRuntime()
+    provider = _FakeCompletedVideoProvider()
+    runtime.providers = _FakeRegistry(provider)
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    def fake_extract_last_frame(*, video_path, output_path):
+        output_path.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"))
+        return str(output_path)
+
+    def fake_stitch(*, video_paths, output_path):
+        output_path.write_bytes(b"stitched-video" * 256)
+        return str(output_path)
+
+    monkeypatch.setattr("app.agents.runtime.extract_last_video_frame", fake_extract_last_frame)
+    monkeypatch.setattr("app.agents.runtime.stitch_video_files", fake_stitch)
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="One dress, three moods",
+                script="A segmented long-form short ad.",
+                segments=[
+                    {
+                        "segment_id": "V1_S1",
+                        "variant_id": "V1",
+                        "duration_seconds": 12,
+                        "first_frame_prompt": "apartment reveal",
+                        "last_frame_prompt": "walking out",
+                        "motion_prompt": "model smiles in apartment",
+                    },
+                    {
+                        "segment_id": "V1_S2",
+                        "variant_id": "V1",
+                        "duration_seconds": 12,
+                        "first_frame_prompt": "street",
+                        "last_frame_prompt": "cafe",
+                        "motion_prompt": "model crosses street",
+                    },
+                    {
+                        "segment_id": "V1_S3",
+                        "variant_id": "V1",
+                        "duration_seconds": 11,
+                        "first_frame_prompt": "evening",
+                        "last_frame_prompt": "cta",
+                        "motion_prompt": "model enters evening scene",
+                    },
+                ],
+            )
+        ],
+        product_context={"product_name": "olive satin dress"},
+        generation_spec={"size": "9:16", "resolution": "720p", "duration": 35},
+    )
+
+    output = runtime.run_video_generation(
+        run_id="runtime-video-segments",
+        script_pack=script_pack,
+        creative_specs={"video_size": "9:16", "video_duration_seconds": 35},
+        provider="openai",
+        model="gpt-4.1",
+        runtime_config={"video": {"provider_name": "fake", "model_name": "fake-video"}, "force_regenerate": True},
+    )
+
+    video = output.payload["videos"][0]
+    assert [request.duration_seconds for request in provider.requests] == [12, 12, 11]
+    assert video["source"] == "stitched_segments"
+    assert video["duration_seconds"] == 35.0
+    assert len(video["segments"]) == 3
+    assert video["video_uri"].endswith("V1_stitched.mp4")
 
 
 def test_storyboard_and_video_generation_do_not_inject_leash_defaults_and_use_structured_specs():
