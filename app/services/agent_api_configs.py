@@ -302,24 +302,38 @@ def upsert_agent_config(
     return row
 
 
-def _resolved_image_config(default_cfg: AgentApiConfig, agent_cfg: AgentApiConfig | None) -> dict:
+def _resolved_image_config(default_cfg: AgentApiConfig, agent_cfg: AgentApiConfig | None, *, agent_name: str) -> dict:
     default_image = _modality_config_from_extra(default_cfg.extra, "image_config")
     agent_image = _modality_config_from_extra(agent_cfg.extra if agent_cfg else None, "image_config")
+    builtin_image = (
+        {
+            "provider_name": "openai",
+            "model_name": "gpt-image-2",
+            "api_base_url": "https://api.openai.com/v1/images/generations",
+            "api_key_env": "CRISPY_API_KEY_OPENAI",
+        }
+        if agent_name == "copy_image_agent" and agent_cfg is None
+        else {}
+    )
     image_provider_name = (
         agent_image.get("provider_name")
         or default_image.get("provider_name")
+        or builtin_image.get("provider_name")
     )
     image_model_name = (
         agent_image.get("model_name")
         or default_image.get("model_name")
+        or builtin_image.get("model_name")
     )
     image_api_base_url = (
         agent_image.get("api_base_url")
         or default_image.get("api_base_url")
+        or builtin_image.get("api_base_url")
     )
     image_api_key_env = (
         agent_image.get("api_key_env")
         or default_image.get("api_key_env")
+        or builtin_image.get("api_key_env")
     )
     return {
         "provider_name": image_provider_name,
@@ -392,7 +406,7 @@ def resolve_agent_config(
         "api_base_url": api_base_url,
         "api_key_env": api_key_env,
     }
-    image = _resolved_image_config(default_cfg, agent_cfg)
+    image = _resolved_image_config(default_cfg, agent_cfg, agent_name=agent_name)
     video = _resolved_video_config(default_cfg, agent_cfg, text_fallback)
     thinking_mode = (agent_cfg.thinking_mode if agent_cfg and agent_cfg.thinking_mode else default_cfg.thinking_mode) or "auto"
     streaming_enabled = (

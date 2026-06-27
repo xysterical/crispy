@@ -1538,7 +1538,11 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                     "storyboard_image_config_source": "copy_image_agent",
                     "resolved_api": storyboard_resolved,
                 }
-            storyboard_runtime_config = resolve_agent_runtime(storyboard_resolved)
+            storyboard_runtime = resolve_agent_runtime(storyboard_resolved)
+            storyboard_runtime_config = {
+                **runtime_config,
+                "image": storyboard_runtime.get("image") or {},
+            }
             campaign = db.get(Campaign, run.campaign_id)
             reference_bundle = build_reference_bundle(
                 db,
