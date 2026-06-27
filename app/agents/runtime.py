@@ -52,6 +52,7 @@ from app.schemas.contracts import (
     VariantSet,
     VideoAsset,
     VideoBundle,
+    VideoSegmentPlan,
     VideoScriptItem,
     VideoScriptPack,
 )
@@ -599,6 +600,70 @@ class AgentsRuntime:
             if key in creative_specs and creative_specs.get(key) not in (None, "", []):
                 spec[key] = creative_specs.get(key)
         return spec
+
+    def _max_video_segment_seconds(self, creative_specs: dict | None) -> int:
+        try:
+            requested = int((creative_specs or {}).get("max_video_segment_seconds") or 15)
+        except (TypeError, ValueError):
+            requested = 15
+        return max(4, min(15, requested))
+
+    def _segment_durations(self, total_seconds: int, max_seconds: int) -> list[int]:
+        if total_seconds <= max_seconds:
+            return [total_seconds]
+        segment_count = (total_seconds + max_seconds - 1) // max_seconds
+        durations: list[int] = []
+        remaining = total_seconds
+        for idx in range(segment_count):
+            slots = segment_count - idx
+            duration = (remaining + slots - 1) // slots
+            durations.append(duration)
+            remaining -= duration
+        return durations
+
+    def _build_video_segments(
+        self,
+        *,
+        variant_id: str,
+        shot_plan: list[ShotPlanItem],
+        shot_list: list[str],
+        total_seconds: int,
+        creative_specs: dict | None,
+        product_name: str,
+    ) -> list[VideoSegmentPlan]:
+        durations = self._segment_durations(total_seconds, self._max_video_segment_seconds(creative_specs))
+        if len(durations) == 1:
+            return []
+        source_shots = shot_plan or [
+            ShotPlanItem(
+                shot_id=f"shot_{idx + 1}",
+                variant_id=variant_id,
+                intent="product_demo",
+                first_frame=ShotFramePlan(description=shot, visible_product_elements=[product_name]),
+                motion_description=shot,
+            )
+            for idx, shot in enumerate(shot_list or [f"{product_name} product demo"])
+        ]
+        segments: list[VideoSegmentPlan] = []
+        for idx, duration in enumerate(durations):
+            shot = source_shots[min(idx, len(source_shots) - 1)]
+            last_frame = shot.last_frame or shot.first_frame
+            segments.append(
+                VideoSegmentPlan(
+                    segment_id=f"{variant_id}_S{idx + 1}",
+                    variant_id=variant_id,
+                    duration_seconds=float(duration),
+                    scene=shot.intent,
+                    shot_intent=shot.intent,
+                    first_frame_prompt=shot.first_frame.description,
+                    last_frame_prompt=last_frame.description,
+                    motion_prompt=shot.motion_description or shot.first_frame.description,
+                    transition_to_next="none" if idx == len(durations) - 1 else "match_cut",
+                    variation_type="medium" if shot.last_frame else "small",
+                    continuity_constraints=shot.product_continuity_constraints,
+                )
+            )
+        return segments
 
     def _video_prompt_quality_block(self, product_context: dict | None) -> str:
         product_name = str((product_context or {}).get("product_name") or "the product")
@@ -1473,7 +1538,10 @@ class AgentsRuntime:
                 "Each shot must have: shot_id, variant_id, intent (one of: thumb_stop, product_proof, usage_demo, cta_packshot), "
                 "first_frame with description and visible_product_elements, "
                 "optional last_frame, motion_description, audio_description, text_overlay, "
-                "and product_continuity_constraints (e.g. color_match, scale_consistent, material_match)."
+                "and product_continuity_constraints (e.g. color_match, scale_consistent, material_match). "
+                "If generation_spec.duration is above 15 seconds, also output segments where every segment is 15 seconds or shorter. "
+                "Each segment must include: segment_id, variant_id, duration_seconds, scene, shot_intent, first_frame_prompt, "
+                "last_frame_prompt, motion_prompt, transition_to_next, variation_type (small|medium|large), and continuity_constraints."
             ),
         )
         response_text, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
@@ -1520,7 +1588,16 @@ class AgentsRuntime:
                             description=shot_text,
                             visible_product_elements=[product_name],
                         ),
+                        motion_description=shot_text,
                     ))
+                segments = self._build_video_segments(
+                    variant_id=item.variant_id,
+                    shot_plan=fallback_shot_plan,
+                    shot_list=shot_list,
+                    total_seconds=int(generation_spec.get("duration") or 8),
+                    creative_specs=creative_specs,
+                    product_name=product_name,
+                )
                 scripts.append(
                     VideoScriptItem(
                         variant_id=item.variant_id,
@@ -1533,6 +1610,7 @@ class AgentsRuntime:
                         ),
                         shot_list=shot_list,
                         shot_plan=fallback_shot_plan,
+                        segments=segments,
                         tiktok=tiktok_payload,
                     )
                 )
@@ -1593,12 +1671,28 @@ class AgentsRuntime:
                         ))
                     except Exception:
                         continue
+                segments: list[VideoSegmentPlan] = []
+                for segment in entry.get("segments") or []:
+                    try:
+                        segments.append(VideoSegmentPlan.model_validate(segment))
+                    except Exception:
+                        continue
+                if not segments:
+                    segments = self._build_video_segments(
+                        variant_id=entry.get("variant_id", f"V{len(scripts)+1}"),
+                        shot_plan=shot_plan,
+                        shot_list=entry.get("shot_list", []),
+                        total_seconds=int(generation_spec.get("duration") or 8),
+                        creative_specs=creative_specs,
+                        product_name=product_name,
+                    )
                 scripts.append(
                     VideoScriptItem(
                         variant_id=entry.get("variant_id", f"V{len(scripts)+1}"),
                         hook=entry.get("hook", ""),
                         script=entry.get("script", ""),
                         shot_list=entry.get("shot_list", []), shot_plan=shot_plan,
+                        segments=segments,
                         tiktok=tiktok_payload,
                     )
                 )

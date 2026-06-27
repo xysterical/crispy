@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -249,12 +249,27 @@ class ShotPlanItem(BaseModel):
     product_continuity_constraints: list[str] = Field(default_factory=list)
 
 
+class VideoSegmentPlan(BaseModel):
+    segment_id: str
+    variant_id: str
+    duration_seconds: float
+    scene: str = ""
+    shot_intent: str = ""
+    first_frame_prompt: str = ""
+    last_frame_prompt: str = ""
+    motion_prompt: str = ""
+    transition_to_next: str = "match_cut"
+    variation_type: Literal["small", "medium", "large"] = "small"
+    continuity_constraints: list[str] = Field(default_factory=list)
+
+
 class VideoScriptItem(BaseModel):
     variant_id: str
     hook: str
     script: str
     shot_list: list[str] = Field(default_factory=list)
     shot_plan: list[ShotPlanItem] = Field(default_factory=list)
+    segments: list[VideoSegmentPlan] = Field(default_factory=list)
     tiktok: TikTokScriptDetails | None = None
 
 

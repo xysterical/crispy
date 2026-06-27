@@ -116,6 +116,40 @@ def test_video_scripting_uses_submitted_product_context_without_leash_defaults()
         assert banned not in script_text
 
 
+def test_video_scripting_splits_long_duration_into_segments():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    output = runtime.run_video_scripting(
+        run_id="runtime-script-long-video",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="multi-scene styling",
+                    hook="One dress, three moods",
+                    message="Show the same dress across apartment, street, and evening scenes.",
+                )
+            ]
+        ),
+        intake=ProductIntake(
+            product_name="olive satin dress",
+            business_context={},
+            asset_media_summary="Olive satin midi dress with twisted neckline and side ruching.",
+        ),
+        business_context={"target_audience": "fashion buyers", "primary_cta": "Shop the look"},
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"video_size": "9:16", "video_duration_seconds": 35},
+        pipeline_mode="tiktok_shop_video",
+    )
+
+    segments = output.payload["scripts"][0]["segments"]
+    assert [segment["duration_seconds"] for segment in segments] == [12.0, 12.0, 11.0]
+    assert all(segment["duration_seconds"] <= 15 for segment in segments)
+    assert segments[-1]["transition_to_next"] == "none"
+
+
 def test_storyboard_and_video_generation_do_not_inject_leash_defaults_and_use_structured_specs():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
