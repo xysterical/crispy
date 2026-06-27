@@ -1,5 +1,4 @@
 from collections.abc import Generator
-import os
 from pathlib import Path
 from threading import RLock
 
@@ -106,20 +105,14 @@ def list_local_sqlite_database_urls(search_root: Path | None = None) -> list[str
 
     seen: set[str] = set()
     urls: list[str] = []
-    skip_dirs = {".git", ".venv", "node_modules", "__pycache__"}
     for root in roots:
         root = root.resolve()
-        for current_dir, dir_names, file_names in os.walk(root):
-            dir_names[:] = [name for name in dir_names if name not in skip_dirs and not name.startswith(".pytest_cache")]
-            for name in file_names:
-                if not name.endswith(".db"):
-                    continue
-                path = Path(current_dir) / name
-                url = _path_to_sqlite_url(path)
-                if url in seen:
-                    continue
-                seen.add(url)
-                urls.append(url)
+        for path in root.glob("*.db"):
+            url = _path_to_sqlite_url(path)
+            if url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
     if _active_database_url not in seen:
         urls.insert(0, _active_database_url)
     return sorted(urls, key=lambda item: (0 if item == _active_database_url else 1, item))

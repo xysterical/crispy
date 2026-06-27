@@ -91,6 +91,21 @@ def inspect_visual_asset(
         checks.append({"key": "file", "status": "fail", "message": "Asset file does not exist."})
         return {"status": "fail", "score": 0.0, "flags": ["visual_qa_missing_file"], "checks": checks, "inspected_at": _now_iso()}
     size_bytes = path.stat().st_size
+    status = str(payload.get("generation_status") or "").lower()
+    source = str(payload.get("source") or "").lower()
+    if payload.get("external_task_id") and (
+        status in {"", "submitted", "queued", "pending", "processing", "running"}
+        or source == "external_task_pending"
+    ):
+        checks.append({"key": "async_status", "status": "warn", "message": f"Asset task is still {status or source}."})
+        return {
+            "status": "warn",
+            "score": 70.0,
+            "flags": ["visual_qa_asset_processing"],
+            "checks": checks,
+            "metrics": {"size_bytes": size_bytes},
+            "inspected_at": _now_iso(),
+        }
     if size_bytes == 0:
         checks.append({"key": "file_size", "status": "fail", "message": "Asset file is empty."})
         return {"status": "fail", "score": 0.0, "flags": ["visual_qa_empty_file"], "checks": checks, "inspected_at": _now_iso()}
@@ -134,8 +149,6 @@ def inspect_visual_asset(
             flags.append("visual_qa_text_overlay_risk")
             score -= 10
     elif asset_type == "video":
-        status = str(payload.get("generation_status") or "").lower()
-        source = str(payload.get("source") or "").lower()
         if status in {"submitted", "queued", "pending", "processing", "running"} or source == "external_task_pending":
             checks.append({"key": "async_status", "status": "warn", "message": f"Video task is still {status or source}."})
             flags.append("visual_qa_video_processing")

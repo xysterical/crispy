@@ -24,7 +24,7 @@ from app.services.runs import (
     auto_approve_stage,
     execute_stage_task,
     get_run,
-    refresh_video_task_assets,
+    refresh_async_assets,
     regenerate_variant_assets,
     select_next_queued_task,
 )
@@ -240,6 +240,8 @@ class PipelineWorker:
                     # Auto-approval check
                     if should_auto_approve(run.approval_mode, task.stage_name) or self._should_marketplace_auto_approve(run, task):
                         auto_advance = True
+                        if task.stage_name == "storyboard_image_generation" and self._has_pending_storyboard_assets(task):
+                            auto_advance = False
                         if task.stage_name == "visual_quality_assessment" and run.approval_mode == "full_auto":
                             auto_advance = self._full_auto_visual_qa_regen(db, run, task)
                         if auto_advance:
@@ -277,23 +279,33 @@ class PipelineWorker:
             )
         return False
 
+    def _has_pending_storyboard_assets(self, task: StageTask) -> bool:
+        frames = (task.output_payload or {}).get("frames") or []
+        for frame in frames:
+            if not isinstance(frame, dict):
+                continue
+            status = str(frame.get("generation_status") or "").lower()
+            if frame.get("external_task_id") and status in {"", "submitted", "queued", "pending", "processing", "running"}:
+                return True
+        return False
+
     def _poll_all_video_assets(self) -> None:
         db = SessionLocal()
         try:
             assets = db.scalars(
-                select(VariantAsset).where(VariantAsset.asset_type == "video")
+                select(VariantAsset).where(VariantAsset.asset_type.in_(["video", "storyboard_frame"]))
             ).all()
 
             pending_run_ids: set[str] = set()
             for asset in assets:
                 payload = asset.payload or {}
                 status = str(payload.get("generation_status", "")).lower()
-                if status in {"submitted", "queued", "pending", "processing", "running"}:
+                if payload.get("external_task_id") and status in {"", "submitted", "queued", "pending", "processing", "running"}:
                     pending_run_ids.add(asset.run_id)
 
             for run_id in pending_run_ids:
                 try:
-                    refresh_video_task_assets(db, run_id)
+                    refresh_async_assets(db, run_id)
                 except Exception:
                     logger.exception("Video poll failed for run %s", run_id)
 

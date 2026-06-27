@@ -581,7 +581,7 @@ class AgentsRuntime:
     def _video_generation_spec(self, creative_specs: dict | None) -> dict:
         creative_specs = creative_specs or {}
         spec: dict[str, object] = {
-            "size": str(creative_specs.get("video_size") or creative_specs.get("image_size") or "9:16"),
+            "size": self._normalize_media_size(str(creative_specs.get("video_size") or creative_specs.get("image_size") or "9:16")),
             "resolution": str(creative_specs.get("resolution") or "720p"),
             "duration": int(creative_specs.get("video_duration_seconds") or 8),
         }
@@ -600,6 +600,16 @@ class AgentsRuntime:
             if key in creative_specs and creative_specs.get(key) not in (None, "", []):
                 spec[key] = creative_specs.get(key)
         return spec
+
+    def _normalize_media_size(self, size: str) -> str:
+        normalized = (size or "").strip().lower()
+        return {
+            "720x1280": "9:16",
+            "1080x1920": "9:16",
+            "1280x720": "16:9",
+            "1920x1080": "16:9",
+            "1024x1024": "1:1",
+        }.get(normalized, size or "9:16")
 
     def _max_video_segment_seconds(self, creative_specs: dict | None) -> int:
         try:
@@ -1729,6 +1739,7 @@ class AgentsRuntime:
         creative_specs: dict | None = None,
         runtime_config: dict | None = None,
         historical_references: list[dict] | None = None,
+        intake: ProductIntake | None = None,
     ) -> StageOutput:
         creative_specs = creative_specs or {}
         generation_spec = {**(script_pack.generation_spec or {}), **self._video_generation_spec(creative_specs)}
@@ -1741,7 +1752,8 @@ class AgentsRuntime:
             data_url = ref.get("uri")
             if isinstance(data_url, str) and data_url:
                 historical_frame_refs.append(data_url)
-        image_size = str(generation_spec.get("size") or creative_specs.get("video_size") or creative_specs.get("image_size") or "9:16")
+        image_size = self._normalize_media_size(str(generation_spec.get("size") or creative_specs.get("video_size") or creative_specs.get("image_size") or "9:16"))
+        uploaded_refs = self._reference_image_inputs(intake)
         runtime_extra = dict((runtime_config or {}).get("extra") or {})
         candidate_count = normalize_storyboard_candidate_count(
             creative_specs.get("storyboard_candidate_count", runtime_extra.get("storyboard_candidate_count"))
@@ -1814,6 +1826,9 @@ class AgentsRuntime:
                     candidate_error = error_text
                     candidate_provider_errors: list[dict] = []
                     candidate_uri = ""
+                    task_id = None
+                    status = None
+                    raw_response: dict = {}
                     try:
                         image_result, candidate_provider, candidate_model = self._generate_image(
                             fallback_provider=provider,
@@ -1821,21 +1836,36 @@ class AgentsRuntime:
                             prompt=candidate_prompt,
                             size=image_size,
                             runtime_config=runtime_config,
-                            reference_image_urls=historical_frame_refs if historical_frame_refs else None,
+                            reference_image_urls=(uploaded_refs + historical_frame_refs)[:4] or None,
                         )
                         estimated_cost += image_result.estimated_cost
                         selected = image_result.images[0] if image_result.images else None
-                        if selected:
+                        task_id = getattr(image_result, "task_id", None) or (getattr(selected, "task_id", None) if selected else None)
+                        status = getattr(image_result, "status", None) or (getattr(selected, "status", None) if selected else None)
+                        raw_response = getattr(image_result, "raw_response", None) or (getattr(selected, "raw_response", None) if selected else {}) or {}
+                        if selected and (selected.url or selected.b64_json):
                             frame_bytes, candidate_source = self._materialize_generated_image(selected)
+                            candidate_uri = self.media.write_binary_artifact(
+                                run_id,
+                                f"{script.variant_id}_storyboard_{idx + 1}_cand_{candidate_idx + 1}{asset_suffix}.png",
+                                frame_bytes,
+                            )
+                            if candidate_source != "placeholder":
+                                candidate_error = None
+                        elif task_id:
+                            candidate_source = "external_task_pending"
+                            candidate_uri = self.media.reserve_binary_artifact(
+                                run_id,
+                                f"{script.variant_id}_storyboard_{idx + 1}_cand_{candidate_idx + 1}{asset_suffix}.png",
+                            )
+                            candidate_error = None
                         else:
                             frame_bytes, candidate_source = decode_placeholder_png(), "placeholder"
-                        candidate_uri = self.media.write_binary_artifact(
-                            run_id,
-                            f"{script.variant_id}_storyboard_{idx + 1}_cand_{candidate_idx + 1}{asset_suffix}.png",
-                            frame_bytes,
-                        )
-                        if candidate_source != "placeholder":
-                            candidate_error = None
+                            candidate_uri = self.media.write_binary_artifact(
+                                run_id,
+                                f"{script.variant_id}_storyboard_{idx + 1}_cand_{candidate_idx + 1}{asset_suffix}.png",
+                                frame_bytes,
+                            )
                     except Exception as exc:
                         candidate_error = str(exc)
                         candidate_provider_errors = getattr(exc, "errors", []) or []
@@ -1855,6 +1885,9 @@ class AgentsRuntime:
                         "image_model": candidate_model,
                         "error": candidate_error,
                         "provider_errors": candidate_provider_errors,
+                        "external_task_id": task_id,
+                        "generation_status": status,
+                        "raw_response": raw_response,
                     }
                     candidate_payload["visual_qa"] = self._local_media_qa(
                         asset_type="storyboard_frame",

@@ -192,6 +192,9 @@ class GeneratedImage:
     b64_json: str | None = None
     revised_prompt: str | None = None
     mime_type: str = "image/png"
+    task_id: str | None = None
+    status: str | None = None
+    raw_response: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -212,6 +215,9 @@ class ImageGenResult:
     model_used: str
     images: list[GeneratedImage] = field(default_factory=list)
     estimated_cost: float = 0.0
+    task_id: str | None = None
+    status: str | None = None
+    raw_response: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -316,6 +322,17 @@ class LlmProvider:
     ) -> VideoGenResult:
         raise NotImplementedError
 
+    def poll_image_task(
+        self,
+        *,
+        task_id: str,
+        model: str,
+        api_base_url: str | None = None,
+        api_key: str | None = None,
+        extra: dict | None = None,
+    ) -> ImageGenResult:
+        raise NotImplementedError
+
     def complete(
         self,
         prompt: str,
@@ -416,6 +433,22 @@ class StubProvider(LlmProvider):
         return VideoGenResult(
             model_used=model,
             videos=[GeneratedVideo(task_id=task_id, status="unknown")],
+            task_id=task_id,
+            status="unknown",
+        )
+
+    def poll_image_task(
+        self,
+        *,
+        task_id: str,
+        model: str,
+        api_base_url: str | None = None,
+        api_key: str | None = None,
+        extra: dict | None = None,
+    ) -> ImageGenResult:
+        return ImageGenResult(
+            model_used=model,
+            images=[GeneratedImage(task_id=task_id, status="unknown")],
             task_id=task_id,
             status="unknown",
         )
@@ -795,15 +828,27 @@ class OpenAICompatibleProvider(LlmProvider):
             timeout_seconds=float((extra or {}).get("request_timeout_seconds") or 90),
         )
         task_id = self._extract_task_id(data)
+        status = self._extract_task_status(data)
         if task_id:
-            polled = self._poll_task_result(base_url=api_base_url, task_id=task_id, headers=self._headers(api_key))
-            if isinstance(polled, dict) and polled:
-                task_data = polled.get("data")
-                if isinstance(task_data, dict):
-                    status = str(task_data.get("status") or "").lower()
-                    if status and status not in {"completed", "succeeded", "success"}:
-                        raise RuntimeError(f"image task not completed: status={status}")
-                data = polled
+            if not (extra or {}).get("submit_only"):
+                polled = self._poll_task_result(
+                    base_url=api_base_url,
+                    task_id=task_id,
+                    headers=self._headers(api_key),
+                    max_wait_seconds=int((extra or {}).get("image_poll_max_wait_seconds") or 45),
+                )
+                if isinstance(polled, dict) and polled:
+                    status = self._extract_task_status(polled) or status
+                    data = polled
+            else:
+                return ImageGenResult(
+                    model_used=str(data.get("model") or request.model),
+                    images=[GeneratedImage(task_id=task_id, status=status, raw_response=data)],
+                    estimated_cost=0.0,
+                    task_id=task_id,
+                    status=status,
+                    raw_response=data,
+                )
         rows = data.get("data") or []
         if not isinstance(rows, list):
             rows = []
@@ -817,6 +862,9 @@ class OpenAICompatibleProvider(LlmProvider):
                     b64_json=row.get("b64_json"),
                     revised_prompt=row.get("revised_prompt"),
                     mime_type=row.get("mime_type") or "image/png",
+                    task_id=task_id or row.get("task_id"),
+                    status=status,
+                    raw_response=row,
                 )
             )
         if not images:
@@ -825,6 +873,9 @@ class OpenAICompatibleProvider(LlmProvider):
             model_used=str(data.get("model") or request.model),
             images=images,
             estimated_cost=0.0,
+            task_id=task_id,
+            status=status,
+            raw_response=data,
         )
 
     def generate_video(
@@ -966,6 +1017,53 @@ class OpenAICompatibleProvider(LlmProvider):
         return VideoGenResult(
             model_used=str(data.get("model") or model_name),
             videos=videos,
+            task_id=task_id,
+            status=status,
+            raw_response=data,
+        )
+
+    def poll_image_task(
+        self,
+        *,
+        task_id: str,
+        model: str,
+        api_base_url: str | None = None,
+        api_key: str | None = None,
+        extra: dict | None = None,
+    ) -> ImageGenResult:
+        if not api_base_url or not api_key:
+            return self._stub.poll_image_task(task_id=task_id, model=model, api_base_url=api_base_url, api_key=api_key, extra=extra)
+        data = self._poll_task_result(
+            base_url=api_base_url,
+            task_id=task_id,
+            headers=self._headers(api_key),
+            max_wait_seconds=0,
+            first_poll_delay_seconds=0,
+        )
+        status = self._extract_task_status(data)
+        rows = data.get("data") or []
+        if not isinstance(rows, list):
+            rows = []
+        images: list[GeneratedImage] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            images.append(
+                GeneratedImage(
+                    url=_first_url(row.get("url")),
+                    b64_json=row.get("b64_json"),
+                    revised_prompt=row.get("revised_prompt"),
+                    mime_type=row.get("mime_type") or "image/png",
+                    task_id=task_id,
+                    status=status,
+                    raw_response=row,
+                )
+            )
+        if not images:
+            images.append(GeneratedImage(task_id=task_id, status=status, raw_response=data))
+        return ImageGenResult(
+            model_used=str(data.get("model") or model),
+            images=images,
             task_id=task_id,
             status=status,
             raw_response=data,

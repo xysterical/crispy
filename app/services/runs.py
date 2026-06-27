@@ -1539,9 +1539,14 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                     "resolved_api": storyboard_resolved,
                 }
             storyboard_runtime = resolve_agent_runtime(storyboard_resolved)
+            storyboard_image_runtime = dict(storyboard_runtime.get("image") or {})
+            storyboard_image_runtime["extra"] = {
+                **(storyboard_image_runtime.get("extra") or {}),
+                "submit_only": True,
+            }
             storyboard_runtime_config = {
                 **runtime_config,
-                "image": storyboard_runtime.get("image") or {},
+                "image": storyboard_image_runtime,
             }
             campaign = db.get(Campaign, run.campaign_id)
             reference_bundle = build_reference_bundle(
@@ -1559,6 +1564,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 model=model_name,
                 runtime_config=storyboard_runtime_config,
                 historical_references=reference_bundle["frames"] or reference_bundle["images"],
+                intake=ProductIntake.model_validate(task.input_payload["intake"]) if task.input_payload.get("intake") else None,
             )
         elif task.stage_name == "video_generation":
             scripts = VideoScriptPack.model_validate(task.input_payload["video_scripts"])
@@ -2287,8 +2293,122 @@ def refresh_video_task_assets(db: Session, run_id: str) -> dict:
     return {"refreshed": refreshed, "completed": completed, "summary": _variant_summary(db, run_id)}
 
 
+def refresh_storyboard_image_task_assets(db: Session, run_id: str) -> dict:
+    run = get_run(db, run_id)
+    config = resolve_agent_config(
+        db,
+        agent_name="storyboard_agent",
+        run_provider=run.model_provider,
+        run_model=run.model_name,
+    )
+    if not has_resolved_image_config(config):
+        fallback = resolve_agent_config(
+            db,
+            agent_name="copy_image_agent",
+            run_provider=run.model_provider,
+            run_model=run.model_name,
+        )
+        config = with_fallback_image_config(config, fallback, source="copy_image_agent")
+    runtime_config = resolve_agent_runtime(config)
+    image_runtime = runtime_config.get("image") or {}
+    provider_name = image_runtime.get("provider_name") or config.get("image_provider_name") or config.get("provider_name")
+    model_name = image_runtime.get("model_name") or config.get("image_model_name") or config.get("model_name")
+    provider = runtime.providers.get(provider_name)
+    refreshed = 0
+    completed = 0
+    task = db.scalar(
+        select(StageTask).where(
+            StageTask.run_id == run_id,
+            StageTask.stage_name == "storyboard_image_generation",
+        )
+    )
+    frames_by_key: dict[tuple[str, str], dict] = {}
+    if task and task.output_payload:
+        for frame in task.output_payload.get("frames", []) or []:
+            if isinstance(frame, dict):
+                frames_by_key[(str(frame.get("variant_id") or ""), str(frame.get("frame_id") or ""))] = frame
+
+    assets = db.scalars(
+        select(VariantAsset).where(
+            VariantAsset.run_id == run_id,
+            VariantAsset.asset_type == "storyboard_frame",
+        )
+    ).all()
+    for asset in assets:
+        payload = dict(asset.payload or {})
+        task_id = payload.get("external_task_id")
+        status = str(payload.get("generation_status") or "").lower()
+        if not task_id or status in {"completed", "succeeded", "success"}:
+            continue
+        result = provider.poll_image_task(
+            task_id=task_id,
+            model=model_name,
+            api_base_url=image_runtime.get("api_base_url") or runtime_config.get("api_base_url"),
+            api_key=image_runtime.get("api_key") or runtime_config.get("api_key"),
+            extra=image_runtime.get("extra") or runtime_config.get("extra"),
+        )
+        selected = result.images[0] if result.images else None
+        refreshed += 1
+        payload["generation_status"] = result.status or (selected.status if selected else None) or payload.get("generation_status")
+        payload["raw_response"] = result.raw_response or (selected.raw_response if selected else {}) or payload.get("raw_response") or {}
+        if selected and (selected.url or selected.b64_json):
+            image_bytes, source = runtime._materialize_generated_image(selected)
+            if image_bytes:
+                filename = Path(asset.uri or payload.get("image_uri") or f"{payload.get('frame_id') or asset.id}.png").name
+                uri = runtime.media.write_binary_artifact(run_id, filename, image_bytes)
+                payload["image_uri"] = uri
+                payload["source"] = source
+                payload["generation_status"] = "completed"
+                payload["visual_qa"] = runtime._local_media_qa(
+                    asset_type="storyboard_frame",
+                    uri=uri,
+                    payload=payload,
+                )
+                asset.uri = uri
+                completed += 1
+        failure_category, error_message = _generated_asset_failure(payload, payload.get("image_uri"))
+        asset.payload = payload
+        asset.failure_category = failure_category
+        asset.error_message = error_message
+        key = (str(payload.get("variant_id") or ""), str(payload.get("frame_id") or ""))
+        if key in frames_by_key:
+            frames_by_key[key].update(payload)
+        artifact = db.scalar(
+            select(Artifact).where(
+                Artifact.run_id == run_id,
+                Artifact.artifact_type == "storyboard_frame",
+                Artifact.uri == (asset.uri or payload.get("image_uri")),
+            )
+        )
+        if artifact:
+            artifact.payload = payload
+            artifact.uri = payload.get("image_uri") or artifact.uri
+    if task and task.output_payload and completed:
+        task.output_payload = {**task.output_payload, "frames": list(frames_by_key.values())}
+        frames = task.output_payload.get("frames") or []
+        pending = [
+            frame for frame in frames
+            if isinstance(frame, dict)
+            and frame.get("external_task_id")
+            and str(frame.get("generation_status") or "").lower() in {"", "submitted", "queued", "pending", "processing", "running"}
+        ]
+        failed = [frame for frame in frames if isinstance(frame, dict) and frame.get("error")]
+        if run.approval_mode == "full_auto" and task.status == TaskStatus.WAITING_REVIEW.value and not pending and not failed:
+            auto_approve_stage(db, run.id, task.stage_name)
+    db.flush()
+    return {"refreshed": refreshed, "completed": completed, "summary": _variant_summary(db, run_id)}
+
+
 def refresh_async_assets(db: Session, run_id: str) -> dict:
-    return refresh_video_task_assets(db, run_id)
+    images = refresh_storyboard_image_task_assets(db, run_id)
+    videos = refresh_video_task_assets(db, run_id)
+    return {
+        "refreshed": images["refreshed"] + videos["refreshed"],
+        "completed": images["completed"] + videos["completed"],
+        "images": images,
+        "videos": videos,
+        "summary": videos.get("summary") or images.get("summary"),
+    }
 
 
 def _default_regeneration_stage(run: PipelineRun) -> str:
