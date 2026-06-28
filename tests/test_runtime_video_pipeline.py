@@ -1223,6 +1223,23 @@ def test_video_scripting_llm_success_path_populates_tiktok_payload():
     assert any("CTA intensity" in note for note in tiktok["compliance_notes"])
 
 
+def test_tiktok_long_video_keeps_cta_to_final_seconds():
+    runtime = AgentsRuntime()
+
+    payload = runtime._build_tiktok_payload(
+        product_name="olive satin dress",
+        primary_value="one dress, three moods",
+        cta="Shop the look",
+        tiktok_style="direct_response_ad",
+        video_duration=35,
+    )
+
+    cta_timing = payload["shot_timing"][-1]
+    assert cta_timing["intent"] == "cta"
+    assert cta_timing["end"] == 35
+    assert cta_timing["end"] - cta_timing["start"] <= 4
+
+
 # ---------------------------------------------------------------------------
 # run_storyboard_image_generation LLM integration tests
 # ---------------------------------------------------------------------------

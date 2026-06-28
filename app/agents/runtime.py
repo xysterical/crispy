@@ -1687,6 +1687,8 @@ class AgentsRuntime:
             cta_intensity = "soft"
         else:
             cta_intensity = "medium"
+        cta_duration = min(4.0, max(2.0, video_duration * 0.15))
+        cta_start = max(2.0, video_duration - cta_duration)
         return {
             "style": tiktok_style,
             "opening_hook": opening_hook,
@@ -1710,13 +1712,13 @@ class AgentsRuntime:
                 },
                 {
                     "start": 2,
-                    "end": 8,
+                    "end": cta_start,
                     "visual": "close product demo with the key proof point visible",
                     "text_overlay": f"Proof: {primary_value}",
                     "intent": "proof",
                 },
                 {
-                    "start": 8,
+                    "start": cta_start,
                     "end": video_duration,
                     "visual": "product-forward end frame with clear next step",
                     "text_overlay": cta,
