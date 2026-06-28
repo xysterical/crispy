@@ -20,6 +20,17 @@ CRISPY is a semi-automated multi-agent pipeline for ad creative generation — c
 
 **Data source switching** — Switch between SQLite databases at runtime. Useful for separating test data from production data.
 
+## Showcase
+
+Give a random dog leash, you can get:
+![Dog leash video](https://github.com/user-attachments/assets/77af36e8-a47e-405d-b9a7-b1b7ee39fe87)
+
+
+Input a random robe I found on Internet, the results:
+|Picture|Video 1|VIdeo 2| Video 3|
+|-|-|-|-|
+|![robe](other/robe.jpg)|![robe1](https://github.com/user-attachments/assets/3066a679-ddc8-47d9-9de1-df0d68a4c304)|![robe2](https://github.com/user-attachments/assets/bfe00d55-6f9c-4dd6-8e7b-577474633a2f)|![robe3](https://github.com/user-attachments/assets/4cbe01d5-6e0c-4a77-9b88-a94ab13ba55b)|
+
 ## Quick Start
 
 ### 1. Install
