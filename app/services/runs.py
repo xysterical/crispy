@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 import json
 import logging
@@ -2245,6 +2246,28 @@ def _pending_storyboard_frame(frame: dict) -> bool:
     return False
 
 
+def _sync_storyboard_frame_payload(frame: dict, payload: dict) -> None:
+    frame_updates = dict(payload)
+    frame_updates.pop("candidate_frames", None)
+    frame.update(frame_updates)
+    candidates = frame.get("candidate_frames")
+    if not isinstance(candidates, list):
+        return
+    candidate_updates = dict(frame_updates)
+    payload_task_id = payload.get("external_task_id")
+    payload_candidate_index = payload.get("candidate_index")
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        same_task = payload_task_id and candidate.get("external_task_id") == payload_task_id
+        same_candidate = (
+            payload_candidate_index is not None
+            and candidate.get("candidate_index") == payload_candidate_index
+        )
+        if same_task or same_candidate:
+            candidate.update(candidate_updates)
+
+
 def _provider_reference_url(value: object) -> str | None:
     url = str(value or "").strip()
     return url if url.startswith(("http://", "https://", "asset://")) else None
@@ -2520,7 +2543,7 @@ def refresh_storyboard_image_task_assets(db: Session, run_id: str) -> dict:
     if task and task.output_payload:
         for frame in task.output_payload.get("frames", []) or []:
             if isinstance(frame, dict):
-                frames_by_key[(str(frame.get("variant_id") or ""), str(frame.get("frame_id") or ""))] = frame
+                frames_by_key[(str(frame.get("variant_id") or ""), str(frame.get("frame_id") or ""))] = deepcopy(frame)
 
     assets = db.scalars(
         select(VariantAsset).where(
@@ -2532,41 +2555,47 @@ def refresh_storyboard_image_task_assets(db: Session, run_id: str) -> dict:
         payload = dict(asset.payload or {})
         task_id = payload.get("external_task_id")
         status = str(payload.get("generation_status") or "").lower()
-        if not task_id or status in {"completed", "succeeded", "success"}:
+        if not task_id:
             continue
-        result = provider.poll_image_task(
-            task_id=task_id,
-            model=model_name,
-            api_base_url=image_runtime.get("api_base_url") or runtime_config.get("api_base_url"),
-            api_key=image_runtime.get("api_key") or runtime_config.get("api_key"),
-            extra=image_runtime.get("extra") or runtime_config.get("extra"),
-        )
-        selected = result.images[0] if result.images else None
-        refreshed += 1
-        payload["generation_status"] = result.status or (selected.status if selected else None) or payload.get("generation_status")
-        payload["raw_response"] = result.raw_response or (selected.raw_response if selected else {}) or payload.get("raw_response") or {}
-        if selected and (selected.url or selected.b64_json):
-            image_bytes, source = runtime._materialize_generated_image(selected)
-            if image_bytes:
-                filename = Path(asset.uri or payload.get("image_uri") or f"{payload.get('frame_id') or asset.id}.png").name
-                uri = runtime.media.write_binary_artifact(run_id, filename, image_bytes)
-                payload["image_uri"] = uri
-                payload["source"] = source
-                payload["generation_status"] = "completed"
-                payload["visual_qa"] = runtime._local_media_qa(
-                    asset_type="storyboard_frame",
-                    uri=uri,
-                    payload=payload,
-                )
-                asset.uri = uri
-                completed += 1
+        if status in {"completed", "succeeded", "success"}:
+            payload["generation_status"] = "completed"
+        elif payload.get("image_uri") and not payload.get("error"):
+            payload["generation_status"] = "completed"
+            completed += 1
+        else:
+            result = provider.poll_image_task(
+                task_id=task_id,
+                model=model_name,
+                api_base_url=image_runtime.get("api_base_url") or runtime_config.get("api_base_url"),
+                api_key=image_runtime.get("api_key") or runtime_config.get("api_key"),
+                extra=image_runtime.get("extra") or runtime_config.get("extra"),
+            )
+            selected = result.images[0] if result.images else None
+            refreshed += 1
+            payload["generation_status"] = result.status or (selected.status if selected else None) or payload.get("generation_status")
+            payload["raw_response"] = result.raw_response or (selected.raw_response if selected else {}) or payload.get("raw_response") or {}
+            if selected and (selected.url or selected.b64_json):
+                image_bytes, source = runtime._materialize_generated_image(selected)
+                if image_bytes:
+                    filename = Path(asset.uri or payload.get("image_uri") or f"{payload.get('frame_id') or asset.id}.png").name
+                    uri = runtime.media.write_binary_artifact(run_id, filename, image_bytes)
+                    payload["image_uri"] = uri
+                    payload["source"] = source
+                    payload["generation_status"] = "completed"
+                    payload["visual_qa"] = runtime._local_media_qa(
+                        asset_type="storyboard_frame",
+                        uri=uri,
+                        payload=payload,
+                    )
+                    asset.uri = uri
+                    completed += 1
         failure_category, error_message = _generated_asset_failure(payload, payload.get("image_uri"))
         asset.payload = payload
         asset.failure_category = failure_category
         asset.error_message = error_message
         key = (str(payload.get("variant_id") or ""), str(payload.get("frame_id") or ""))
         if key in frames_by_key:
-            frames_by_key[key].update(payload)
+            _sync_storyboard_frame_payload(frames_by_key[key], payload)
         artifact = db.scalar(
             select(Artifact).where(
                 Artifact.run_id == run_id,
@@ -2577,7 +2606,7 @@ def refresh_storyboard_image_task_assets(db: Session, run_id: str) -> dict:
         if artifact:
             artifact.payload = payload
             artifact.uri = payload.get("image_uri") or artifact.uri
-    if task and task.output_payload and completed:
+    if task and task.output_payload:
         task.output_payload = {**task.output_payload, "frames": list(frames_by_key.values())}
         frames = task.output_payload.get("frames") or []
         pending = [

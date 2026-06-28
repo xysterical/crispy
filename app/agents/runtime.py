@@ -356,6 +356,38 @@ class AgentsRuntime:
                     return url
         return None
 
+    def _generated_image_url_from_raw(self, *payloads: dict | None) -> str | None:
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            for key in ("result_url", "image_url", "url"):
+                url = self._provider_reference_url(payload.get(key))
+                if url:
+                    return url
+            data = payload.get("data")
+            if isinstance(data, list):
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    url = self._provider_reference_url(item.get("url") or item.get("image_url"))
+                    if url:
+                        return url
+        return None
+
+    def _storyboard_frame_reference_url(self, frame: dict) -> str | None:
+        url = self._generated_image_url_from_raw(frame, frame.get("raw_response") if isinstance(frame, dict) else None)
+        if url:
+            return url
+        candidates = frame.get("candidate_frames") if isinstance(frame, dict) else None
+        if isinstance(candidates, list):
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                url = self._generated_image_url_from_raw(candidate, candidate.get("raw_response"))
+                if url:
+                    return url
+        return None
+
     def _local_video_to_data_url(self, path_str: str, *, max_bytes: int = 20 * 1024 * 1024) -> str | None:
         path = Path(path_str)
         if not path.exists() or not path.is_file():
@@ -2255,6 +2287,10 @@ class AgentsRuntime:
         if storyboard_frames:
             frame_urls = []
             for frame in storyboard_frames:
+                provider_url = self._storyboard_frame_reference_url(frame)
+                if provider_url:
+                    frame_urls.append(provider_url)
+                    continue
                 uri = frame.get("image_uri")
                 if not uri:
                     continue
@@ -2269,14 +2305,20 @@ class AgentsRuntime:
         resolution = str(generation_spec.get("resolution") or creative_specs.get("resolution") or "720p")
         duration_seconds = int(generation_spec.get("duration") or creative_specs.get("video_duration_seconds") or 8)
         prompt = f"Generate videos from script pack: {script_pack.model_dump()}"
-        response_text, text_model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        try:
+            response_text, text_model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        except Exception:
+            response_text = ""
+            text_model_used = f"{model}:fallback_to_template"
+            estimated_cost = 0.0
         llm_video_prompts: dict[str, dict] = {}
         try:
             parsed = self._parse_llm_json(response_text, schema_key="video_prompts")
             for prompt_data in parsed["video_prompts"]:
                 llm_video_prompts[prompt_data["variant_id"]] = prompt_data
         except (ValueError, KeyError, TypeError):
-            text_model_used = text_model_used + ":fallback_to_template"
+            if not text_model_used.endswith(":fallback_to_template"):
+                text_model_used = text_model_used + ":fallback_to_template"
         videos: list[VideoAsset] = []
         artifacts: list[dict] = []
         video_models_used: set[str] = set()

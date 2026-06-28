@@ -1603,6 +1603,45 @@ def test_video_generation_llm_parse_failure_falls_back_to_template():
     assert "travel toiletry bag" in videos[0]["prompt"].lower()
 
 
+def test_video_generation_continues_when_prompt_llm_fails():
+    runtime = AgentsRuntime()
+
+    def fail_chat(*args, **kwargs):
+        raise RuntimeError("text model unavailable")
+
+    runtime._chat_complete = fail_chat
+    fake_provider = _FakeVideoProvider()
+    runtime.providers = _FakeRegistry(fake_provider)
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="Hook text",
+                script="Script body.",
+                shot_list=["Shot 1", "Shot 2"],
+            )
+        ],
+        product_context={"product_name": "test product", "audience": "testers"},
+        generation_spec={"size": "16:9", "resolution": "720p", "duration": 5},
+    )
+
+    output = runtime.run_video_generation(
+        run_id="test-video-gen-text-fallback",
+        script_pack=script_pack,
+        storyboard_frames=None,
+        creative_specs={},
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        runtime_config={"video": {"provider_name": "apimart", "model_name": "doubao-seedance-2.0"}},
+    )
+
+    assert fake_provider.last_request is not None
+    assert "text=deepseek-v4-pro:fallback_to_template" in output.model_used
+    assert "video=doubao-seedance-2.0" in output.model_used
+    assert output.payload["videos"][0]["generation_status"] == "submitted"
+
+
 def test_video_generation_storyboard_frames_inject_image_urls():
     """storyboard_frames image_uri values are converted to data URLs and injected into generation_spec."""
     import base64
@@ -1660,6 +1699,47 @@ def test_video_generation_storyboard_frames_inject_image_urls():
         assert len(decoded) > 0
     finally:
         os.unlink(tmp_path)
+
+
+def test_video_generation_storyboard_frames_prefer_provider_urls():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    fake_provider = _FakeVideoProvider()
+    runtime.providers = _FakeRegistry(fake_provider)
+
+    storyboard_frames = [
+        {
+            "frame_id": "V1_F1",
+            "variant_id": "V1",
+            "image_uri": "/nonexistent/local-copy.png",
+            "raw_response": {"data": [{"url": "https://getapib.org/tokens/storyboard-frame.png"}]},
+        },
+    ]
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="Hook text",
+                script="Script body.",
+                shot_list=["Shot 1", "Shot 2"],
+            )
+        ],
+        product_context={"product_name": "test product", "audience": "testers"},
+        generation_spec={"size": "16:9", "resolution": "720p", "duration": 5},
+    )
+
+    output = runtime.run_video_generation(
+        run_id="test-video-gen-storyboard-provider-url",
+        script_pack=script_pack,
+        storyboard_frames=storyboard_frames,
+        creative_specs={},
+        provider="apimart",
+        model="doubao-seedance-2.0",
+    )
+
+    video_payload = output.payload["videos"][0]
+    assert video_payload["generation_spec"]["image_urls"] == ["https://getapib.org/tokens/storyboard-frame.png"]
 
 
 def test_video_generation_storyboard_frames_none_unchanged():
