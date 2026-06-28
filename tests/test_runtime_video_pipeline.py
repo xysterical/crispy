@@ -162,6 +162,11 @@ def test_video_scripting_splits_long_duration_into_segments():
     segments = output.payload["scripts"][0]["segments"]
     assert [segment["duration_seconds"] for segment in segments] == [12.0, 12.0, 11.0]
     assert all(segment["duration_seconds"] <= 15 for segment in segments)
+    assert [segment["shot_intent"] for segment in segments] == ["thumb_stop", "product_proof", "cta_packshot"]
+    assert "one continuous ad" in segments[1]["motion_prompt"]
+    assert "do not restart the hook" in segments[1]["motion_prompt"]
+    assert "start_from_previous_tail_frame" in segments[1]["continuity_constraints"]
+    assert "end_on_bridgeable_action_for_next_segment" in segments[0]["continuity_constraints"]
     assert segments[-1]["transition_to_next"] == "none"
 
 

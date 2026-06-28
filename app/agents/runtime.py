@@ -766,6 +766,67 @@ class AgentsRuntime:
             remaining -= duration
         return durations
 
+    def _long_video_segment_role(self, idx: int, count: int) -> dict[str, str]:
+        if idx == 0:
+            return {
+                "intent": "thumb_stop",
+                "role": "opening hook",
+                "instruction": "open the one continuous story; do not resolve the ad yet",
+            }
+        if idx == count - 1:
+            return {
+                "intent": "cta_packshot",
+                "role": "desire and CTA",
+                "instruction": "pay off the prior proof and finish with one concise CTA",
+            }
+        return {
+            "intent": "product_proof",
+            "role": "proof escalation",
+            "instruction": "continue from the prior moment with new proof; do not restart the hook",
+        }
+
+    def _sequence_long_video_segments(self, segments: list[VideoSegmentPlan], product_name: str) -> list[VideoSegmentPlan]:
+        if len(segments) <= 1:
+            return segments
+        sequenced: list[VideoSegmentPlan] = []
+        for idx, segment in enumerate(segments):
+            role = self._long_video_segment_role(idx, len(segments))
+            constraints = list(segment.continuity_constraints or [])
+            for item in [
+                "single_continuous_video_no_restart",
+                "preserve_same_model_product_and_mood",
+                f"keep {product_name} visually consistent",
+            ]:
+                if item not in constraints:
+                    constraints.append(item)
+            if idx > 0 and "start_from_previous_tail_frame" not in constraints:
+                constraints.append("start_from_previous_tail_frame")
+            if idx < len(segments) - 1 and "end_on_bridgeable_action_for_next_segment" not in constraints:
+                constraints.append("end_on_bridgeable_action_for_next_segment")
+            original_motion = segment.motion_prompt or segment.first_frame_prompt or segment.scene
+            segment.scene = f"{role['role']}: {segment.scene or role['intent']}"
+            segment.shot_intent = role["intent"]
+            segment.motion_prompt = (
+                f"Segment {idx + 1}/{len(segments)} of one continuous ad: {role['instruction']}. "
+                f"{original_motion}"
+            )
+            if idx > 0:
+                segment.first_frame_prompt = (
+                    "Continue directly from the previous segment tail frame; do not introduce a new TikTok opening. "
+                    f"{segment.first_frame_prompt}"
+                )
+            if idx < len(segments) - 1:
+                segment.last_frame_prompt = (
+                    "End with a bridgeable action or camera move that the next segment can continue. "
+                    f"{segment.last_frame_prompt}"
+                )
+                segment.transition_to_next = "match_cut"
+            else:
+                segment.transition_to_next = "none"
+            segment.continuity_constraints = constraints
+            sequenced.append(segment)
+        return sequenced
+
     def _build_video_segments(
         self,
         *,
@@ -808,7 +869,7 @@ class AgentsRuntime:
                     continuity_constraints=shot.product_continuity_constraints,
                 )
             )
-        return segments
+        return self._sequence_long_video_segments(segments, product_name)
 
     def _video_prompt_quality_block(self, product_context: dict | None) -> str:
         product_name = str((product_context or {}).get("product_name") or "the product")
@@ -1890,6 +1951,8 @@ class AgentsRuntime:
                         creative_specs=creative_specs,
                         product_name=product_name,
                     )
+                else:
+                    segments = self._sequence_long_video_segments(segments, product_name)
                 scripts.append(
                     VideoScriptItem(
                         variant_id=entry.get("variant_id", f"V{len(scripts)+1}"),
