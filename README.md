@@ -1,6 +1,6 @@
 # Crispy
 
-![Crispy](other/image_task_01KQXWA2114JC5QJ3N92E8A4Z5_0.png)
+![Crispy](other/hero.png)
 
 CRISPY is a semi-automated multi-agent pipeline for ad creative generation — copy, image, and video — with a self-improving feedback loop. Built for e-commerce teams who run paid ads across Meta, TikTok, and Shopify.
 
@@ -35,6 +35,12 @@ Tested with a random robe sourced from the internet; the corresponding multi-vie
 | :---: | :---: | :---: | :---: |
 | ![robe](other/robe.jpg) | <video src="https://github.com/user-attachments/assets/3066a679-ddc8-47d9-9de1-df0d68a4c304" width="100%" controls></video> | <video src="https://github.com/user-attachments/assets/bfe00d55-6f9c-4dd6-8e7b-577474633a2f" width="100%" controls></video> | <video src="https://github.com/user-attachments/assets/4cbe01d5-6e0c-4a77-9b88-a94ab13ba55b" width="100%" controls></video> |
 
+#### 3. White Dress (Long Video)
+Below is a 30-second continuous showcase generated from a single white dress image. By ensuring geometric and lighting consistency between the boundary frames of consecutive chunks, the model achieves a long-horizon temporal extension:
+
+| Input Image | Video View |
+| :---: | :---: |
+|![white dress](other/white_dress.jpg)|<video src="https://github.com/user-attachments/assets/6795d7e0-a493-464f-a92e-50db57628b8c" width="100%" controls></video>|
 ## Quick Start
 
 ### 1. Install
