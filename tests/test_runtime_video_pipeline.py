@@ -323,6 +323,9 @@ def test_video_generation_stitches_completed_segments(monkeypatch):
     assert all(request.return_last_frame is True for request in provider.requests)
     assert provider.requests[1].image_with_roles == [{"url": "https://example.com/last-1.png", "role": "first_frame"}]
     assert provider.requests[2].image_with_roles == [{"url": "https://example.com/last-2.png", "role": "first_frame"}]
+    assert "only opening hook" in provider.requests[0].prompt
+    assert "Continue the exact action from the supplied first_frame reference" in provider.requests[1].prompt
+    assert "do not restart with a new intro" in provider.requests[2].prompt
     assert video["source"] == "stitched_segments"
     assert video["duration_seconds"] == 35.0
     assert len(video["segments"]) == 3

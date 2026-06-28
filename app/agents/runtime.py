@@ -388,6 +388,13 @@ class AgentsRuntime:
                     return url
         return None
 
+    def _segment_bridge_instruction(self, segment_index: int, has_bridge_frame: bool) -> str:
+        if segment_index == 0:
+            return "Start the long-form ad once; this segment is the only opening hook."
+        if has_bridge_frame:
+            return "Continue the exact action from the supplied first_frame reference; do not restart with a new intro."
+        return "Continue the prior scene emotionally and visually; do not restart with a new intro."
+
     def _local_video_to_data_url(self, path_str: str, *, max_bytes: int = 20 * 1024 * 1024) -> str | None:
         path = Path(path_str)
         if not path.exists() or not path.is_file():
@@ -2424,6 +2431,7 @@ class AgentsRuntime:
                             segment_spec["image_with_roles"] = [{"url": bridge_url, "role": "first_frame"}]
                     segment_prompt = (
                         f"{video_prompt}\n\nSegment {segment.segment_id}: {segment.motion_prompt}. "
+                        f"Bridge rule: {self._segment_bridge_instruction(segment_index, bool(bridge_frame_uri))} "
                         f"First frame: {segment.first_frame_prompt}. Last frame target: {segment.last_frame_prompt}. "
                         f"Continuity constraints: {segment.continuity_constraints}. "
                         f"Transition to next: {segment.transition_to_next}."
