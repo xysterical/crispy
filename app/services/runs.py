@@ -2238,6 +2238,13 @@ def _pending_status(value: object) -> bool:
     return str(value or "").lower() in {"", "submitted", "queued", "pending", "processing", "running"}
 
 
+def _pending_storyboard_frame(frame: dict) -> bool:
+    for item in [frame, *((frame.get("candidate_frames") or []) if isinstance(frame.get("candidate_frames"), list) else [])]:
+        if isinstance(item, dict) and item.get("external_task_id") and _pending_status(item.get("generation_status")):
+            return True
+    return False
+
+
 def _provider_reference_url(value: object) -> str | None:
     url = str(value or "").strip()
     return url if url.startswith(("http://", "https://", "asset://")) else None
@@ -2568,8 +2575,7 @@ def refresh_storyboard_image_task_assets(db: Session, run_id: str) -> dict:
         pending = [
             frame for frame in frames
             if isinstance(frame, dict)
-            and frame.get("external_task_id")
-            and str(frame.get("generation_status") or "").lower() in {"", "submitted", "queued", "pending", "processing", "running"}
+            and _pending_storyboard_frame(frame)
         ]
         failed = [frame for frame in frames if isinstance(frame, dict) and frame.get("error")]
         if run.approval_mode == "full_auto" and task.status == TaskStatus.WAITING_REVIEW.value and not pending and not failed:

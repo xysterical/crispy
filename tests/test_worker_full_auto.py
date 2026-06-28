@@ -63,3 +63,21 @@ def test_full_auto_visual_qa_blocks_auto_approval_when_assets_are_pending():
     assert should_auto_approve is False
     assert task.status == TaskStatus.WAITING_REVIEW.value
     assert task.metadata_json["full_auto_visual_qa_pending_assets"] is True
+
+
+def test_storyboard_candidate_task_blocks_auto_approval():
+    worker = PipelineWorker()
+    task = SimpleNamespace(
+        output_payload={
+            "frames": [
+                {
+                    "frame_id": "V1_F1",
+                    "candidate_frames": [
+                        {"external_task_id": "image-task-1", "generation_status": "submitted"},
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert worker._has_pending_storyboard_assets(task) is True

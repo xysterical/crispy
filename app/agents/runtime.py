@@ -448,7 +448,10 @@ class AgentsRuntime:
         constraints: list[str],
     ) -> tuple[dict, dict, list[dict]]:
         product_name = intake.product_name or "the product"
-        brief = intake.manual_research_brief or str(intake.business_context.get("brief") or "")
+        brief = "\n".join(
+            item for item in [intake.manual_research_brief, str(intake.business_context.get("brief") or "")]
+            if item
+        )
         audience = self._normalize_text_list(
             intake.business_context.get("target_audience") or intake.business_context.get("audience") or []
         )
@@ -458,14 +461,23 @@ class AgentsRuntime:
             or [product_name]
         ))
         media_truth = intake.asset_media_summary or visual_identity.get("raw_media_summary") or brief
+        scene_hints = [
+            item.strip(" -*")
+            for item in re.split(r"[\n,;，；]+", f"{brief}\n{media_truth}")
+            if 8 <= len(item.strip(" -*")) <= 90
+            and any(word in item.lower() for word in ("scene", "setting", "bedroom", "cafe", "dinner", "office", "gallery", "wedding", "evening", "morning", "street"))
+        ][:4]
         duration = int(creative_specs.get("video_duration_seconds") or 8)
         max_segment = self._max_video_segment_seconds(creative_specs)
         segment_count = max(1, (duration + max_segment - 1) // max_segment)
+        proof_scene = scene_hints[0] if scene_hints else f"close view of {', '.join(preserve[:3])}"
+        lifestyle_scene = scene_hints[1] if len(scene_hints) > 1 else "move through varied but plausible scenes from the brief or product context"
+        cta_scene = scene_hints[2] if len(scene_hints) > 2 else "end on product-forward frame with a simple purchase cue"
         scene_arc = [
-            {"beat": "thumb_stop", "intent": "prove the product is worth watching", "scene_direction": f"open with {product_name} clearly visible in a real use context"},
-            {"beat": "product_truth", "intent": "lock visual identity", "scene_direction": f"close view of {', '.join(preserve[:3])}"},
-            {"beat": "lifestyle_proof", "intent": "show buyer transformation", "scene_direction": "move through varied but plausible scenes from the brief or product context"},
-            {"beat": "cta", "intent": "make the next action obvious", "scene_direction": "end on product-forward frame with a simple purchase cue"},
+            {"beat": "thumb_stop", "intent": "prove the product is worth watching", "scene_direction": f"open with {product_name} clearly visible in a specific lived-in setting"},
+            {"beat": "product_truth", "intent": "lock visual identity", "scene_direction": proof_scene},
+            {"beat": "lifestyle_proof", "intent": "show buyer transformation", "scene_direction": lifestyle_scene},
+            {"beat": "cta", "intent": "make the next action obvious", "scene_direction": cta_scene},
         ]
         creative_director_plan = {
             "hero_insight": f"{product_name} should be sold through a concrete lifestyle moment, not generic product beauty.",
@@ -473,6 +485,7 @@ class AgentsRuntime:
             "emotional_beats": ["curiosity", "recognition", "desire", "confidence"],
             "scene_arc": scene_arc,
             "must_preserve_visuals": preserve,
+            "scene_hints": scene_hints,
             "do_not_show": constraints,
             "media_truth_summary": media_truth[:1200],
             "source_inspiration": ["ViMax-style scene/storyboard decomposition", "OpenMontage-style proposal-to-production handoff"],
@@ -1668,7 +1681,14 @@ class AgentsRuntime:
                 "and product_continuity_constraints (e.g. color_match, scale_consistent, material_match). "
                 "If generation_spec.duration is above 15 seconds, also output segments where every segment is 15 seconds or shorter. "
                 "Each segment must include: segment_id, variant_id, duration_seconds, scene, shot_intent, first_frame_prompt, "
-                "last_frame_prompt, motion_prompt, transition_to_next, variation_type (small|medium|large), and continuity_constraints."
+                "last_frame_prompt, motion_prompt, transition_to_next, variation_type (small|medium|large), and continuity_constraints. "
+                "Return ONLY valid JSON shaped as {\"scripts\":[{\"variant_id\":\"V1\",\"hook\":\"...\",\"script\":\"...\","
+                "\"shot_list\":[\"...\"],\"shot_plan\":[{\"shot_id\":\"shot_1\",\"variant_id\":\"V1\",\"intent\":\"thumb_stop\","
+                "\"first_frame\":{\"description\":\"...\",\"visible_product_elements\":[\"...\"]},\"motion_description\":\"...\","
+                "\"text_overlay\":\"...\",\"product_continuity_constraints\":[\"...\"]}],\"segments\":[{\"segment_id\":\"V1_S1\","
+                "\"variant_id\":\"V1\",\"duration_seconds\":12,\"scene\":\"...\",\"shot_intent\":\"thumb_stop\","
+                "\"first_frame_prompt\":\"...\",\"last_frame_prompt\":\"...\",\"motion_prompt\":\"...\","
+                "\"transition_to_next\":\"match_cut\",\"variation_type\":\"small\",\"continuity_constraints\":[\"...\"]}]}]}."
             ),
         )
         response_text, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
@@ -1698,6 +1718,7 @@ class AgentsRuntime:
                 hook_line = item.hook or f"{item.variant_id}: {product_name} for {primary_value}"
                 emotions = director_plan.get("emotional_beats") or []
                 must_preserve = director_plan.get("must_preserve_visuals") or []
+                scene_hints = director_plan.get("scene_hints") or []
                 shot_list = []
                 intents = ["thumb_stop", "product_proof", "usage_demo", "cta_packshot"]
                 for i, intent in enumerate(intents):
@@ -1710,7 +1731,13 @@ class AgentsRuntime:
                     ][i]
                     emotion = emotions[i % len(emotions)] if emotions else "buyer confidence"
                     preserve = ", ".join(must_preserve[:3]) or product_name
-                    shot_list.append(f"{intent}: {direction}; emotional target: {emotion}; preserve: {preserve}")
+                    overlays = [
+                        f"Wait, this changes the whole look",
+                        f"Proof: {primary_value}",
+                        f"From {scene_hints[0] if scene_hints else 'one real moment'} to the next",
+                        cta,
+                    ]
+                    shot_list.append(f"{intent}: {direction}; emotion: {emotion}; overlay: {overlays[i]}; preserve: {preserve}")
                 fallback_shot_plan: list[ShotPlanItem] = []
                 for i, shot_text in enumerate(shot_list):
                     intent = intents[i] if i < len(intents) else "product_demo"
@@ -1737,10 +1764,11 @@ class AgentsRuntime:
                         variant_id=item.variant_id,
                         hook=hook_line,
                         script=(
-                            f"Open on {product_name} in a realistic use context that matches the submitted product references. "
-                            f"Show the key proof point in close-up: {primary_value}. "
-                            f"Demonstrate how {product_name} fits the routine of {audience} without inventing unsupported claims. "
-                            f"End with {cta}. Variant hook: {hook_base}. Variant message: {item.message}"
+                            f"Cold open: a real buyer hesitates before a plan, then {product_name} changes the mood in-frame. "
+                            f"Beat 2: close proof of {primary_value}, with the preserved product details visible. "
+                            f"Beat 3: show the look moving through {scene_hints[0] if scene_hints else 'a specific daily scene'} for {audience}. "
+                            f"Final beat: hold a clean product-forward frame and say {cta}. "
+                            f"Variant hook: {hook_base}. Variant message: {item.message}"
                         ),
                         shot_list=shot_list,
                         shot_plan=fallback_shot_plan,
@@ -2074,6 +2102,9 @@ class AgentsRuntime:
                     "image_model": image_model,
                     "error": frame_error,
                     "provider_errors": provider_errors,
+                    "external_task_id": best_candidate.get("external_task_id"),
+                    "generation_status": best_candidate.get("generation_status"),
+                    "raw_response": best_candidate.get("raw_response") or {},
                     "selected_candidate_index": int(best_candidate.get("candidate_index") or 0),
                     "candidate_frames": candidate_frames,
                 }

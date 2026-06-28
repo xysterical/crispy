@@ -195,6 +195,7 @@ def test_planning_outputs_creative_director_and_production_plan():
     production = output.payload["production_plan"]
     assert plan["scene_arc"][0]["beat"] == "thumb_stop"
     assert "robe dress silhouette" in plan["must_preserve_visuals"]
+    assert any("bedroom morning" in scene for scene in plan["scene_hints"])
     assert production["segment_strategy"]["estimated_segment_count"] == 3
     assert output.payload["quality_gates"][0]["gate"] == "product_truth_lock"
 
@@ -243,6 +244,8 @@ def test_video_scripting_carries_planning_director_plan_into_fallback():
     assert output.payload["director_strategy"]["creative_director_plan"]["emotional_beats"] == ["relief", "confidence"]
     assert "messy hotel counter" in first_script["shot_list"][0]
     assert "clear compartments" in first_script["shot_list"][0]
+    assert "Cold open" in first_script["script"]
+    assert "overlay:" in first_script["shot_list"][0]
     assert first_script["shot_plan"][0]["first_frame"]["description"] == first_script["shot_list"][0]
 
 
@@ -495,6 +498,54 @@ def test_storyboard_prompt_uses_director_plan_without_category_lock():
     assert "emotional target: relief" in prompt
     assert "clear compartments" in prompt
     assert "do not force fashion/model framing" in prompt
+
+
+def test_storyboard_frame_exposes_pending_candidate_task(monkeypatch):
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    def fake_generate_image(*, prompt, **kwargs):
+        return (
+            type(
+                "ImageResult",
+                (),
+                {
+                    "estimated_cost": 0.0,
+                    "images": [],
+                    "task_id": "image-task-1",
+                    "status": "submitted",
+                    "raw_response": {"id": "image-task-1"},
+                },
+            )(),
+            "stub-image-provider",
+            "stub-image-model",
+        )
+
+    monkeypatch.setattr(runtime, "_generate_image", fake_generate_image)
+
+    output = runtime.run_storyboard_image_generation(
+        run_id="storyboard-pending-candidate",
+        script_pack=VideoScriptPack(
+            scripts=[
+                VideoScriptItem(
+                    variant_id="V1",
+                    hook="Hook",
+                    script="Script",
+                    shot_list=["Shot 1"],
+                )
+            ],
+            product_context={"product_name": "travel organizer"},
+            generation_spec={"size": "9:16", "duration": 5},
+        ),
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"video_size": "9:16"},
+    )
+
+    frame = output.payload["frames"][0]
+    assert frame["external_task_id"] == "image-task-1"
+    assert frame["generation_status"] == "submitted"
+    assert frame["candidate_frames"][0]["external_task_id"] == "image-task-1"
 
 
 def test_storyboard_generation_can_store_multiple_candidates_and_pick_one(monkeypatch):

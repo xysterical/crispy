@@ -284,9 +284,12 @@ class PipelineWorker:
         for frame in frames:
             if not isinstance(frame, dict):
                 continue
-            status = str(frame.get("generation_status") or "").lower()
-            if frame.get("external_task_id") and status in {"", "submitted", "queued", "pending", "processing", "running"}:
-                return True
+            for item in [frame, *((frame.get("candidate_frames") or []) if isinstance(frame.get("candidate_frames"), list) else [])]:
+                if not isinstance(item, dict):
+                    continue
+                status = str(item.get("generation_status") or "").lower()
+                if item.get("external_task_id") and status in {"", "submitted", "queued", "pending", "processing", "running"}:
+                    return True
         return False
 
     def _poll_all_video_assets(self) -> None:
