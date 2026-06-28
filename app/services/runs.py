@@ -2238,6 +2238,11 @@ def _pending_status(value: object) -> bool:
     return str(value or "").lower() in {"", "submitted", "queued", "pending", "processing", "running"}
 
 
+def _provider_reference_url(value: object) -> str | None:
+    url = str(value or "").strip()
+    return url if url.startswith(("http://", "https://", "asset://")) else None
+
+
 def _segment_prompt(base_prompt: str, segment: dict) -> str:
     return (
         f"{base_prompt}\n\nSegment {segment.get('segment_id')}: {segment.get('motion_prompt')}. "
@@ -2262,13 +2267,11 @@ def _submit_next_video_segment(
     if next_index >= len(queued):
         return None, 0.0
     previous = segments[-1] if segments else {}
-    bridge_frame_uri = previous.get("last_frame_uri")
+    bridge_frame_uri = _provider_reference_url(previous.get("last_frame_uri"))
     segment = queued[next_index]
     generation_spec = {**(payload.get("generation_spec") or {}), "duration": int(segment.get("duration_seconds") or 8)}
     if bridge_frame_uri:
-        data_url = runtime._local_image_to_data_url(str(bridge_frame_uri))
-        if data_url:
-            generation_spec["image_urls"] = [data_url]
+        generation_spec["image_urls"] = [bridge_frame_uri]
     segment_payload, cost, _ = runtime._generate_video_clip_payload(
         run_id=run.id,
         variant_id=str(payload.get("variant_id") or "variant"),
@@ -2347,6 +2350,11 @@ def _refresh_segmented_video_payload(
         if next_segment:
             segments.append(next_segment)
             payload["segments"] = segments
+            if next_segment.get("error"):
+                payload["source"] = next_segment.get("source") or "placeholder"
+                payload["generation_status"] = "failed"
+                payload["error"] = next_segment.get("error")
+                return payload, refreshed, completed
 
     queued = payload.get("segment_queue") or []
     complete_paths = [

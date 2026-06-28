@@ -963,6 +963,7 @@ def test_assets_refresh_advances_segmented_video_queue(client, monkeypatch):
             )
 
     def fake_next_segment(**kwargs):
+        assert not any(str(url).startswith("data:image/") for url in kwargs["generation_spec"].get("image_urls", []))
         return (
             {
                 "variant_id": kwargs["variant_id"],

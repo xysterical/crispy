@@ -342,6 +342,10 @@ class AgentsRuntime:
         encoded = base64.b64encode(raw).decode("ascii")
         return f"data:{mime};base64,{encoded}"
 
+    def _provider_reference_url(self, value: object) -> str | None:
+        url = str(value or "").strip()
+        return url if url.startswith(("http://", "https://", "asset://")) else None
+
     def _local_video_to_data_url(self, path_str: str, *, max_bytes: int = 20 * 1024 * 1024) -> str | None:
         path = Path(path_str)
         if not path.exists() or not path.is_file():
@@ -2265,9 +2269,9 @@ class AgentsRuntime:
                     segment_duration = int(segment.duration_seconds)
                     segment_spec = {**generation_spec, "duration": segment_duration}
                     if bridge_frame_uri:
-                        bridge_data_url = self._local_image_to_data_url(bridge_frame_uri)
-                        if bridge_data_url:
-                            segment_spec["image_urls"] = [bridge_data_url]
+                        bridge_url = self._provider_reference_url(bridge_frame_uri)
+                        if bridge_url:
+                            segment_spec["image_urls"] = [bridge_url]
                     segment_prompt = (
                         f"{video_prompt}\n\nSegment {segment.segment_id}: {segment.motion_prompt}. "
                         f"First frame: {segment.first_frame_prompt}. Last frame target: {segment.last_frame_prompt}. "
