@@ -15,7 +15,7 @@ from app.orchestrator.worker import worker
 from app.providers.llm import GeneratedImage, ImageGenResult, StubProvider
 from app.services.creative_specs import resolve_creative_specs
 from app.services.intake_assets import process_uploaded_payloads
-from app.services.marketplace_qa import inspect_marketplace_image
+from app.services.marketplace_qa import infer_visual_identity, inspect_marketplace_image
 from app.services.runs import execute_next_queued_stage, runtime
 
 
@@ -63,6 +63,28 @@ def test_marketplace_preset_resolves_square_export_specs():
     assert specs["export_size_px"] == 2000
     assert specs["background_policy"] == "pure_white"
     assert "amazon" in specs["platform_targets"]
+
+
+def test_visual_identity_colors_ignore_scene_words():
+    identity = infer_visual_identity(
+        product_name="white dress",
+        category_tags=["fashion"],
+        media_summary=(
+            "**Product Appearance**\n"
+            "- Silvery-grey midi dress with ruffled neckline and embroidered fabric.\n"
+            "\n**Usage Scenes**\n"
+            "- Model walks under a blue sky beside red roses.\n"
+        ),
+        image_references=[{"uri": "assets/run/input/white_dress.jpg"}],
+        video_references=[],
+    )
+
+    assert "grey" in identity["colors"]
+    assert "silver" in identity["colors"]
+    assert "red" not in identity["colors"]
+    assert "blue" not in identity["colors"]
+    assert "color:red" not in identity["must_preserve_details"]
+    assert "color:blue" not in identity["must_preserve_details"]
 
 
 def test_marketplace_qa_catches_bad_images(tmp_path):

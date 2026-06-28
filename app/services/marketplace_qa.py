@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+import re
 from typing import Any
 
 
@@ -36,6 +37,23 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _product_appearance_text(media_summary: str) -> str:
+    marker = "**product appearance**"
+    lower = media_summary.lower()
+    start = lower.find(marker)
+    if start < 0:
+        return media_summary
+    rest = media_summary[start + len(marker):]
+    next_section = rest.find("\n**")
+    return rest[:next_section] if next_section >= 0 else rest
+
+
+def _has_color_word(text: str, word: str) -> bool:
+    if word == "silver" and re.search(r"\bsilver(?:y)?\b", text):
+        return True
+    return bool(re.search(rf"\b{re.escape(word)}\b", text))
+
+
 def infer_visual_identity(
     *,
     product_name: str,
@@ -45,6 +63,7 @@ def infer_visual_identity(
     video_references: list[dict],
 ) -> dict:
     text = media_summary.lower()
+    appearance_text = _product_appearance_text(media_summary).lower()
     color_words = [
         "black",
         "white",
@@ -78,7 +97,7 @@ def infer_visual_identity(
         "wood",
         "fabric",
     ]
-    colors = [word for word in color_words if word in text]
+    colors = [word for word in color_words if _has_color_word(appearance_text, word)]
     materials = [word for word in material_words if word in text]
     best_frames: list[str] = []
     for row in video_references:

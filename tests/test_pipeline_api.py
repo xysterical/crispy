@@ -1002,6 +1002,103 @@ def test_assets_refresh_recovers_materialized_storyboard_candidate(client, monke
         assert frame["candidate_frames"][0]["generation_status"] == "completed"
 
 
+def test_assets_refresh_does_not_complete_empty_storyboard_placeholder(client, monkeypatch):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-storyboard-empty",
+            "project_name": "p-storyboard-empty",
+            "product_name": "white dress",
+            "product_code": "WHITE-STORYBOARD-EMPTY-001",
+            "industry_code": "fashion",
+            "campaign_name": "storyboard-empty",
+            "pipeline_mode": "video_only",
+            "approval_mode": "full_auto",
+            "creative_preset": "meta_vertical_5s",
+        },
+    )
+    assert create_resp.status_code == 200
+    run_id = create_resp.json()["id"]
+    empty_uri = f"assets/{run_id}/V1_F1.png"
+    empty_path = Path(empty_uri)
+    empty_path.parent.mkdir(parents=True, exist_ok=True)
+    empty_path.write_bytes(b"")
+
+    with SessionLocal() as db:
+        from app.data.models import PipelineRun, RunStatus, RunVariant, StageTask, TaskStatus
+
+        run = db.get(PipelineRun, run_id)
+        run.current_stage = "storyboard_image_generation"
+        run.status = RunStatus.RUNNING.value
+        run_variant = RunVariant(run_id=run_id, variant_id="V1", angle="White dress", hook="Hook", message="Message")
+        db.add(run_variant)
+        db.flush()
+        storyboard_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="storyboard_image_generation").one()
+        storyboard_task.status = TaskStatus.WAITING_REVIEW.value
+        storyboard_task.output_payload = {
+            "frames": [
+                {
+                    "variant_id": "V1",
+                    "frame_id": "V1_F1",
+                    "external_task_id": "image-task-empty",
+                    "generation_status": "submitted",
+                    "image_uri": empty_uri,
+                    "candidate_frames": [
+                        {
+                            "variant_id": "V1",
+                            "frame_id": "V1_F1",
+                            "candidate_index": 0,
+                            "external_task_id": "image-task-empty",
+                            "generation_status": "submitted",
+                            "image_uri": empty_uri,
+                        }
+                    ],
+                }
+            ]
+        }
+        db.add(
+            VariantAsset(
+                run_variant_id=run_variant.id,
+                run_id=run_id,
+                stage_name="storyboard_image_generation",
+                asset_type="storyboard_frame",
+                uri=empty_uri,
+                provider_name="stub",
+                model_name="stub-image",
+                prompt_summary="empty placeholder storyboard frame",
+                idempotency_key="test-empty-storyboard-v1-f1",
+                payload={
+                    "variant_id": "V1",
+                    "frame_id": "V1_F1",
+                    "candidate_index": 0,
+                    "image_uri": empty_uri,
+                    "external_task_id": "image-task-empty",
+                    "generation_status": "submitted",
+                    "source": "external_task_pending",
+                },
+            )
+        )
+        db.commit()
+
+    class FakeProvider:
+        def poll_image_task(self, **kwargs):
+            return type("ImageResult", (), {"images": [], "status": "processing", "raw_response": {}})()
+
+    monkeypatch.setattr("app.services.runs.runtime.providers.get", lambda _name: FakeProvider())
+
+    resp = client.post(f"/runs/{run_id}/assets/refresh")
+    assert resp.status_code == 200
+    assert resp.json()["images"]["completed"] == 0
+
+    with SessionLocal() as db:
+        from app.data.models import StageTask, TaskStatus
+
+        storyboard_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="storyboard_image_generation").one()
+        frame = storyboard_task.output_payload["frames"][0]
+        assert storyboard_task.status == TaskStatus.WAITING_REVIEW.value
+        assert frame["generation_status"] == "processing"
+
+
 def test_assets_refresh_advances_segmented_video_queue(client, monkeypatch):
     create_resp = client.post(
         "/runs",

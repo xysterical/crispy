@@ -2559,7 +2559,7 @@ def refresh_storyboard_image_task_assets(db: Session, run_id: str) -> dict:
             continue
         if status in {"completed", "succeeded", "success"}:
             payload["generation_status"] = "completed"
-        elif payload.get("image_uri") and not payload.get("error"):
+        elif payload.get("image_uri") and _uri_has_payload(payload.get("image_uri")) and not payload.get("error"):
             payload["generation_status"] = "completed"
             completed += 1
         else:
