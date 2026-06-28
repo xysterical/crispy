@@ -40,7 +40,7 @@ Below is a 30-second continuous showcase generated from a single white dress ima
 
 | Input Image | Video View |
 | :---: | :---: |
-|![white dress](other/white_dress.jpg)|<video src="https://github.com/user-attachments/assets/6795d7e0-a493-464f-a92e-50db57628b8c" width="100%" controls></video>|
+|![white dress](other/white_dress_correct.jpg)|<video src="https://github.com/user-attachments/assets/6795d7e0-a493-464f-a92e-50db57628b8c" width="100%" controls></video>|
 ## Quick Start
 
 ### 1. Install
