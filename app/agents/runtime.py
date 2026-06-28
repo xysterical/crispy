@@ -73,6 +73,24 @@ class AgentsRuntime:
         self.providers = ProviderRegistry()
         self.media = LocalMediaProvider()
 
+    def _director_handoff(self, planning: PlanningBrief | dict | None) -> dict:
+        if not planning:
+            return {}
+        payload = planning.model_dump() if hasattr(planning, "model_dump") else dict(planning)
+        handoff = {
+            "creative_director_plan": payload.get("creative_director_plan") or {},
+            "production_plan": payload.get("production_plan") or {},
+            "quality_gates": payload.get("quality_gates") or [],
+        }
+        return handoff if any(handoff.values()) else {}
+
+    def _scene_arc_item(self, director_handoff: dict, idx: int) -> dict:
+        scene_arc = (director_handoff.get("creative_director_plan") or {}).get("scene_arc") or []
+        if not scene_arc:
+            return {}
+        item = scene_arc[idx % len(scene_arc)]
+        return item if isinstance(item, dict) else {"scene_direction": str(item)}
+
     def _trace_provider_selection(
         self,
         runtime_config: dict | None,
@@ -416,6 +434,64 @@ class AgentsRuntime:
             if len(data_urls) >= max_inputs:
                 break
         return data_urls, manifest
+
+    def _planning_director_blocks(
+        self,
+        *,
+        intake: ProductIntake,
+        creative_specs: dict,
+        strategic_angles: list[str],
+        constraints: list[str],
+    ) -> tuple[dict, dict, list[dict]]:
+        product_name = intake.product_name or "the product"
+        brief = intake.manual_research_brief or str(intake.business_context.get("brief") or "")
+        audience = self._normalize_text_list(
+            intake.business_context.get("target_audience") or intake.business_context.get("audience") or []
+        )
+        visual_identity = intake.visual_identity.model_dump()
+        preserve = list(dict.fromkeys(
+            [str(item) for item in visual_identity.get("must_preserve_details", []) if str(item).strip()]
+            or [product_name]
+        ))
+        media_truth = intake.asset_media_summary or visual_identity.get("raw_media_summary") or brief
+        duration = int(creative_specs.get("video_duration_seconds") or 8)
+        max_segment = self._max_video_segment_seconds(creative_specs)
+        segment_count = max(1, (duration + max_segment - 1) // max_segment)
+        scene_arc = [
+            {"beat": "thumb_stop", "intent": "prove the product is worth watching", "scene_direction": f"open with {product_name} clearly visible in a real use context"},
+            {"beat": "product_truth", "intent": "lock visual identity", "scene_direction": f"close view of {', '.join(preserve[:3])}"},
+            {"beat": "lifestyle_proof", "intent": "show buyer transformation", "scene_direction": "move through varied but plausible scenes from the brief or product context"},
+            {"beat": "cta", "intent": "make the next action obvious", "scene_direction": "end on product-forward frame with a simple purchase cue"},
+        ]
+        creative_director_plan = {
+            "hero_insight": f"{product_name} should be sold through a concrete lifestyle moment, not generic product beauty.",
+            "target_audience": audience,
+            "emotional_beats": ["curiosity", "recognition", "desire", "confidence"],
+            "scene_arc": scene_arc,
+            "must_preserve_visuals": preserve,
+            "do_not_show": constraints,
+            "media_truth_summary": media_truth[:1200],
+            "source_inspiration": ["ViMax-style scene/storyboard decomposition", "OpenMontage-style proposal-to-production handoff"],
+        }
+        production_plan = {
+            "pipeline_path": ["planning", "divergence", "video_scripting", "storyboard_image_generation", "video_generation", "visual_quality_assessment", "evaluation_selection"],
+            "reference_strategy": "Use uploaded product images as storyboard/video references before historical references.",
+            "segment_strategy": {
+                "requested_duration_seconds": duration,
+                "max_segment_seconds": max_segment,
+                "estimated_segment_count": segment_count,
+                "continuity_method": "extract each completed segment last frame as next segment first-frame reference",
+            },
+            "variant_strategy": [{"angle": angle, "director_note": f"test whether {angle} can be shown as a concrete scene, not just copy"} for angle in strategic_angles],
+            "factory_risks": ["provider async latency", "product drift across segments", "storyboard too generic"],
+        }
+        quality_gates = [
+            {"gate": "product_truth_lock", "pass_condition": f"{product_name} and preserved details remain recognizable in storyboard and every segment"},
+            {"gate": "scene_specificity", "pass_condition": "each scene has place, action, emotion, and product visibility"},
+            {"gate": "segment_continuity", "pass_condition": "next segment uses prior tail frame or an explicit continuity reference"},
+            {"gate": "conversion_readiness", "pass_condition": "final winner has clear hook, proof, CTA, and no unsupported claims"},
+        ]
+        return creative_director_plan, production_plan, quality_gates
 
     def _download_url_bytes(self, url: str) -> bytes | None:
         try:
@@ -881,7 +957,7 @@ class AgentsRuntime:
             task_instruction=(
                 f"Build planning brief in {mode}. intake={intake.model_dump()} "
                 f"gm_lessons={gm_lessons[:3]}. gm_policy={policy_excerpt}. dtc_surface_strategy={surface_strategy}. Return concise strategy, constraints, hypotheses, risk boundaries, "
-                "and reviewer decision questions."
+                "creative director plan, scene arc, reference strategy, segment continuity plan, quality gates, and reviewer decision questions."
             ),
         )
         summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
@@ -902,13 +978,22 @@ class AgentsRuntime:
             )
         constraints = list(dict.fromkeys(item for item in constraints if str(item).strip()))
         shop_thesis = gm_policy.get("shop_thesis") or {}
+        creative_director_plan, production_plan, quality_gates = self._planning_director_blocks(
+            intake=intake,
+            creative_specs=creative_specs,
+            strategic_angles=strategic_angles,
+            constraints=constraints,
+        )
         planning = PlanningBrief(
             strategic_angles=strategic_angles,
-            audience_priorities=self._normalize_text_list(intake.business_context.get("target_audience") or []),
+            audience_priorities=self._normalize_text_list(intake.business_context.get("target_audience") or intake.business_context.get("audience") or []),
             positioning=shop_thesis.get("positioning") or intake.business_context.get("positioning", ""),
             constraints=constraints,
             gm_lessons=gm_lessons[:5],
             surface_strategy=surface_strategy,
+            creative_director_plan=creative_director_plan,
+            production_plan=production_plan,
+            quality_gates=quality_gates,
         )
         strategy_handoff = self._business_strategy_handoff(
             stage="planning",
@@ -917,6 +1002,7 @@ class AgentsRuntime:
                 f"primary_audience={planning.audience_priorities[0] if planning.audience_priorities else 'general'}",
                 f"angle_count={len(planning.strategic_angles)}",
                 f"site_surface={surface_strategy.get('site_surface') or 'none'}",
+                f"segment_count={production_plan['segment_strategy']['estimated_segment_count']}",
             ],
             risks=[str(item) for item in constraints] or ["No explicit prohibited claims supplied."],
             review_questions=[
@@ -936,6 +1022,9 @@ class AgentsRuntime:
                 "positioning": planning.positioning,
                 "angle_portfolio": planning.strategic_angles,
                 "claim_boundaries": planning.constraints,
+                "creative_director_plan": creative_director_plan,
+                "production_plan": production_plan,
+                "quality_gates": quality_gates,
                 "memory_applied_count": len(gm_lessons[:5]),
                 "surface_strategy": surface_strategy,
                 "active_gm_policy": {
@@ -966,11 +1055,16 @@ class AgentsRuntime:
     ) -> StageOutput:
         gm_policy = gm_policy or {}
         policy_excerpt = gm_policy.get("stage_guidance") or {}
+        director_handoff = self._director_handoff(planning)
+        director_plan = director_handoff.get("creative_director_plan") or {}
+        production_plan = director_handoff.get("production_plan") or {}
+        quality_gates = director_handoff.get("quality_gates") or []
         prompt = self._compose_stage_prompt(
             runtime_config=runtime_config,
             agent_role="Variant Strategy Agent",
             task_instruction=(
                 f"Generate diverse variants from planning: {planning.model_dump()}. "
+                f"creative_director_plan={director_plan}. production_plan={production_plan}. quality_gates={quality_gates}. "
                 f"gm_policy={policy_excerpt}. "
                 "Each variant must test a distinct commercial hypothesis with non-overlapping hook logic."
             ),
@@ -978,17 +1072,25 @@ class AgentsRuntime:
         summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         variants = []
         preferred_angles = (gm_policy.get("angle_priorities") or [])[: max(1, variant_count)]
+        emotional_beats = director_plan.get("emotional_beats") or []
+        must_preserve = director_plan.get("must_preserve_visuals") or []
         for i in range(variant_count):
-            angle_pool = preferred_angles or planning.strategic_angles
+            angle_pool = preferred_angles or planning.strategic_angles or ["product truth"]
             angle = angle_pool[i % max(1, len(angle_pool))]
             variant_id = f"V{i + 1}"
+            scene = self._scene_arc_item(director_handoff, i)
+            scene_direction = scene.get("scene_direction") or scene.get("beat") or "real product-use scene"
+            emotion = emotional_beats[i % len(emotional_beats)] if emotional_beats else "clear buyer confidence"
             variants.append(
                 VariantCandidate(
                     variant_id=variant_id,
                     angle=angle,
-                    hook=f"{variant_id}: {angle} with fast daily benefit framing",
-                    message=f"{variant_id}: practical result-first messaging for conversion objective.",
-                    rationale=f"Test whether `{angle}` performs as the lead commercial promise for {variant_id}.",
+                    hook=f"{variant_id}: {angle} through {scene_direction}",
+                    message=f"{variant_id}: make the buyer feel {emotion} while proving the product in-scene.",
+                    rationale=(
+                        f"Tests `{angle}` against director beat `{scene_direction}`; preserve "
+                        f"{', '.join(must_preserve[:3]) or 'core product truth'}."
+                    ),
                 )
             )
         variant_set = VariantSet(variants=variants)
@@ -997,19 +1099,21 @@ class AgentsRuntime:
                 "variant_id": item.variant_id,
                 "test_axis": item.angle,
                 "hypothesis": item.message,
+                "director_beat": self._scene_arc_item(director_handoff, idx),
                 "success_signal": "Higher qualified click-through or stronger reviewer preference than adjacent variants.",
                 "kill_condition": "Weak product relevance, unsupported claim, or visual concept cannot show the product truthfully.",
             }
-            for item in variants
+            for idx, item in enumerate(variants)
         ]
         output = {
             **variant_set.model_dump(),
             "llm_summary": summary,
             "experiment_matrix": experiment_matrix,
             "active_gm_policy": gm_policy,
+            "director_strategy": director_handoff,
             "strategy_handoff": self._business_strategy_handoff(
                 stage="divergence",
-                decisions=[f"created {len(variants)} variant hypotheses", "kept variants bound to distinct test axes"],
+                decisions=[f"created {len(variants)} variant hypotheses", "kept variants bound to director scene beats and distinct test axes"],
                 risks=["Variants are heuristic until reviewed against generated media."],
                 review_questions=["Are the variants commercially distinct?", "Should any variant be killed before paid generation?"],
             ),
@@ -1513,10 +1617,15 @@ class AgentsRuntime:
         pipeline_mode: str | None = None,
         runtime_config: dict | None = None,
         reference_bundle: dict | None = None,
+        planning: PlanningBrief | dict | None = None,
     ) -> StageOutput:
         business_context = business_context or {}
         creative_specs = creative_specs or {}
         reference_bundle = reference_bundle or {}
+        director_handoff = self._director_handoff(planning)
+        director_plan = director_handoff.get("creative_director_plan") or {}
+        production_plan = director_handoff.get("production_plan") or {}
+        quality_gates = director_handoff.get("quality_gates") or []
         is_tiktok_shop = pipeline_mode == "tiktok_shop_video"
         tiktok_style = str(creative_specs.get("tiktok_video_style") or "ugc_demo")
         product_context = self._video_product_context(
@@ -1524,6 +1633,8 @@ class AgentsRuntime:
             business_context=business_context,
             creative_specs=creative_specs,
         )
+        if director_handoff:
+            product_context["director_plan"] = director_handoff
         reference_summary = {
             "image_count": len(reference_bundle.get("images") or []),
             "frame_count": len(reference_bundle.get("frames") or []),
@@ -1543,7 +1654,9 @@ class AgentsRuntime:
                 f"media_summary={media_summary}, variants={variant_set.model_dump()}. "
                 f"reference_summary={reference_summary}. "
                 f"generation_spec={generation_spec}. "
+                f"creative_director_plan={director_plan}. production_plan={production_plan}. quality_gates={quality_gates}. "
                 "Make every shot filmable, product-specific, and constrained by realistic product handling. "
+                "Carry the director scene arc, emotional beats, and product-truth gates into hooks, shot_plan, and segments. "
                 "For each variant, also output a structured shot_plan array with 3-4 shot objects. "
                 "Each shot must have: shot_id, variant_id, intent (one of: thumb_stop, product_proof, usage_demo, cta_packshot), "
                 "first_frame with description and visible_product_elements, "
@@ -1579,14 +1692,21 @@ class AgentsRuntime:
                         message=item.message,
                     )
                 hook_line = item.hook or f"{item.variant_id}: {product_name} for {primary_value}"
-                # Derive minimal shot_plan from shot_list in template fallback
-                shot_list = [
-                    f"hook reveal of {product_name} in a realistic use context tied to the submitted brief",
-                    f"close-up of {product_name} showing {primary_value}",
-                    f"practical demo of {product_name} for {audience}",
-                    f"product-forward CTA end frame: {cta}",
-                ]
+                emotions = director_plan.get("emotional_beats") or []
+                must_preserve = director_plan.get("must_preserve_visuals") or []
+                shot_list = []
                 intents = ["thumb_stop", "product_proof", "usage_demo", "cta_packshot"]
+                for i, intent in enumerate(intents):
+                    scene = self._scene_arc_item(director_handoff, i)
+                    direction = scene.get("scene_direction") or [
+                        f"hook reveal of {product_name} in a realistic use context tied to the submitted brief",
+                        f"close-up of {product_name} showing {primary_value}",
+                        f"practical demo of {product_name} for {audience}",
+                        f"product-forward CTA end frame: {cta}",
+                    ][i]
+                    emotion = emotions[i % len(emotions)] if emotions else "buyer confidence"
+                    preserve = ", ".join(must_preserve[:3]) or product_name
+                    shot_list.append(f"{intent}: {direction}; emotional target: {emotion}; preserve: {preserve}")
                 fallback_shot_plan: list[ShotPlanItem] = []
                 for i, shot_text in enumerate(shot_list):
                     intent = intents[i] if i < len(intents) else "product_demo"
@@ -1714,9 +1834,10 @@ class AgentsRuntime:
         payload = {
             **pack.model_dump(),
             "reference_summary": reference_summary,
+            "director_strategy": director_handoff,
             "strategy_handoff": self._business_strategy_handoff(
                 stage="video_scripting",
-                decisions=[f"generated scripts for {len(scripts)} variants", "required close-up product handling and physical continuity"],
+                decisions=[f"generated scripts for {len(scripts)} variants", "required director scene arc, product handling, and physical continuity"],
                 risks=["Script quality still depends on storyboard and video provider following continuity constraints."],
                 review_questions=["Does each hook feel native to TikTok?", "Can every shot be generated without breaking product logic?"],
             ),
@@ -1740,8 +1861,13 @@ class AgentsRuntime:
         runtime_config: dict | None = None,
         historical_references: list[dict] | None = None,
         intake: ProductIntake | None = None,
+        planning: PlanningBrief | dict | None = None,
     ) -> StageOutput:
         creative_specs = creative_specs or {}
+        director_handoff = self._director_handoff(planning) or dict((script_pack.product_context or {}).get("director_plan") or {})
+        director_plan = director_handoff.get("creative_director_plan") or {}
+        production_plan = director_handoff.get("production_plan") or {}
+        quality_gates = director_handoff.get("quality_gates") or []
         generation_spec = {**(script_pack.generation_spec or {}), **self._video_generation_spec(creative_specs)}
         reference_summary = {
             "image_count": len(historical_references or []),
@@ -1766,6 +1892,7 @@ class AgentsRuntime:
             task_instruction=(
                 f"Create storyboard frames from scripts: {script_pack.model_dump()}. "
                 f"reference_summary={reference_summary}. "
+                f"creative_director_plan={director_plan}. production_plan={production_plan}. quality_gates={quality_gates}. "
                 "Treat storyboard as the visual QA plan before video generation: continuity, object logic, product visibility."
             ),
         )
@@ -1792,8 +1919,30 @@ class AgentsRuntime:
                 shot = script.shot_list[idx] if idx < len(script.shot_list) else script.hook
                 frame_id = f"{script.variant_id}_F{idx + 1}"
                 llm_frame = llm_frame_prompts.get(frame_id)
+                scene = self._scene_arc_item(director_handoff, idx)
+                emotions = director_plan.get("emotional_beats") or []
+                emotion = emotions[idx % len(emotions)] if emotions else "buyer confidence"
+                must_preserve = ", ".join((director_plan.get("must_preserve_visuals") or [])[:4]) or product_name
+                gate_names = (
+                    ", ".join(str((g.get("gate") if isinstance(g, dict) else g) or g) for g in quality_gates[:3])
+                    if quality_gates
+                    else "product truth, continuity, channel fit"
+                )
+                shot_plan_item = script.shot_plan[idx] if idx < len(script.shot_plan) else None
+                shot_contract = ""
+                if shot_plan_item:
+                    shot_contract = (
+                        f" First frame: {shot_plan_item.first_frame.description}. "
+                        f"Motion: {shot_plan_item.motion_description}. "
+                        f"Continuity: {', '.join(shot_plan_item.product_continuity_constraints)}."
+                    )
                 if llm_frame is not None:
-                    frame_prompt = llm_frame["prompt"]
+                    frame_prompt = str(llm_frame["prompt"])
+                    if director_handoff:
+                        frame_prompt = (
+                            f"{frame_prompt} Director beat: {scene}. Emotional target: {emotion}. Preserve: {must_preserve}. "
+                            f"Quality gates: {gate_names}. No category assumptions."
+                        )
                 else:
                     tiktok_details = script.tiktok.model_dump() if script.tiktok else {}
                     style_line = (
@@ -1805,10 +1954,14 @@ class AgentsRuntime:
                     frame_prompt = (
                         f"Create a realistic storyboard frame for {product_name}. "
                         f"Variant {script.variant_id}. Shot: {shot}. Hook: {script.hook}. "
+                        f"Director beat: {scene}. Emotional target: {emotion}. "
+                        f"Preserve product facts: {must_preserve}. Quality gates: {gate_names}.{shot_contract} "
                         f"Historical reference summary: {reference_summary}. "
                         f"{style_line}"
                         "Use a clean previsualization style suitable for human review before video generation. "
                         "No text overlay. Product-forward composition. "
+                        "Work across product categories: show real use context, hands, environment, scale, or buyer outcome as appropriate; "
+                        "use a person only when the product or brief calls for human use, and do not force fashion/model framing for non-wearables. "
                         f"{self._video_prompt_quality_block(product_context)}"
                     )
                 source = "placeholder"
@@ -1931,9 +2084,10 @@ class AgentsRuntime:
                 artifacts.append({"type": "storyboard_frame", "uri": frame_uri, "payload": frame})
         output = {
             "frames": frames,
+            "director_strategy": director_handoff,
             "strategy_handoff": self._business_strategy_handoff(
                 stage="storyboard_image_generation",
-                decisions=[f"created {len(frames)} storyboard frames", "each frame prompt repeats product continuity constraints"],
+                decisions=[f"created {len(frames)} storyboard frames", "each frame prompt repeats director, product continuity, and category-fit constraints"],
                 risks=["Storyboard image QA is basic; complex physics still requires reviewer/model inspection."],
                 review_questions=["Do storyboard frames preserve product continuity?", "Should any variant be regenerated before video generation?"],
             ),
@@ -2106,7 +2260,8 @@ class AgentsRuntime:
                 segment_payloads: list[dict] = []
                 completed_segment_paths: list[Path] = []
                 bridge_frame_uri: str | None = None
-                for segment in script.segments:
+                segment_queue = [segment.model_dump() for segment in script.segments]
+                for segment_index, segment in enumerate(script.segments):
                     segment_duration = int(segment.duration_seconds)
                     segment_spec = {**generation_spec, "duration": segment_duration}
                     if bridge_frame_uri:
@@ -2137,6 +2292,7 @@ class AgentsRuntime:
                     if segment_model:
                         video_models_used.add(segment_model)
                     segment_payload["segment_id"] = segment.segment_id
+                    segment_payload["segment_index"] = segment_index
                     segment_payload["transition_to_next"] = segment.transition_to_next
                     status = str(segment_payload.get("generation_status") or "").lower()
                     if status in {"completed", "succeeded", "success", "ready"} and self._artifact_has_payload(segment_payload.get("video_uri")):
@@ -2164,6 +2320,11 @@ class AgentsRuntime:
                     "source": "stitched_segments" if stitched_uri else "segmented_pending",
                     "generation_status": "completed" if stitched_uri else "pending",
                     "segments": segment_payloads,
+                    "segment_queue": segment_queue,
+                    "segment_prompt_base": video_prompt,
+                    "asset_suffix": asset_suffix,
+                    "video_size": video_size,
+                    "resolution": resolution,
                     "generation_spec": generation_spec,
                     "quality_constraints": {
                         "preserve_submitted_product_identity": True,

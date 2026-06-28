@@ -300,7 +300,15 @@ class PipelineWorker:
             for asset in assets:
                 payload = asset.payload or {}
                 status = str(payload.get("generation_status", "")).lower()
-                if payload.get("external_task_id") and status in {"", "submitted", "queued", "pending", "processing", "running"}:
+                segment_pending = any(
+                    isinstance(segment, dict)
+                    and segment.get("external_task_id")
+                    and str(segment.get("generation_status") or "").lower() in {"", "submitted", "queued", "pending", "processing", "running"}
+                    for segment in (payload.get("segments") or [])
+                )
+                if segment_pending or (
+                    payload.get("external_task_id") and status in {"", "submitted", "queued", "pending", "processing", "running"}
+                ):
                     pending_run_ids.add(asset.run_id)
 
             for run_id in pending_run_ids:

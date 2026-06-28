@@ -7,7 +7,7 @@ import pytest
 
 from app.agents.runtime import AgentsRuntime
 from app.providers.llm import GeneratedVideo, VideoGenResult
-from app.schemas.contracts import ProductIntake, VariantCandidate, VariantSet, VideoScriptItem, VideoScriptPack
+from app.schemas.contracts import PlanningBrief, ProductIntake, VariantCandidate, VariantSet, VideoScriptItem, VideoScriptPack
 
 
 class _FakeVideoProvider:
@@ -163,6 +163,87 @@ def test_video_scripting_splits_long_duration_into_segments():
     assert [segment["duration_seconds"] for segment in segments] == [12.0, 12.0, 11.0]
     assert all(segment["duration_seconds"] <= 15 for segment in segments)
     assert segments[-1]["transition_to_next"] == "none"
+
+
+def test_planning_outputs_creative_director_and_production_plan():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("planning summary", "stub-model", 0.0)
+    intake = ProductIntake(
+        product_name="Robe Dress",
+        market="US",
+        locale="en-US",
+        business_context={
+            "audience": "US women shopping for elegant comfortable robe dresses",
+            "brief": "real model, bedroom morning, cafe, boutique mirror, evening lounge",
+        },
+        manual_research_brief="32-second segmented video with real human model and varied scenes.",
+        asset_media_summary="Reference image shows the robe dress silhouette and fabric drape.",
+        visual_identity={"must_preserve_details": ["robe dress silhouette", "fabric drape"]},
+    )
+
+    output = runtime.run_planning(
+        run_id="planning-director",
+        intake=intake,
+        gm_lessons=[],
+        creative_specs={"video_duration_seconds": 32, "max_video_segment_seconds": 15},
+        enable_research=False,
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    plan = output.payload["creative_director_plan"]
+    production = output.payload["production_plan"]
+    assert plan["scene_arc"][0]["beat"] == "thumb_stop"
+    assert "robe dress silhouette" in plan["must_preserve_visuals"]
+    assert production["segment_strategy"]["estimated_segment_count"] == 3
+    assert output.payload["quality_gates"][0]["gate"] == "product_truth_lock"
+
+
+def test_video_scripting_carries_planning_director_plan_into_fallback():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+    planning = PlanningBrief(
+        strategic_angles=["travel order"],
+        creative_director_plan={
+            "emotional_beats": ["relief", "confidence"],
+            "must_preserve_visuals": ["clear compartments", "upright bottle sleeves"],
+            "scene_arc": [
+                {"beat": "thumb_stop", "scene_direction": "messy hotel counter transforms into organized kit"},
+                {"beat": "proof", "scene_direction": "close-up bottles stay upright inside clear sleeves"},
+            ],
+        },
+        production_plan={"segment_strategy": {"estimated_segment_count": 1}},
+        quality_gates=[{"gate": "product_truth_lock"}],
+    )
+
+    output = runtime.run_video_scripting(
+        run_id="runtime-script-director-plan",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="travel order",
+                    hook="Pack without leaks",
+                    message="Keep bottles upright in transit.",
+                )
+            ]
+        ),
+        intake=ProductIntake(
+            product_name="travel toiletry bag",
+            asset_media_summary="Compact organizer with clear compartments.",
+        ),
+        business_context={"target_audience": "frequent travelers", "primary_cta": "Shop Now"},
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"video_duration_seconds": 12},
+        planning=planning,
+    )
+
+    first_script = output.payload["scripts"][0]
+    assert output.payload["director_strategy"]["creative_director_plan"]["emotional_beats"] == ["relief", "confidence"]
+    assert "messy hotel counter" in first_script["shot_list"][0]
+    assert "clear compartments" in first_script["shot_list"][0]
+    assert first_script["shot_plan"][0]["first_frame"]["description"] == first_script["shot_list"][0]
 
 
 def test_video_generation_stitches_completed_segments(monkeypatch):
@@ -321,6 +402,48 @@ def test_storyboard_and_video_generation_do_not_inject_leash_defaults_and_use_st
     assert fake_provider.last_request.tools == [{"type": "web_search"}]
     assert fake_provider.last_request.image_urls == ["https://example.com/reference-image.png"]
     assert fake_provider.last_request.audio_urls == ["https://example.com/reference-audio.wav"]
+
+
+def test_storyboard_prompt_uses_director_plan_without_category_lock():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+    planning = PlanningBrief(
+        creative_director_plan={
+            "emotional_beats": ["relief"],
+            "must_preserve_visuals": ["clear compartments", "upright bottle sleeves"],
+            "scene_arc": [
+                {"beat": "proof", "scene_direction": "hotel bathroom counter with bottles standing upright"},
+            ],
+        },
+        quality_gates=[{"gate": "category_fit_storyboard"}],
+    )
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="No more suitcase leaks",
+                script="Show a compact organizer solving messy travel packing.",
+                shot_list=["Open the organizer on a hotel counter"],
+            )
+        ],
+        product_context={"product_name": "travel toiletry bag", "audience": "frequent travelers"},
+        generation_spec={"size": "9:16", "resolution": "720p", "duration": 5},
+    )
+
+    output = runtime.run_storyboard_image_generation(
+        run_id="storyboard-director-generic-product",
+        script_pack=script_pack,
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"video_size": "9:16"},
+        planning=planning,
+    )
+
+    prompt = output.payload["frames"][0]["prompt"].lower()
+    assert "hotel bathroom counter" in prompt
+    assert "emotional target: relief" in prompt
+    assert "clear compartments" in prompt
+    assert "do not force fashion/model framing" in prompt
 
 
 def test_storyboard_generation_can_store_multiple_candidates_and_pick_one(monkeypatch):

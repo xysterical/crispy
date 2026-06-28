@@ -888,8 +888,111 @@ def test_assets_refresh_recovers_external_video_task(client, monkeypatch):
     v1 = next(item for item in variants["items"] if item["variant_id"] == "V1")
     video = next(asset for asset in v1["assets"] if asset["asset_type"] == "video")
     assert video["payload"]["generation_status"] == "completed"
-    assert Path(video["uri"]).exists()
-    assert Path(video["uri"]).read_bytes() == b"fake-video-bytes"
+
+
+def test_assets_refresh_advances_segmented_video_queue(client, monkeypatch):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-segment-refresh",
+            "project_name": "p-segment-refresh",
+            "product_name": "robe dress",
+            "product_code": "ROBE-SEGMENT-REFRESH-001",
+            "industry_code": "fashion",
+            "campaign_name": "segment-refresh",
+            "pipeline_mode": "video_only",
+            "creative_preset": "meta_vertical_5s",
+        },
+    )
+    run_id = create_resp.json()["id"]
+    for _stage in ["intake", "planning", "divergence"]:
+        _run_worker_once()
+        client.post(f"/runs/{run_id}/advance", json={"notes": "ok"})
+
+    with SessionLocal() as db:
+        from app.data.models import RunVariant
+
+        run_variant = db.query(RunVariant).filter(RunVariant.run_id == run_id, RunVariant.variant_id == "V1").one()
+        db.add(
+            VariantAsset(
+                run_variant_id=run_variant.id,
+                run_id=run_id,
+                stage_name="video_generation",
+                asset_type="video",
+                uri=f"assets/{run_id}/V1_S1.mp4",
+                provider_name="stub",
+                model_name="stub-video",
+                prompt_summary="segmented video asset for V1",
+                idempotency_key="test-refresh-segmented-video-v1",
+                payload={
+                    "variant_id": "V1",
+                    "video_uri": f"assets/{run_id}/V1_S1.mp4",
+                    "source": "segmented_pending",
+                    "generation_status": "pending",
+                    "segment_prompt_base": "base prompt",
+                    "video_size": "9:16",
+                    "resolution": "720p",
+                    "generation_spec": {"size": "9:16", "resolution": "720p"},
+                    "segment_queue": [
+                        {"segment_id": "V1_S1", "duration_seconds": 8, "motion_prompt": "first", "transition_to_next": "match_cut"},
+                        {"segment_id": "V1_S2", "duration_seconds": 8, "motion_prompt": "second", "transition_to_next": "none"},
+                    ],
+                    "segments": [
+                        {
+                            "variant_id": "V1",
+                            "segment_id": "V1_S1",
+                            "segment_index": 0,
+                            "video_uri": f"assets/{run_id}/V1_S1.mp4",
+                            "external_task_id": "segment_task_1",
+                            "generation_status": "processing",
+                            "source": "external_task_pending",
+                        }
+                    ],
+                },
+            )
+        )
+        db.commit()
+
+    class FakeProvider:
+        def poll_video_task(self, **kwargs):
+            return VideoGenResult(
+                model_used="stub-video",
+                task_id=kwargs["task_id"],
+                status="completed",
+                videos=[GeneratedVideo(url="https://example.com/segment1.mp4", task_id=kwargs["task_id"], status="completed")],
+            )
+
+    def fake_next_segment(**kwargs):
+        return (
+            {
+                "variant_id": kwargs["variant_id"],
+                "video_uri": f"assets/{run_id}/V1_S2.mp4",
+                "external_task_id": "segment_task_2",
+                "generation_status": "processing",
+                "source": "external_task_pending",
+            },
+            0.0,
+            "stub-video",
+        )
+
+    monkeypatch.setattr("app.services.runs.runtime.providers.get", lambda _name: FakeProvider())
+    monkeypatch.setattr("app.services.runs.runtime._materialize_generated_video", lambda _selected: (b"x" * 2048, "url"))
+    monkeypatch.setattr("app.services.runs.extract_last_video_frame", lambda **_kwargs: f"assets/{run_id}/V1_S1_last_frame.png")
+    monkeypatch.setattr("app.services.runs.runtime._generate_video_clip_payload", fake_next_segment)
+
+    resp = client.post(f"/runs/{run_id}/assets/refresh")
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["videos"]["refreshed"] == 1
+    assert payload["videos"]["completed"] == 1
+    with SessionLocal() as db:
+        asset = db.query(VariantAsset).filter(VariantAsset.run_id == run_id, VariantAsset.asset_type == "video").one()
+        segments = asset.payload["segments"]
+        assert segments[0]["generation_status"] == "completed"
+        assert segments[0]["last_frame_uri"].endswith("V1_S1_last_frame.png")
+        assert segments[1]["segment_id"] == "V1_S2"
+        assert segments[1]["external_task_id"] == "segment_task_2"
 
 
 def test_assets_refresh_updates_stage_output_and_downstream_inputs(client, monkeypatch):

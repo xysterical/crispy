@@ -191,6 +191,9 @@ class PlanningBrief(BaseModel):
     constraints: list[str] = Field(default_factory=list)
     gm_lessons: list[dict] = Field(default_factory=list)
     surface_strategy: dict = Field(default_factory=dict)
+    creative_director_plan: dict = Field(default_factory=dict)
+    production_plan: dict = Field(default_factory=dict)
+    quality_gates: list[dict] = Field(default_factory=list)
 
 
 class VariantCandidate(BaseModel):

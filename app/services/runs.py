@@ -72,6 +72,7 @@ from app.services.marketplace_qa import MARKETPLACE_REVIEW_TAGS, is_marketplace_
 from app.services.personas import get_persona
 from app.services.gm_evolution import compile_run_outcome_reflection, resolve_active_gm_policy
 from app.services.reference_library import build_reference_bundle
+from app.services.video_frames import extract_last_video_frame, stitch_video_files
 from app.services.visual_qa import inspect_visual_asset
 
 
@@ -808,9 +809,15 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
             **base,
             "variants": _stage_output_optional(db, run.id, "divergence"),
             "intake": _stage_output_optional(db, run.id, "intake"),
+            "planning": _stage_output_optional(db, run.id, "planning"),
         }
     elif task.stage_name == "storyboard_image_generation":
-        payload = {**base, "video_scripts": _stage_output_optional(db, run.id, "video_scripting")}
+        payload = {
+            **base,
+            "video_scripts": _stage_output_optional(db, run.id, "video_scripting"),
+            "intake": _stage_output_optional(db, run.id, "intake"),
+            "planning": _stage_output_optional(db, run.id, "planning"),
+        }
     elif task.stage_name == "video_generation":
         payload = {
             **base,
@@ -924,10 +931,12 @@ def _generated_asset_failure(payload: dict, uri: str | None) -> tuple[str | None
     status = str(payload.get("generation_status") or "").lower()
     if status in {"failed", "cancelled", "canceled"}:
         return TaskFailureCategory.PROVIDER_ERROR.value, f"provider task status={status}"
+    if status in {"submitted", "queued", "pending", "processing", "running"}:
+        return None, None
     source = str(payload.get("source") or "").lower()
     if source == "placeholder":
         return TaskFailureCategory.PROVIDER_ERROR.value, "provider returned placeholder media"
-    if source == "external_task_pending":
+    if source in {"external_task_pending", "segmented_pending"}:
         return None, None
     if uri and not _uri_has_payload(uri):
         return TaskFailureCategory.PROVIDER_ERROR.value, "generated media file is empty or placeholder-sized"
@@ -1517,6 +1526,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 pipeline_mode=run.pipeline_mode,
                 runtime_config=runtime_config,
                 reference_bundle=reference_bundle,
+                planning=task.input_payload.get("planning"),
             )
         elif task.stage_name == "storyboard_image_generation":
             scripts = VideoScriptPack.model_validate(task.input_payload["video_scripts"])
@@ -1565,6 +1575,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 runtime_config=storyboard_runtime_config,
                 historical_references=reference_bundle["frames"] or reference_bundle["images"],
                 intake=ProductIntake.model_validate(task.input_payload["intake"]) if task.input_payload.get("intake") else None,
+                planning=task.input_payload.get("planning"),
             )
         elif task.stage_name == "video_generation":
             scripts = VideoScriptPack.model_validate(task.input_payload["video_scripts"])
@@ -2223,6 +2234,146 @@ def run_variants(
     }
 
 
+def _pending_status(value: object) -> bool:
+    return str(value or "").lower() in {"", "submitted", "queued", "pending", "processing", "running"}
+
+
+def _segment_prompt(base_prompt: str, segment: dict) -> str:
+    return (
+        f"{base_prompt}\n\nSegment {segment.get('segment_id')}: {segment.get('motion_prompt')}. "
+        f"First frame: {segment.get('first_frame_prompt')}. Last frame target: {segment.get('last_frame_prompt')}. "
+        f"Continuity constraints: {segment.get('continuity_constraints') or []}. "
+        f"Transition to next: {segment.get('transition_to_next')}."
+    )
+
+
+def _submit_next_video_segment(
+    *,
+    run: PipelineRun,
+    payload: dict,
+    provider_name: str,
+    model_name: str,
+    runtime_config: dict,
+    video_runtime: dict,
+) -> tuple[dict | None, float]:
+    queued = payload.get("segment_queue") or []
+    segments = payload.get("segments") or []
+    next_index = len(segments)
+    if next_index >= len(queued):
+        return None, 0.0
+    previous = segments[-1] if segments else {}
+    bridge_frame_uri = previous.get("last_frame_uri")
+    segment = queued[next_index]
+    generation_spec = {**(payload.get("generation_spec") or {}), "duration": int(segment.get("duration_seconds") or 8)}
+    if bridge_frame_uri:
+        data_url = runtime._local_image_to_data_url(str(bridge_frame_uri))
+        if data_url:
+            generation_spec["image_urls"] = [data_url]
+    segment_payload, cost, _ = runtime._generate_video_clip_payload(
+        run_id=run.id,
+        variant_id=str(payload.get("variant_id") or "variant"),
+        video_prompt=_segment_prompt(str(payload.get("segment_prompt_base") or ""), segment),
+        video_size=str(payload.get("video_size") or generation_spec.get("size") or "9:16"),
+        resolution=str(payload.get("resolution") or generation_spec.get("resolution") or "720p"),
+        duration_seconds=int(segment.get("duration_seconds") or generation_spec.get("duration") or 8),
+        generation_spec=generation_spec,
+        provider=provider_name,
+        model=model_name,
+        runtime_config={**runtime_config, "video": video_runtime},
+        video_filename=f"{segment.get('segment_id')}{payload.get('asset_suffix') or ''}.mp4",
+        force_regenerate=False,
+    )
+    segment_payload["segment_id"] = segment.get("segment_id")
+    segment_payload["segment_index"] = next_index
+    segment_payload["transition_to_next"] = segment.get("transition_to_next")
+    return segment_payload, cost
+
+
+def _refresh_segmented_video_payload(
+    *,
+    run: PipelineRun,
+    payload: dict,
+    provider,
+    provider_name: str,
+    model_name: str,
+    runtime_config: dict,
+    video_runtime: dict,
+) -> tuple[dict, int, int]:
+    refreshed = 0
+    completed = 0
+    segments = [dict(item) for item in payload.get("segments") or []]
+    for segment in segments:
+        task_id = segment.get("external_task_id")
+        if not task_id or not _pending_status(segment.get("generation_status")):
+            continue
+        result = provider.poll_video_task(
+            task_id=task_id,
+            model=model_name,
+            api_base_url=video_runtime.get("api_base_url") or runtime_config.get("api_base_url"),
+            api_key=video_runtime.get("api_key") or runtime_config.get("api_key"),
+            extra=video_runtime.get("extra") or runtime_config.get("extra"),
+        )
+        selected = result.videos[0] if result.videos else None
+        refreshed += 1
+        segment["generation_status"] = result.status or (selected.status if selected else None) or segment.get("generation_status")
+        segment["raw_response"] = result.raw_response or (selected.raw_response if selected else {}) or segment.get("raw_response") or {}
+        if selected and selected.url:
+            segment["result_url"] = selected.url
+        if selected and (selected.url or selected.b64_data):
+            video_bytes, source = runtime._materialize_generated_video(selected)
+            if video_bytes:
+                filename = Path(segment.get("video_uri") or f"{segment.get('segment_id')}.mp4").name
+                uri = runtime.media.write_binary_artifact(run.id, filename, video_bytes)
+                segment["video_uri"] = uri
+                segment["source"] = source
+                segment["generation_status"] = "completed"
+                segment["last_frame_uri"] = extract_last_video_frame(
+                    video_path=Path(uri),
+                    output_path=runtime.media.settings.assets_dir / run.id / f"{segment.get('segment_id')}_last_frame.png",
+                )
+                completed += 1
+        break
+
+    payload["segments"] = segments
+    if completed:
+        next_segment, _ = _submit_next_video_segment(
+            run=run,
+            payload=payload,
+            provider_name=provider_name,
+            model_name=model_name,
+            runtime_config=runtime_config,
+            video_runtime=video_runtime,
+        )
+        if next_segment:
+            segments.append(next_segment)
+            payload["segments"] = segments
+
+    queued = payload.get("segment_queue") or []
+    complete_paths = [
+        Path(str(segment.get("video_uri")))
+        for segment in sorted(segments, key=lambda item: int(item.get("segment_index") or 0))
+        if str(segment.get("generation_status") or "").lower() in {"completed", "succeeded", "success", "ready"}
+        and runtime._artifact_has_payload(segment.get("video_uri"))
+    ]
+    if queued and len(complete_paths) == len(queued):
+        stitched_uri = stitch_video_files(
+            video_paths=complete_paths,
+            output_path=runtime.media.settings.assets_dir / run.id / f"{payload.get('variant_id')}_stitched{payload.get('asset_suffix') or ''}.mp4",
+        )
+        if stitched_uri:
+            payload["video_uri"] = stitched_uri
+            payload["source"] = "stitched_segments"
+            payload["generation_status"] = "completed"
+            payload = runtime._attach_generated_video_frames(run_id=run.id, video_payload=payload)
+            payload["visual_qa"] = runtime._local_media_qa(asset_type="video", uri=stitched_uri, payload=payload)
+    else:
+        payload["source"] = "segmented_pending"
+        payload["generation_status"] = "pending"
+        if segments:
+            payload["video_uri"] = segments[-1].get("video_uri") or payload.get("video_uri")
+    return payload, refreshed, completed
+
+
 def refresh_video_task_assets(db: Session, run_id: str) -> dict:
     run = get_run(db, run_id)
     config = resolve_agent_config(
@@ -2247,6 +2398,26 @@ def refresh_video_task_assets(db: Session, run_id: str) -> dict:
     refreshed_payloads_by_variant: dict[str, dict] = {}
     for asset in assets:
         payload = dict(asset.payload or {})
+        if payload.get("segment_queue"):
+            payload, segment_refreshed, segment_completed = _refresh_segmented_video_payload(
+                run=run,
+                payload=payload,
+                provider=provider,
+                provider_name=provider_name,
+                model_name=model_name,
+                runtime_config=runtime_config,
+                video_runtime=video_runtime,
+            )
+            refreshed += segment_refreshed
+            completed += segment_completed
+            failure_category, error_message = _generated_asset_failure(payload, payload.get("video_uri"))
+            asset.uri = payload.get("video_uri") or asset.uri
+            asset.payload = payload
+            asset.failure_category = failure_category
+            asset.error_message = error_message
+            variant_id = str(payload.get("variant_id") or asset.variant.variant_id)
+            refreshed_payloads_by_variant[variant_id] = dict(payload)
+            continue
         task_id = payload.get("external_task_id")
         status = str(payload.get("generation_status") or "").lower()
         if not task_id or status in {"completed", "succeeded", "success"}:
@@ -2593,6 +2764,7 @@ def regenerate_variant_assets(
             pipeline_mode=run.pipeline_mode,
             runtime_config=runtime_config,
             reference_bundle=reference_bundle,
+            planning=task.input_payload.get("planning"),
         )
     elif stage_name == "storyboard_image_generation":
         campaign = db.get(Campaign, run.campaign_id)
@@ -2611,6 +2783,8 @@ def regenerate_variant_assets(
             model=model_name,
             runtime_config=runtime_config,
             historical_references=reference_bundle["frames"] or reference_bundle["images"],
+            intake=ProductIntake.model_validate(task.input_payload["intake"]) if task.input_payload.get("intake") else None,
+            planning=task.input_payload.get("planning"),
         )
     elif stage_name == "video_generation":
         storyboard_output = _get_stage_output(db, run_id, "storyboard_image_generation")
