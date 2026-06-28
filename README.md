@@ -42,13 +42,21 @@ export CRISPY_API_KEY_KIMI="sk-..."
 # Notion calendar (optional — for content scheduling)
 export CRISPY_API_KEY_NOTION="ntn_..."
 export CRISPY_API_KEY_NOTION_DATABASE="your-database-id"
+
+# Shopify data sync (optional — for products, orders, and store memory)
+export CRISPY_API_KEY_SHOPIFY_DOMAIN="your-store.myshopify.com"
+export CRISPY_API_KEY_SHOPIFY="shpat_..."
+
+# Meta Ads data sync (optional — for campaigns, ads, and performance memory)
+export CRISPY_API_KEY_META="EAAB..."
+export CRISPY_API_KEY_META_ACCOUNT="1234567890"
 ```
 
 All keys use the `CRISPY_API_KEY_*` prefix and are auto-discovered.
 
 > 1. To connect to Notion, add an [Internal Connection](https://www.notion.so/profile/integrations/internal), copy its Installation Access Token as Notion api key. The internal connection will be showed as a user-like bot. Give it content access to a database you choose. Extract the code between `notion.so/` and `?v` in the database's website link. This code is the Notion database key.
-> 2. To connect to Meta
-> 3. To connect to Shopify
+> 2. To connect to Shopify, create or use a Shopify Admin app for the target store, grant read access for products and orders, then copy the Admin API access token to `CRISPY_API_KEY_SHOPIFY`. Use the `.myshopify.com` store domain for `CRISPY_API_KEY_SHOPIFY_DOMAIN`; the app also accepts the short store name and adds `.myshopify.com` automatically.
+> 3. To connect to Meta, create or use a Meta app/system user token that can read the target ad account, campaigns, ads, and insights. Put the token in `CRISPY_API_KEY_META` and the numeric ad account id in `CRISPY_API_KEY_META_ACCOUNT` without the `act_` prefix.
 
 Apply and verify:
 
@@ -66,6 +74,21 @@ uv run uvicorn app.main:app
 ```
 
 Open **http://localhost:8000** in your browser.
+
+### 4. Sync Shopify and Meta data
+
+Open **API & Integration Configs** first and confirm the Shopify / Meta rows show configured env vars. Then open **Data Dashboard**, select a workspace and project, and use:
+
+- **Sync Shopify** — pulls products and orders, updates product metadata, and writes product/store GM memory.
+- **Sync Meta** — pulls campaigns, ads, and recent ad performance, then imports performance feedback into GM memory.
+- **Auto-sync intervals** — set Shopify or Meta to 15, 30, or 60 minutes. Set the interval back to `Off` to disable background sync.
+
+Manual API sync is also available:
+
+```bash
+curl -X POST "http://localhost:8000/integrations/shopify/sync?workspace_name=Default&project_name=Default&sync_type=all"
+curl -X POST "http://localhost:8000/integrations/meta/sync?workspace_name=Default&project_name=Default&sync_type=all"
+```
 
 ## Dashboard Tour
 
@@ -86,7 +109,7 @@ Open **http://localhost:8000** in your browser.
 3. **Create a run** — Click the + button, fill in product info, upload reference images/videos![Screenshot](other/iShot_2026-05-06_13.25.47.png)
 4. **Review outputs** — Each stage pauses for human approval (or use semi_auto/full_auto mode)
 5. **Schedule winners** — Push approved creatives to Notion Calendar with publish dates
-6. **Import feedback** — Upload CSV with ad performance data (impressions, clicks, spend, conversions, revenue). Or use API portals to automatically feedback.
+6. **Import feedback** — Upload CSV with ad performance data (impressions, clicks, spend, conversions, revenue), or sync Shopify / Meta data from Data Dashboard.
 7. **Next run improves** — The planning agent automatically uses winning patterns from past feedback
 
 ## Pipeline Modes
