@@ -318,6 +318,57 @@ def test_video_generation_stitches_completed_segments(monkeypatch):
     assert video["video_uri"].endswith("V1_stitched.mp4")
 
 
+def test_segmented_video_generation_marks_first_segment_submit_failure(monkeypatch):
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+    monkeypatch.setattr(
+        runtime,
+        "_generate_video_clip_payload",
+        lambda **kwargs: (
+            {
+                "variant_id": kwargs["variant_id"],
+                "video_uri": "assets/run/V1_generation_error.txt",
+                "source": "placeholder",
+                "generation_status": None,
+                "error": "payment_required",
+            },
+            0.0,
+            "",
+        ),
+    )
+
+    output = runtime.run_video_generation(
+        run_id="runtime-video-first-segment-failure",
+        script_pack=VideoScriptPack(
+            scripts=[
+                VideoScriptItem(
+                    variant_id="V1",
+                    hook="Hook",
+                    script="Script",
+                    segments=[
+                        {
+                            "segment_id": "V1_S1",
+                            "variant_id": "V1",
+                            "duration_seconds": 12,
+                            "motion_prompt": "first segment",
+                        }
+                    ],
+                )
+            ],
+            product_context={"product_name": "robe dress"},
+            generation_spec={"size": "9:16", "resolution": "720p", "duration": 12},
+        ),
+        creative_specs={"video_size": "9:16", "video_duration_seconds": 12},
+        provider="apimart",
+        model="doubao-seedance-2.0",
+    )
+
+    video = output.payload["videos"][0]
+    assert video["generation_status"] == "failed"
+    assert video["source"] == "placeholder"
+    assert video["error"] == "payment_required"
+
+
 def test_storyboard_and_video_generation_do_not_inject_leash_defaults_and_use_structured_specs():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)

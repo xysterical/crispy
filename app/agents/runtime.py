@@ -2335,6 +2335,10 @@ class AgentsRuntime:
                         "require_physical_plausibility": True,
                     },
                 }
+                if not stitched_uri and segment_payloads and segment_payloads[-1].get("error"):
+                    video_payload["source"] = segment_payloads[-1].get("source") or "placeholder"
+                    video_payload["generation_status"] = "failed"
+                    video_payload["error"] = segment_payloads[-1].get("error")
             else:
                 video_payload, clip_cost, clip_model = self._generate_video_clip_payload(
                     run_id=run_id,
