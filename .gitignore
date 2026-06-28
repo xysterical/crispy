@@ -13,6 +13,8 @@ wheels/
 # Local runtime artifacts
 assets/
 *.db
+*.db-shm
+*.db-wal
 
 # Worktrees and superpowers
 .worktrees/
@@ -42,4 +44,7 @@ assets/
 # Else
 .DS_Store
 .*
+docs/superpowers/
+fortest/
+tutorial
 
