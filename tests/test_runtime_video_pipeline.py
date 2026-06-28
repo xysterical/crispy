@@ -36,7 +36,7 @@ class _FakeCompletedVideoProvider:
         payload = base64.b64encode((f"video-{len(self.requests)}".encode("utf-8") * 256)).decode("ascii")
         return VideoGenResult(
             model_used=request.model,
-            videos=[GeneratedVideo(b64_data=payload, status="completed")],
+            videos=[GeneratedVideo(b64_data=payload, status="completed", raw_response={"last_frame_url": f"https://example.com/last-{len(self.requests)}.png"})],
             status="completed",
             raw_response={"status": "completed"},
         )
@@ -315,6 +315,9 @@ def test_video_generation_stitches_completed_segments(monkeypatch):
 
     video = output.payload["videos"][0]
     assert [request.duration_seconds for request in provider.requests] == [12, 12, 11]
+    assert all(request.return_last_frame is True for request in provider.requests)
+    assert provider.requests[1].image_with_roles == [{"url": "https://example.com/last-1.png", "role": "first_frame"}]
+    assert provider.requests[2].image_with_roles == [{"url": "https://example.com/last-2.png", "role": "first_frame"}]
     assert video["source"] == "stitched_segments"
     assert video["duration_seconds"] == 35.0
     assert len(video["segments"]) == 3

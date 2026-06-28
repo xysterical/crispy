@@ -541,7 +541,10 @@ def test_generate_video_async_task_polling_and_alias(monkeypatch):
                         "status": "completed",
                         "result": {
                             "videos": [
-                                {"url": ["https://example.com/video_from_task.mp4"]},
+                                {
+                                    "url": ["https://example.com/video_from_task.mp4"],
+                                    "last_frame_url": "https://example.com/video_last_frame.png",
+                                },
                             ]
                         },
                     },
@@ -565,6 +568,7 @@ def test_generate_video_async_task_polling_and_alias(monkeypatch):
     )
     assert len(result.videos) == 1
     assert result.videos[0].url == "https://example.com/video_from_task.mp4"
+    assert result.videos[0].raw_response["last_frame_url"] == "https://example.com/video_last_frame.png"
     sent = client.posted_json_by_url[endpoint]
     assert sent["model"] == "doubao-seedance-2.0"
     assert sent["duration"] == 5

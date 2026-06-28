@@ -346,6 +346,16 @@ class AgentsRuntime:
         url = str(value or "").strip()
         return url if url.startswith(("http://", "https://", "asset://")) else None
 
+    def _last_frame_url_from_raw(self, *payloads: dict | None) -> str | None:
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            for key in ("last_frame_url", "last_frame", "last_frame_image_url"):
+                url = self._provider_reference_url(payload.get(key))
+                if url:
+                    return url
+        return None
+
     def _local_video_to_data_url(self, path_str: str, *, max_bytes: int = 20 * 1024 * 1024) -> str | None:
         path = Path(path_str)
         if not path.exists() or not path.is_file():
@@ -2159,6 +2169,7 @@ class AgentsRuntime:
         generation_status = None
         external_task_id = None
         result_url = None
+        last_frame_url = None
         raw_response: dict = {}
         provider_errors: list[dict] = []
         estimated_cost = 0.0
@@ -2190,6 +2201,7 @@ class AgentsRuntime:
                     generation_status = selected.status or generation_status
                     result_url = selected.url
                     raw_response = selected.raw_response or raw_response
+                last_frame_url = self._last_frame_url_from_raw(raw_response, video_result.raw_response)
                 if selected and (selected.url or selected.b64_data):
                     video_bytes, source = self._materialize_generated_video(selected)
                     video_uri = self.media.write_binary_artifact(run_id, video_filename, video_bytes)
@@ -2215,6 +2227,7 @@ class AgentsRuntime:
             "external_task_id": external_task_id,
             "generation_status": generation_status,
             "result_url": result_url,
+            "last_frame_url": last_frame_url,
             "raw_response": raw_response,
             "provider_errors": provider_errors,
             "quality_constraints": {
@@ -2298,11 +2311,12 @@ class AgentsRuntime:
                 segment_queue = [segment.model_dump() for segment in script.segments]
                 for segment_index, segment in enumerate(script.segments):
                     segment_duration = int(segment.duration_seconds)
-                    segment_spec = {**generation_spec, "duration": segment_duration}
+                    segment_spec = {**generation_spec, "duration": segment_duration, "return_last_frame": True}
                     if bridge_frame_uri:
                         bridge_url = self._provider_reference_url(bridge_frame_uri)
                         if bridge_url:
-                            segment_spec["image_urls"] = [bridge_url]
+                            segment_spec.pop("image_urls", None)
+                            segment_spec["image_with_roles"] = [{"url": bridge_url, "role": "first_frame"}]
                     segment_prompt = (
                         f"{video_prompt}\n\nSegment {segment.segment_id}: {segment.motion_prompt}. "
                         f"First frame: {segment.first_frame_prompt}. Last frame target: {segment.last_frame_prompt}. "
@@ -2338,6 +2352,8 @@ class AgentsRuntime:
                             output_path=self.media.settings.assets_dir / run_id / f"{segment.segment_id}_last_frame.png",
                         )
                         segment_payload["last_frame_uri"] = bridge_frame_uri
+                        if segment_payload.get("last_frame_url"):
+                            bridge_frame_uri = str(segment_payload["last_frame_url"])
                     segment_payloads.append(segment_payload)
                     if not bridge_frame_uri:
                         break

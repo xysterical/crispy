@@ -2274,11 +2274,16 @@ def _submit_next_video_segment(
     if next_index >= len(queued):
         return None, 0.0
     previous = segments[-1] if segments else {}
-    bridge_frame_uri = _provider_reference_url(previous.get("last_frame_uri"))
+    bridge_frame_uri = _provider_reference_url(previous.get("last_frame_url") or previous.get("last_frame_uri"))
     segment = queued[next_index]
-    generation_spec = {**(payload.get("generation_spec") or {}), "duration": int(segment.get("duration_seconds") or 8)}
+    generation_spec = {
+        **(payload.get("generation_spec") or {}),
+        "duration": int(segment.get("duration_seconds") or 8),
+        "return_last_frame": True,
+    }
     if bridge_frame_uri:
-        generation_spec["image_urls"] = [bridge_frame_uri]
+        generation_spec.pop("image_urls", None)
+        generation_spec["image_with_roles"] = [{"url": bridge_frame_uri, "role": "first_frame"}]
     segment_payload, cost, _ = runtime._generate_video_clip_payload(
         run_id=run.id,
         variant_id=str(payload.get("variant_id") or "variant"),
@@ -2329,6 +2334,9 @@ def _refresh_segmented_video_payload(
         segment["raw_response"] = result.raw_response or (selected.raw_response if selected else {}) or segment.get("raw_response") or {}
         if selected and selected.url:
             segment["result_url"] = selected.url
+        last_frame_url = runtime._last_frame_url_from_raw(getattr(selected, "raw_response", None), result.raw_response)
+        if last_frame_url:
+            segment["last_frame_url"] = last_frame_url
         if selected and (selected.url or selected.b64_data):
             video_bytes, source = runtime._materialize_generated_video(selected)
             if video_bytes:

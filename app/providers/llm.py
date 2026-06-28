@@ -48,6 +48,7 @@ def _normalize_task_result(result: dict[str, Any]) -> list[dict[str, Any]]:
                 "b64_json": b64_json,
                 "b64_data": b64_data,
                 "revised_prompt": revised_prompt,
+                "last_frame_url": _first_url(result.get("last_frame_url") or result.get("last_frame") or result.get("last_frame_image_url")),
             }
         ]
     for key in ("image_urls", "video_urls"):
@@ -87,9 +88,11 @@ def _normalize_task_result(result: dict[str, Any]) -> list[dict[str, Any]]:
             final_url = _first_url(item.get("url")) or _first_url(item.get("video_url")) or _first_url(item.get("video_urls"))
             normalized_videos.append(
                 {
+                    **item,
                     "url": final_url,
                     "b64_json": item.get("b64_json"),
                     "b64_data": item.get("b64_data"),
+                    "last_frame_url": _first_url(item.get("last_frame_url") or item.get("last_frame") or item.get("last_frame_image_url")),
                 }
             )
         if normalized_videos:

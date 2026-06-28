@@ -959,11 +959,22 @@ def test_assets_refresh_advances_segmented_video_queue(client, monkeypatch):
                 model_used="stub-video",
                 task_id=kwargs["task_id"],
                 status="completed",
-                videos=[GeneratedVideo(url="https://example.com/segment1.mp4", task_id=kwargs["task_id"], status="completed")],
+                videos=[
+                    GeneratedVideo(
+                        url="https://example.com/segment1.mp4",
+                        task_id=kwargs["task_id"],
+                        status="completed",
+                        raw_response={"last_frame_url": "https://example.com/segment1-last.png"},
+                    )
+                ],
             )
 
     def fake_next_segment(**kwargs):
-        assert not any(str(url).startswith("data:image/") for url in kwargs["generation_spec"].get("image_urls", []))
+        assert kwargs["generation_spec"]["return_last_frame"] is True
+        assert kwargs["generation_spec"]["image_with_roles"] == [
+            {"url": "https://example.com/segment1-last.png", "role": "first_frame"}
+        ]
+        assert not kwargs["generation_spec"].get("image_urls")
         return (
             {
                 "variant_id": kwargs["variant_id"],
