@@ -2320,8 +2320,6 @@ def _submit_next_video_segment(
     reference_instruction = ""
     if reference_mode == "first_frame":
         reference_instruction = " Reference usage: first_frame is the previous segment tail; maintain the same model and product identity."
-    elif reference_mode == "reference_board_tail":
-        reference_instruction = " Reference usage: the single input image is a reference board, not the target composition; continue from the previous tail area while preserving the product/model anchor areas."
     elif reference_mode == "tail_with_anchors":
         reference_instruction = " Reference usage: image 1 is the previous segment tail frame; remaining images are product/model anchors."
     video_prompt = _segment_prompt(str(payload.get("segment_prompt_base") or ""), segment) + reference_instruction

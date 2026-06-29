@@ -505,7 +505,7 @@ def test_apimart_segmented_video_skips_unhosted_local_tail_frame(monkeypatch):
     assert output.payload["videos"][0]["segments"][1]["reference_mode"] == "anchors"
 
 
-def test_segmented_video_generation_collapses_refs_to_board_when_provider_accepts_one_image(monkeypatch, tmp_path):
+def test_segmented_video_generation_truncates_refs_when_provider_accepts_one_image(monkeypatch, tmp_path):
     runtime = AgentsRuntime()
     provider = _FakeCompletedVideoProviderWithoutLastFrameUrl()
     runtime.providers = _FakeRegistry(provider)
@@ -554,7 +554,7 @@ def test_segmented_video_generation_collapses_refs_to_board_when_provider_accept
     assert len(provider.requests[1].image_urls) == 1
     assert provider.requests[1].image_urls[0].startswith("data:image/png;base64,")
     assert provider.requests[1].image_with_roles == []
-    assert "single input image is a reference board" in provider.requests[1].prompt
+    assert "previous segment tail frame" in provider.requests[1].prompt
 
 
 def test_segmented_video_generation_preserves_initial_role_references(monkeypatch):
@@ -607,7 +607,7 @@ def test_segmented_video_generation_preserves_initial_role_references(monkeypatc
     assert provider.requests[1].image_with_roles == [{"url": "https://example.com/last-1.png", "role": "first_frame"}]
 
 
-def test_single_video_generation_collapses_refs_to_board_when_provider_accepts_one_image():
+def test_single_video_generation_truncates_refs_when_provider_accepts_one_image():
     runtime = AgentsRuntime()
     provider = _FakeVideoProvider()
     runtime.providers = _FakeRegistry(provider)
@@ -642,7 +642,6 @@ def test_single_video_generation_collapses_refs_to_board_when_provider_accepts_o
     assert provider.last_request is not None
     assert len(provider.last_request.image_urls) == 1
     assert provider.last_request.image_urls[0].startswith("data:image/png;base64,")
-    assert "single input image is a reference board" in provider.last_request.prompt
 
 
 def test_segmented_video_generation_marks_first_segment_submit_failure(monkeypatch):

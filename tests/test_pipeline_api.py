@@ -1220,7 +1220,7 @@ def test_assets_refresh_advances_segmented_video_queue(client, monkeypatch):
         assert segments[1]["reference_image_count"] == 1
 
 
-def test_submit_next_video_segment_uses_local_tail_board_and_human_constraints(monkeypatch, tmp_path):
+def test_submit_next_video_segment_uses_local_tail_frame_and_human_constraints(monkeypatch, tmp_path):
     png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC")
     tail = tmp_path / "tail.png"
     tail.write_bytes(png)
@@ -1231,7 +1231,7 @@ def test_submit_next_video_segment_uses_local_tail_board_and_human_constraints(m
         assert len(spec["image_urls"]) == 1
         assert spec["image_urls"][0].startswith("data:image/png;base64,")
         assert "image_with_roles" not in spec
-        assert "single input image is a reference board" in kwargs["video_prompt"]
+        assert "previous segment tail frame" in kwargs["video_prompt"]
         assert "Human anatomy constraint" in kwargs["video_prompt"]
         return (
             {
@@ -1272,7 +1272,7 @@ def test_submit_next_video_segment_uses_local_tail_board_and_human_constraints(m
     )
 
     assert next_segment["segment_id"] == "V1_S2"
-    assert next_segment["reference_mode"] == "reference_board_tail"
+    assert next_segment["reference_mode"] == "tail_with_anchors"
     assert next_segment["reference_image_count"] == 1
 
 
