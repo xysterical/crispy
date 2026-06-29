@@ -2310,6 +2310,11 @@ def _submit_next_video_segment(
         base_image_refs,
         str(bridge_frame_uri) if bridge_frame_uri else None,
         max_reference_images=max_reference_images,
+        allow_data_urls=not runtime._video_runtime_requires_hosted_references(
+            fallback_provider=provider_name,
+            fallback_model=model_name,
+            runtime_config={"video": video_runtime},
+        ),
     )
     generation_spec.update(reference_payload)
     reference_instruction = ""

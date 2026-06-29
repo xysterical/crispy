@@ -384,20 +384,38 @@ class AgentsRuntime:
         url = str(value or "").strip()
         return url if url.startswith(("http://", "https://", "asset://")) else None
 
+    def _video_runtime_requires_hosted_references(
+        self,
+        *,
+        fallback_provider: str,
+        fallback_model: str,
+        runtime_config: dict | None,
+    ) -> bool:
+        video_runtime = (runtime_config or {}).get("video") if isinstance(runtime_config, dict) else None
+        video_runtime = video_runtime if isinstance(video_runtime, dict) else {}
+        provider_name = str(video_runtime.get("provider_name") or fallback_provider or "").lower()
+        model_name = str(video_runtime.get("model_name") or fallback_model or "").lower()
+        api_base_url = str(video_runtime.get("api_base_url") or "").lower()
+        return ("apimart" in provider_name or "apimart" in api_base_url) and model_name.startswith("doubao-seedance")
+
     def _segment_image_reference_payload(
         self,
         base_image_urls: list[str] | None,
         bridge_frame_uri: str | None,
         *,
         max_reference_images: int = 9,
+        allow_data_urls: bool = True,
     ) -> tuple[dict, str]:
-        base_refs = [str(item).strip() for item in (base_image_urls or []) if str(item).strip()]
+        if allow_data_urls:
+            base_refs = [str(item).strip() for item in (base_image_urls or []) if str(item).strip()]
+        else:
+            base_refs = [url for item in (base_image_urls or []) if (url := self._provider_reference_url(item))]
         max_refs = max(1, min(9, int(max_reference_images or 9)))
         if bridge_frame_uri:
             bridge_url = self._provider_reference_url(bridge_frame_uri)
             if bridge_url:
                 return {"image_with_roles": [{"url": bridge_url, "role": "first_frame"}]}, "first_frame"
-            bridge_data_url = self._local_image_to_data_url(bridge_frame_uri)
+            bridge_data_url = self._local_image_to_data_url(bridge_frame_uri) if allow_data_urls else None
             if bridge_data_url:
                 refs = [bridge_data_url, *base_refs]
                 if max_refs == 1 and len(refs) > 1:
@@ -2524,6 +2542,11 @@ class AgentsRuntime:
                     max_reference_images = int(generation_spec.get("max_reference_images") or 9)
                 except (TypeError, ValueError):
                     max_reference_images = 9
+                allow_data_url_references = not self._video_runtime_requires_hosted_references(
+                    fallback_provider=provider,
+                    fallback_model=model,
+                    runtime_config=runtime_config,
+                )
                 for segment_index, segment in enumerate(script.segments):
                     segment_duration = int(segment.duration_seconds)
                     segment_spec = {**generation_spec, "duration": segment_duration, "return_last_frame": True}
@@ -2536,6 +2559,7 @@ class AgentsRuntime:
                             base_image_refs,
                             bridge_frame_uri,
                             max_reference_images=max_reference_images,
+                            allow_data_urls=allow_data_url_references,
                         )
                     segment_spec.update(segment_reference_payload)
                     reference_instruction = ""

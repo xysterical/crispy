@@ -153,8 +153,17 @@ def _validate_apimart_seedance_request(request: "VideoGenRequest", *, model_name
             if role not in _SEEDANCE_IMAGE_ROLE_VALUES:
                 supported = ", ".join(sorted(_SEEDANCE_IMAGE_ROLE_VALUES))
                 raise ValueError(f"doubao-seedance image_with_roles.role must be one of: {supported}")
+            _validate_seedance_reference_url(item.get("url"), field_name="image_with_roles.url")
+    for image_url in request.image_urls:
+        _validate_seedance_reference_url(image_url, field_name="image_urls")
     if request.resolution == "1080p" and not model_name.endswith("-face"):
         raise ValueError("doubao-seedance 1080p is only supported for *-face models")
+
+
+def _validate_seedance_reference_url(value: object, *, field_name: str) -> None:
+    url = str(value or "").strip()
+    if not url.startswith(("http://", "https://", "asset://")):
+        raise ValueError(f"doubao-seedance {field_name} only supports http/https or asset:// references")
 
 
 @dataclass(slots=True)

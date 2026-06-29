@@ -453,6 +453,58 @@ def test_segmented_video_generation_uses_local_tail_frame_with_identity_anchors(
     assert "image 1 is the previous segment tail frame" in provider.requests[1].prompt
 
 
+def test_apimart_segmented_video_skips_unhosted_local_tail_frame(monkeypatch):
+    runtime = AgentsRuntime()
+    provider = _FakeCompletedVideoProviderWithoutLastFrameUrl()
+    runtime.providers = _FakeRegistry(provider)
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    def fake_extract_last_frame(*, video_path, output_path):
+        output_path.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"))
+        return str(output_path)
+
+    def fake_stitch(*, video_paths, output_path):
+        output_path.write_bytes(b"stitched-video" * 256)
+        return str(output_path)
+
+    monkeypatch.setattr("app.agents.runtime.extract_last_video_frame", fake_extract_last_frame)
+    monkeypatch.setattr("app.agents.runtime.stitch_video_files", fake_stitch)
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="One dress, two moods",
+                script="A continuous segmented ad.",
+                segments=[
+                    {"segment_id": "V1_S1", "variant_id": "V1", "duration_seconds": 12, "motion_prompt": "model in apartment"},
+                    {"segment_id": "V1_S2", "variant_id": "V1", "duration_seconds": 12, "motion_prompt": "same model in street"},
+                ],
+            )
+        ],
+        product_context={"product_name": "silver dress"},
+        generation_spec={"size": "9:16", "resolution": "720p", "duration": 24},
+    )
+
+    output = runtime.run_video_generation(
+        run_id="runtime-video-apimart-no-data-tail",
+        script_pack=script_pack,
+        storyboard_frames=[{"raw_response": {"image_url": "https://example.com/storyboard-anchor.png"}}],
+        creative_specs={"video_size": "9:16", "video_duration_seconds": 24},
+        provider="openai",
+        model="gpt-4.1",
+        runtime_config={
+            "video": {"provider_name": "apimart", "model_name": "doubao-seedance-2.0"},
+            "force_regenerate": True,
+        },
+    )
+
+    assert output.payload["videos"][0]["source"] == "stitched_segments"
+    assert provider.requests[1].image_urls == ["https://example.com/storyboard-anchor.png"]
+    assert provider.requests[1].image_with_roles == []
+    assert output.payload["videos"][0]["segments"][1]["reference_mode"] == "anchors"
+
+
 def test_segmented_video_generation_collapses_refs_to_board_when_provider_accepts_one_image(monkeypatch, tmp_path):
     runtime = AgentsRuntime()
     provider = _FakeCompletedVideoProviderWithoutLastFrameUrl()

@@ -510,6 +510,20 @@ def test_generate_video_rejects_invalid_seedance_request_locally(monkeypatch):
             ),
             "video_urls and audio_urls are incompatible with image_with_roles",
         ),
+        (
+            VideoGenRequest(
+                model="doubao-seedance-2.0",
+                image_urls=["data:image/png;base64,AAAA"],
+            ),
+            "image_urls only supports http/https or asset:// references",
+        ),
+        (
+            VideoGenRequest(
+                model="doubao-seedance-2.0",
+                image_with_roles=[{"url": "/tmp/local-frame.png", "role": "first_frame"}],
+            ),
+            "image_with_roles.url only supports http/https or asset:// references",
+        ),
     ]
     for request, expected_error in invalid_requests:
         try:
