@@ -2,7 +2,7 @@
 
 ![Crispy](other/hero.png)
 
-CRISPY is a semi-automated multi-agent pipeline for ad creative generation — copy, image, and video — with a self-improving feedback loop. Built for e-commerce teams who run paid ads across Meta, TikTok, and Shopify.
+Crispy is a product-first creative operations system for e-commerce teams. It generates ad copy, product images, marketplace visuals, and short-form video assets around real SKUs, then uses store and ad performance feedback from Shopify, Meta, and CSV imports to improve future creative runs.
 
 ## Key Features
 
@@ -31,9 +31,9 @@ Given a random dog leash as input, the model generates the following high-fideli
 #### 2. Robe (Multi-View Comparison)
 Tested with a random robe sourced from the internet; the corresponding multi-view generation results are as follows:
 
-| Input Image | Video View 1 | Video View 2 | Video View 3 |
-| :---: | :---: | :---: | :---: |
-| ![robe](other/robe.jpg) | <video src="https://github.com/user-attachments/assets/3066a679-ddc8-47d9-9de1-df0d68a4c304" width="100%" controls></video> | <video src="https://github.com/user-attachments/assets/bfe00d55-6f9c-4dd6-8e7b-577474633a2f" width="100%" controls></video> | <video src="https://github.com/user-attachments/assets/4cbe01d5-6e0c-4a77-9b88-a94ab13ba55b" width="100%" controls></video> |
+| Input Image | Video View 1 | Video View 2 | 
+| :---: | :---: | :---: |
+| ![robe](other/robe.jpg) | <video src="https://github.com/user-attachments/assets/3066a679-ddc8-47d9-9de1-df0d68a4c304" width="100%" controls></video> | <video src="https://github.com/user-attachments/assets/bfe00d55-6f9c-4dd6-8e7b-577474633a2f" width="100%" controls></video> | 
 
 #### 3. White Dress (Long Video)
 Below is a 30-second continuous showcase generated from a single white dress image. By ensuring geometric and lighting consistency between the boundary frames of consecutive chunks, the model achieves a long-horizon temporal extension:
@@ -94,7 +94,7 @@ env | grep CRISPY_API_KEY | sort
 uv run uvicorn app.main:app
 ```
 
-Open **http://localhost:8000** in your browser.
+Open **http://localhost:8849** in your browser.
 
 ### 4. Sync Shopify and Meta data
 
@@ -107,8 +107,8 @@ Open **API & Integration Configs** first and confirm the Shopify / Meta rows sho
 Manual API sync is also available:
 
 ```bash
-curl -X POST "http://localhost:8000/integrations/shopify/sync?workspace_name=Default&project_name=Default&sync_type=all"
-curl -X POST "http://localhost:8000/integrations/meta/sync?workspace_name=Default&project_name=Default&sync_type=all"
+curl -X POST "http://localhost:8849/integrations/shopify/sync?workspace_name=Default&project_name=Default&sync_type=all"
+curl -X POST "http://localhost:8849/integrations/meta/sync?workspace_name=Default&project_name=Default&sync_type=all"
 ```
 
 ## Dashboard Tour
