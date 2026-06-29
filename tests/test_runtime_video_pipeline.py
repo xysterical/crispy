@@ -412,6 +412,96 @@ def test_segmented_video_generation_uses_local_tail_frame_with_identity_anchors(
     assert "image 1 is the previous segment tail frame" in provider.requests[1].prompt
 
 
+def test_segmented_video_generation_collapses_refs_to_board_when_provider_accepts_one_image(monkeypatch, tmp_path):
+    runtime = AgentsRuntime()
+    provider = _FakeCompletedVideoProviderWithoutLastFrameUrl()
+    runtime.providers = _FakeRegistry(provider)
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC")
+    anchor = tmp_path / "storyboard_anchor.png"
+    anchor.write_bytes(png)
+
+    def fake_extract_last_frame(*, video_path, output_path):
+        output_path.write_bytes(png)
+        return str(output_path)
+
+    def fake_stitch(*, video_paths, output_path):
+        output_path.write_bytes(b"stitched-video" * 256)
+        return str(output_path)
+
+    monkeypatch.setattr("app.agents.runtime.extract_last_video_frame", fake_extract_last_frame)
+    monkeypatch.setattr("app.agents.runtime.stitch_video_files", fake_stitch)
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="One dress, two moods",
+                script="A continuous segmented ad.",
+                segments=[
+                    {"segment_id": "V1_S1", "variant_id": "V1", "duration_seconds": 12, "motion_prompt": "apartment"},
+                    {"segment_id": "V1_S2", "variant_id": "V1", "duration_seconds": 12, "motion_prompt": "street"},
+                ],
+            )
+        ],
+        product_context={"product_name": "silver dress"},
+        generation_spec={"size": "9:16", "resolution": "720p", "duration": 24},
+    )
+
+    runtime.run_video_generation(
+        run_id="runtime-video-reference-board",
+        script_pack=script_pack,
+        storyboard_frames=[{"image_uri": str(anchor)}],
+        creative_specs={"video_size": "9:16", "video_duration_seconds": 24, "max_reference_images": 1},
+        provider="openai",
+        model="gpt-4.1",
+        runtime_config={"video": {"provider_name": "fake", "model_name": "fake-video"}, "force_regenerate": True},
+    )
+
+    assert len(provider.requests[1].image_urls) == 1
+    assert provider.requests[1].image_urls[0].startswith("data:image/png;base64,")
+    assert provider.requests[1].image_with_roles == []
+    assert "single input image is a reference board" in provider.requests[1].prompt
+
+
+def test_single_video_generation_collapses_refs_to_board_when_provider_accepts_one_image():
+    runtime = AgentsRuntime()
+    provider = _FakeVideoProvider()
+    runtime.providers = _FakeRegistry(provider)
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+    png_data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+
+    runtime.run_video_generation(
+        run_id="runtime-video-single-reference-board",
+        script_pack=VideoScriptPack(
+            scripts=[
+                VideoScriptItem(
+                    variant_id="V1",
+                    hook="One dress",
+                    script="Show one continuous social ad.",
+                    shot_list=["show model wearing the dress"],
+                )
+            ],
+            product_context={"product_name": "silver dress"},
+            generation_spec={"size": "9:16", "resolution": "720p", "duration": 12},
+        ),
+        creative_specs={
+            "video_size": "9:16",
+            "video_duration_seconds": 12,
+            "image_urls": [png_data_url, png_data_url],
+            "max_reference_images": 1,
+        },
+        provider="openai",
+        model="gpt-4.1",
+        runtime_config={"video": {"provider_name": "fake", "model_name": "fake-video"}},
+    )
+
+    assert provider.last_request is not None
+    assert len(provider.last_request.image_urls) == 1
+    assert provider.last_request.image_urls[0].startswith("data:image/png;base64,")
+    assert "single input image is a reference board" in provider.last_request.prompt
+
+
 def test_segmented_video_generation_marks_first_segment_submit_failure(monkeypatch):
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)

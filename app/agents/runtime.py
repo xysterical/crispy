@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from io import BytesIO
 import json
 import mimetypes
 import re
@@ -342,6 +343,43 @@ class AgentsRuntime:
         encoded = base64.b64encode(raw).decode("ascii")
         return f"data:{mime};base64,{encoded}"
 
+    def _image_reference_to_pil(self, value: str):
+        try:
+            if value.startswith("data:image/") and ";base64," in value:
+                raw = base64.b64decode(value.split(";base64,", 1)[1])
+            else:
+                path = Path(value)
+                if not path.exists() or not path.is_file():
+                    return None
+                raw = path.read_bytes()
+            if not raw:
+                return None
+            from PIL import Image  # type: ignore
+
+            return Image.open(BytesIO(raw)).convert("RGB")
+        except Exception:
+            return None
+
+    def _reference_board_data_url(self, references: list[tuple[str, str]]) -> str | None:
+        images = [(label, image) for label, ref in references if (image := self._image_reference_to_pil(ref)) is not None]
+        if len(images) < 2:
+            return None
+        from PIL import Image, ImageDraw, ImageOps  # type: ignore
+
+        width, height = 1200, 800
+        board = Image.new("RGB", (width, height), "white")
+        draw = ImageDraw.Draw(board)
+        draw.text((24, 18), "REFERENCE BOARD - use as source material, not target composition", fill=(20, 20, 20))
+        cell_w = width // len(images[:3])
+        for idx, (label, image) in enumerate(images[:3]):
+            x = idx * cell_w
+            draw.text((x + 18, 58), label, fill=(20, 20, 20))
+            thumb = ImageOps.contain(image, (cell_w - 36, height - 120))
+            board.paste(thumb, (x + (cell_w - thumb.width) // 2, 100 + (height - 120 - thumb.height) // 2))
+        out = BytesIO()
+        board.save(out, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(out.getvalue()).decode("ascii")
+
     def _provider_reference_url(self, value: object) -> str | None:
         url = str(value or "").strip()
         return url if url.startswith(("http://", "https://", "asset://")) else None
@@ -350,16 +388,37 @@ class AgentsRuntime:
         self,
         base_image_urls: list[str] | None,
         bridge_frame_uri: str | None,
-    ) -> dict:
+        *,
+        max_reference_images: int = 9,
+    ) -> tuple[dict, str]:
         base_refs = [str(item).strip() for item in (base_image_urls or []) if str(item).strip()]
+        max_refs = max(1, min(9, int(max_reference_images or 9)))
         if bridge_frame_uri:
             bridge_url = self._provider_reference_url(bridge_frame_uri)
             if bridge_url:
-                return {"image_with_roles": [{"url": bridge_url, "role": "first_frame"}]}
+                return {"image_with_roles": [{"url": bridge_url, "role": "first_frame"}]}, "first_frame"
             bridge_data_url = self._local_image_to_data_url(bridge_frame_uri)
             if bridge_data_url:
-                return {"image_urls": [bridge_data_url, *base_refs][:9]}
-        return {"image_urls": base_refs[:9]} if base_refs else {}
+                refs = [bridge_data_url, *base_refs]
+                if max_refs == 1 and len(refs) > 1:
+                    board = self._reference_board_data_url(
+                        [
+                            ("PREVIOUS SEGMENT LAST FRAME", bridge_data_url),
+                            *[(f"PRODUCT/MODEL ANCHOR {idx}", ref) for idx, ref in enumerate(base_refs, start=1)],
+                        ]
+                    )
+                    if board:
+                        return {"image_urls": [board]}, "reference_board_tail"
+                return {"image_urls": refs[:max_refs]}, "tail_with_anchors"
+        if base_refs:
+            if max_refs == 1 and len(base_refs) > 1:
+                board = self._reference_board_data_url(
+                    [(f"PRODUCT/MODEL ANCHOR {idx}", ref) for idx, ref in enumerate(base_refs, start=1)]
+                )
+                if board:
+                    return {"image_urls": [board]}, "reference_board"
+            return {"image_urls": base_refs[:max_refs]}, "anchors"
+        return {}, ""
 
     def _last_frame_url_from_raw(self, *payloads: dict | None) -> str | None:
         for payload in payloads:
@@ -753,6 +812,7 @@ class AgentsRuntime:
             "image_with_roles",
             "video_urls",
             "audio_urls",
+            "max_reference_images",
         ):
             if key in creative_specs and creative_specs.get(key) not in (None, "", []):
                 spec[key] = creative_specs.get(key)
@@ -2439,25 +2499,40 @@ class AgentsRuntime:
                 bridge_frame_uri: str | None = None
                 segment_queue = [segment.model_dump() for segment in script.segments]
                 base_image_refs = list(generation_spec.get("image_urls") or [])
+                try:
+                    max_reference_images = int(generation_spec.get("max_reference_images") or 9)
+                except (TypeError, ValueError):
+                    max_reference_images = 9
                 for segment_index, segment in enumerate(script.segments):
                     segment_duration = int(segment.duration_seconds)
                     segment_spec = {**generation_spec, "duration": segment_duration, "return_last_frame": True}
                     segment_spec.pop("image_urls", None)
                     segment_spec.pop("image_with_roles", None)
-                    segment_reference_payload = self._segment_image_reference_payload(base_image_refs, bridge_frame_uri)
+                    segment_reference_payload, reference_mode = self._segment_image_reference_payload(
+                        base_image_refs,
+                        bridge_frame_uri,
+                        max_reference_images=max_reference_images,
+                    )
                     segment_spec.update(segment_reference_payload)
                     reference_instruction = ""
-                    if segment_reference_payload.get("image_with_roles"):
+                    if reference_mode == "first_frame":
                         reference_instruction = (
                             "Reference usage: first_frame is the previous segment tail; maintain the same model and product identity. "
                         )
-                    elif segment_reference_payload.get("image_urls"):
-                        if bridge_frame_uri:
-                            reference_instruction = (
-                                "Reference usage: image 1 is the previous segment tail frame; remaining images are product/model anchors. "
-                            )
-                        else:
-                            reference_instruction = "Reference usage: images are product/model identity anchors. "
+                    elif reference_mode == "reference_board_tail":
+                        reference_instruction = (
+                            "Reference usage: the single input image is a reference board, not the target composition; continue from the previous tail area while preserving the product/model anchor areas. "
+                        )
+                    elif reference_mode == "reference_board":
+                        reference_instruction = (
+                            "Reference usage: the single input image is a reference board, not the target composition; preserve the product/model anchor areas. "
+                        )
+                    elif reference_mode == "tail_with_anchors":
+                        reference_instruction = (
+                            "Reference usage: image 1 is the previous segment tail frame; remaining images are product/model anchors. "
+                        )
+                    elif reference_mode == "anchors":
+                        reference_instruction = "Reference usage: images are product/model identity anchors. "
                     segment_prompt = (
                         f"{video_prompt}\n\nSegment {segment.segment_id}: {segment.motion_prompt}. "
                         f"Bridge rule: {self._segment_bridge_instruction(segment_index, bool(bridge_frame_uri))} "
@@ -2530,14 +2605,34 @@ class AgentsRuntime:
                     video_payload["generation_status"] = "failed"
                     video_payload["error"] = segment_payloads[-1].get("error")
             else:
+                clip_generation_spec = generation_spec
+                clip_prompt = video_prompt
+                if generation_spec.get("image_urls"):
+                    try:
+                        max_reference_images = int(generation_spec.get("max_reference_images") or 9)
+                    except (TypeError, ValueError):
+                        max_reference_images = 9
+                    reference_payload, reference_mode = self._segment_image_reference_payload(
+                        list(generation_spec.get("image_urls") or []),
+                        None,
+                        max_reference_images=max_reference_images,
+                    )
+                    clip_generation_spec = {**generation_spec}
+                    clip_generation_spec.pop("image_urls", None)
+                    clip_generation_spec.update(reference_payload)
+                    if reference_mode == "reference_board":
+                        clip_prompt = (
+                            f"{video_prompt}\n\nReference usage: the single input image is a reference board, "
+                            "not the target composition; preserve the product/model anchor areas."
+                        )
                 video_payload, clip_cost, clip_model = self._generate_video_clip_payload(
                     run_id=run_id,
                     variant_id=script.variant_id,
-                    video_prompt=video_prompt,
+                    video_prompt=clip_prompt,
                     video_size=video_size,
                     resolution=resolution,
                     duration_seconds=duration_seconds,
-                    generation_spec=generation_spec,
+                    generation_spec=clip_generation_spec,
                     provider=provider,
                     model=model,
                     runtime_config=runtime_config,
