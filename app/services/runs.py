@@ -2268,11 +2268,6 @@ def _sync_storyboard_frame_payload(frame: dict, payload: dict) -> None:
             candidate.update(candidate_updates)
 
 
-def _provider_reference_url(value: object) -> str | None:
-    url = str(value or "").strip()
-    return url if url.startswith(("http://", "https://", "asset://")) else None
-
-
 def _segment_prompt(base_prompt: str, segment: dict) -> str:
     return (
         f"{base_prompt}\n\nSegment {segment.get('segment_id')}: {segment.get('motion_prompt')}. "
@@ -2297,20 +2292,39 @@ def _submit_next_video_segment(
     if next_index >= len(queued):
         return None, 0.0
     previous = segments[-1] if segments else {}
-    bridge_frame_uri = _provider_reference_url(previous.get("last_frame_url") or previous.get("last_frame_uri"))
+    bridge_frame_uri = previous.get("last_frame_url") or previous.get("last_frame_uri")
     segment = queued[next_index]
     generation_spec = {
         **(payload.get("generation_spec") or {}),
         "duration": int(segment.get("duration_seconds") or 8),
         "return_last_frame": True,
     }
-    if bridge_frame_uri:
-        generation_spec.pop("image_urls", None)
-        generation_spec["image_with_roles"] = [{"url": bridge_frame_uri, "role": "first_frame"}]
+    base_image_refs = list((payload.get("generation_spec") or {}).get("image_urls") or [])
+    try:
+        max_reference_images = int(generation_spec.get("max_reference_images") or 9)
+    except (TypeError, ValueError):
+        max_reference_images = 9
+    generation_spec.pop("image_urls", None)
+    generation_spec.pop("image_with_roles", None)
+    reference_payload, reference_mode = runtime._segment_image_reference_payload(
+        base_image_refs,
+        str(bridge_frame_uri) if bridge_frame_uri else None,
+        max_reference_images=max_reference_images,
+    )
+    generation_spec.update(reference_payload)
+    reference_instruction = ""
+    if reference_mode == "first_frame":
+        reference_instruction = " Reference usage: first_frame is the previous segment tail; maintain the same model and product identity."
+    elif reference_mode == "reference_board_tail":
+        reference_instruction = " Reference usage: the single input image is a reference board, not the target composition; continue from the previous tail area while preserving the product/model anchor areas."
+    elif reference_mode == "tail_with_anchors":
+        reference_instruction = " Reference usage: image 1 is the previous segment tail frame; remaining images are product/model anchors."
+    video_prompt = _segment_prompt(str(payload.get("segment_prompt_base") or ""), segment) + reference_instruction
+    video_prompt += runtime._human_integrity_instruction(video_prompt)
     segment_payload, cost, _ = runtime._generate_video_clip_payload(
         run_id=run.id,
         variant_id=str(payload.get("variant_id") or "variant"),
-        video_prompt=_segment_prompt(str(payload.get("segment_prompt_base") or ""), segment),
+        video_prompt=video_prompt,
         video_size=str(payload.get("video_size") or generation_spec.get("size") or "9:16"),
         resolution=str(payload.get("resolution") or generation_spec.get("resolution") or "720p"),
         duration_seconds=int(segment.get("duration_seconds") or generation_spec.get("duration") or 8),

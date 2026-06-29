@@ -96,6 +96,15 @@ def test_video_generation_traces_selected_provider_decision():
     assert payload["has_image_references"] is True
 
 
+def test_human_integrity_instruction_only_applies_to_people_prompts():
+    runtime = AgentsRuntime()
+
+    assert runtime._human_integrity_instruction("Show a handbag on a marble table.") == ""
+    assert "Human anatomy constraint" in runtime._human_integrity_instruction(
+        "A real model wearing the dress walks slowly."
+    )
+
+
 def test_video_scripting_uses_submitted_product_context_without_leash_defaults():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.data.models import VariantAsset
 from app.data.session import SessionLocal
 from app.providers.llm import GeneratedVideo, VideoGenResult
 from app.orchestrator.state_machine import STAGE_ORDER, stage_plan_for
-from app.services.runs import _build_task_input, execute_next_queued_stage
+from app.services.runs import _build_task_input, _submit_next_video_segment, execute_next_queued_stage
 
 
 def _run_worker_once() -> None:
@@ -1214,6 +1216,60 @@ def test_assets_refresh_advances_segmented_video_queue(client, monkeypatch):
         assert segments[0]["last_frame_uri"].endswith("V1_S1_last_frame.png")
         assert segments[1]["segment_id"] == "V1_S2"
         assert segments[1]["external_task_id"] == "segment_task_2"
+
+
+def test_submit_next_video_segment_uses_local_tail_board_and_human_constraints(monkeypatch, tmp_path):
+    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC")
+    tail = tmp_path / "tail.png"
+    tail.write_bytes(png)
+    anchor_data_url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+
+    def fake_generate(**kwargs):
+        spec = kwargs["generation_spec"]
+        assert len(spec["image_urls"]) == 1
+        assert spec["image_urls"][0].startswith("data:image/png;base64,")
+        assert "image_with_roles" not in spec
+        assert "single input image is a reference board" in kwargs["video_prompt"]
+        assert "Human anatomy constraint" in kwargs["video_prompt"]
+        return (
+            {
+                "variant_id": kwargs["variant_id"],
+                "video_uri": "assets/run/V1_S2.mp4",
+                "external_task_id": "segment_task_2",
+                "generation_status": "processing",
+            },
+            0.0,
+            "stub-video",
+        )
+
+    monkeypatch.setattr("app.services.runs.runtime._generate_video_clip_payload", fake_generate)
+
+    next_segment, _ = _submit_next_video_segment(
+        run=SimpleNamespace(id="run"),
+        payload={
+            "variant_id": "V1",
+            "segment_prompt_base": "Base prompt with a model wearing the dress.",
+            "video_size": "9:16",
+            "resolution": "720p",
+            "generation_spec": {
+                "size": "9:16",
+                "resolution": "720p",
+                "max_reference_images": 1,
+                "image_urls": [anchor_data_url],
+            },
+            "segment_queue": [
+                {"segment_id": "V1_S1", "duration_seconds": 8, "motion_prompt": "first"},
+                {"segment_id": "V1_S2", "duration_seconds": 8, "motion_prompt": "same model walks slowly"},
+            ],
+            "segments": [{"segment_id": "V1_S1", "last_frame_uri": str(tail), "generation_status": "completed"}],
+        },
+        provider_name="stub",
+        model_name="stub-video",
+        runtime_config={},
+        video_runtime={},
+    )
+
+    assert next_segment["segment_id"] == "V1_S2"
 
 
 def test_assets_refresh_updates_stage_output_and_downstream_inputs(client, monkeypatch):

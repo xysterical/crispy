@@ -469,6 +469,14 @@ class AgentsRuntime:
             return "Continue the exact action from the supplied first_frame reference; do not restart with a new intro. Preserve the same person, face, styling, product silhouette, color, fabric, and details from the established ad."
         return "Continue the prior scene emotionally and visually; do not restart with a new intro. Preserve the same person and product identity from the reference anchors."
 
+    def _human_integrity_instruction(self, text: str) -> str:
+        if not re.search(r"\b(model|woman|man|person|people|human|girl|boy|female|male|she|he|her|his|wearing|face|arm|hand|body)\b|模特|真人|人物|女性|男性", text, re.IGNORECASE):
+            return ""
+        return (
+            "Human anatomy constraint: if any person/model appears, keep both arms, hands, shoulders, and legs visible or naturally occluded; "
+            "no missing, cropped, fused, extra, or deformed limbs; keep hands and arms physically plausible during motion. "
+        )
+
     def _local_video_to_data_url(self, path_str: str, *, max_bytes: int = 20 * 1024 * 1024) -> str | None:
         path = Path(path_str)
         if not path.exists() or not path.is_file():
@@ -2541,6 +2549,7 @@ class AgentsRuntime:
                         f"Continuity constraints: {segment.continuity_constraints}. "
                         f"Transition to next: {segment.transition_to_next}."
                     )
+                    segment_prompt += self._human_integrity_instruction(segment_prompt)
                     segment_payload, segment_cost, segment_model = self._generate_video_clip_payload(
                         run_id=run_id,
                         variant_id=script.variant_id,
@@ -2625,6 +2634,7 @@ class AgentsRuntime:
                             f"{video_prompt}\n\nReference usage: the single input image is a reference board, "
                             "not the target composition; preserve the product/model anchor areas."
                         )
+                clip_prompt += self._human_integrity_instruction(clip_prompt)
                 video_payload, clip_cost, clip_model = self._generate_video_clip_payload(
                     run_id=run_id,
                     variant_id=script.variant_id,
