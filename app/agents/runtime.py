@@ -346,6 +346,21 @@ class AgentsRuntime:
         url = str(value or "").strip()
         return url if url.startswith(("http://", "https://", "asset://")) else None
 
+    def _segment_image_reference_payload(
+        self,
+        base_image_urls: list[str] | None,
+        bridge_frame_uri: str | None,
+    ) -> dict:
+        base_refs = [str(item).strip() for item in (base_image_urls or []) if str(item).strip()]
+        if bridge_frame_uri:
+            bridge_url = self._provider_reference_url(bridge_frame_uri)
+            if bridge_url:
+                return {"image_with_roles": [{"url": bridge_url, "role": "first_frame"}]}
+            bridge_data_url = self._local_image_to_data_url(bridge_frame_uri)
+            if bridge_data_url:
+                return {"image_urls": [bridge_data_url, *base_refs][:9]}
+        return {"image_urls": base_refs[:9]} if base_refs else {}
+
     def _last_frame_url_from_raw(self, *payloads: dict | None) -> str | None:
         for payload in payloads:
             if not isinstance(payload, dict):
@@ -390,10 +405,10 @@ class AgentsRuntime:
 
     def _segment_bridge_instruction(self, segment_index: int, has_bridge_frame: bool) -> str:
         if segment_index == 0:
-            return "Start the long-form ad once; this segment is the only opening hook."
+            return "Start the long-form ad once; this segment is the only opening hook. Use supplied reference images as product and model identity anchors."
         if has_bridge_frame:
-            return "Continue the exact action from the supplied first_frame reference; do not restart with a new intro."
-        return "Continue the prior scene emotionally and visually; do not restart with a new intro."
+            return "Continue the exact action from the supplied first_frame reference; do not restart with a new intro. Preserve the same person, face, styling, product silhouette, color, fabric, and details from the established ad."
+        return "Continue the prior scene emotionally and visually; do not restart with a new intro. Preserve the same person and product identity from the reference anchors."
 
     def _local_video_to_data_url(self, path_str: str, *, max_bytes: int = 20 * 1024 * 1024) -> str | None:
         path = Path(path_str)
@@ -2423,17 +2438,30 @@ class AgentsRuntime:
                 completed_segment_paths: list[Path] = []
                 bridge_frame_uri: str | None = None
                 segment_queue = [segment.model_dump() for segment in script.segments]
+                base_image_refs = list(generation_spec.get("image_urls") or [])
                 for segment_index, segment in enumerate(script.segments):
                     segment_duration = int(segment.duration_seconds)
                     segment_spec = {**generation_spec, "duration": segment_duration, "return_last_frame": True}
-                    if bridge_frame_uri:
-                        bridge_url = self._provider_reference_url(bridge_frame_uri)
-                        if bridge_url:
-                            segment_spec.pop("image_urls", None)
-                            segment_spec["image_with_roles"] = [{"url": bridge_url, "role": "first_frame"}]
+                    segment_spec.pop("image_urls", None)
+                    segment_spec.pop("image_with_roles", None)
+                    segment_reference_payload = self._segment_image_reference_payload(base_image_refs, bridge_frame_uri)
+                    segment_spec.update(segment_reference_payload)
+                    reference_instruction = ""
+                    if segment_reference_payload.get("image_with_roles"):
+                        reference_instruction = (
+                            "Reference usage: first_frame is the previous segment tail; maintain the same model and product identity. "
+                        )
+                    elif segment_reference_payload.get("image_urls"):
+                        if bridge_frame_uri:
+                            reference_instruction = (
+                                "Reference usage: image 1 is the previous segment tail frame; remaining images are product/model anchors. "
+                            )
+                        else:
+                            reference_instruction = "Reference usage: images are product/model identity anchors. "
                     segment_prompt = (
                         f"{video_prompt}\n\nSegment {segment.segment_id}: {segment.motion_prompt}. "
                         f"Bridge rule: {self._segment_bridge_instruction(segment_index, bool(bridge_frame_uri))} "
+                        f"{reference_instruction}"
                         f"First frame: {segment.first_frame_prompt}. Last frame target: {segment.last_frame_prompt}. "
                         f"Continuity constraints: {segment.continuity_constraints}. "
                         f"Transition to next: {segment.transition_to_next}."

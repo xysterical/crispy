@@ -42,6 +42,21 @@ class _FakeCompletedVideoProvider:
         )
 
 
+class _FakeCompletedVideoProviderWithoutLastFrameUrl:
+    def __init__(self) -> None:
+        self.requests = []
+
+    def generate_video(self, request, *, api_base_url=None, api_key=None, extra=None):
+        self.requests.append(request)
+        payload = base64.b64encode((f"video-{len(self.requests)}".encode("utf-8") * 256)).decode("ascii")
+        return VideoGenResult(
+            model_used=request.model,
+            videos=[GeneratedVideo(b64_data=payload, status="completed", raw_response={})],
+            status="completed",
+            raw_response={"status": "completed"},
+        )
+
+
 class _FakeRegistry:
     def __init__(self, provider) -> None:
         self.provider = provider
@@ -330,6 +345,71 @@ def test_video_generation_stitches_completed_segments(monkeypatch):
     assert video["duration_seconds"] == 35.0
     assert len(video["segments"]) == 3
     assert video["video_uri"].endswith("V1_stitched.mp4")
+
+
+def test_segmented_video_generation_uses_local_tail_frame_with_identity_anchors(monkeypatch):
+    runtime = AgentsRuntime()
+    provider = _FakeCompletedVideoProviderWithoutLastFrameUrl()
+    runtime.providers = _FakeRegistry(provider)
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    def fake_extract_last_frame(*, video_path, output_path):
+        output_path.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"))
+        return str(output_path)
+
+    def fake_stitch(*, video_paths, output_path):
+        output_path.write_bytes(b"stitched-video" * 256)
+        return str(output_path)
+
+    monkeypatch.setattr("app.agents.runtime.extract_last_video_frame", fake_extract_last_frame)
+    monkeypatch.setattr("app.agents.runtime.stitch_video_files", fake_stitch)
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="One dress, two moods",
+                script="A continuous segmented ad.",
+                segments=[
+                    {
+                        "segment_id": "V1_S1",
+                        "variant_id": "V1",
+                        "duration_seconds": 12,
+                        "first_frame_prompt": "apartment reveal",
+                        "last_frame_prompt": "walking out",
+                        "motion_prompt": "model smiles in apartment",
+                    },
+                    {
+                        "segment_id": "V1_S2",
+                        "variant_id": "V1",
+                        "duration_seconds": 12,
+                        "first_frame_prompt": "street continuation",
+                        "last_frame_prompt": "cta",
+                        "motion_prompt": "same model crosses street",
+                    },
+                ],
+            )
+        ],
+        product_context={"product_name": "silver dress"},
+        generation_spec={"size": "9:16", "resolution": "720p", "duration": 24},
+    )
+
+    output = runtime.run_video_generation(
+        run_id="runtime-video-local-tail",
+        script_pack=script_pack,
+        storyboard_frames=[{"raw_response": {"image_url": "https://example.com/storyboard-anchor.png"}}],
+        creative_specs={"video_size": "9:16", "video_duration_seconds": 24},
+        provider="openai",
+        model="gpt-4.1",
+        runtime_config={"video": {"provider_name": "fake", "model_name": "fake-video"}, "force_regenerate": True},
+    )
+
+    assert output.payload["videos"][0]["source"] == "stitched_segments"
+    assert provider.requests[0].image_urls == ["https://example.com/storyboard-anchor.png"]
+    assert provider.requests[1].image_with_roles == []
+    assert provider.requests[1].image_urls[0].startswith("data:image/png;base64,")
+    assert provider.requests[1].image_urls[1] == "https://example.com/storyboard-anchor.png"
+    assert "image 1 is the previous segment tail frame" in provider.requests[1].prompt
 
 
 def test_segmented_video_generation_marks_first_segment_submit_failure(monkeypatch):
