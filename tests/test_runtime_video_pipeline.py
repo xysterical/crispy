@@ -1008,6 +1008,48 @@ def test_visual_quality_assessment_uses_frame_review_for_completed_videos(tmp_pa
     assert any(check["status"] == "manual_review" for check in asset_report["checks"])
 
 
+def test_visual_quality_assessment_flags_human_anatomy_review_for_model_videos(tmp_path):
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("human review notes", "stub-model", 0.0)
+
+    video_path = tmp_path / "model.mp4"
+    video_path.write_bytes(b"\x00\x00\x00\x20ftypisom" + (b"1" * 2048))
+
+    output = runtime.run_visual_quality_assessment(
+        run_id="runtime-video-human-review",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="model styling",
+                    hook="A model wearing the dress walks slowly",
+                    message="Keep the same model and dress visible.",
+                )
+            ]
+        ),
+        videos={
+            "videos": [
+                {
+                    "variant_id": "V1",
+                    "video_uri": str(video_path),
+                    "uri": str(video_path),
+                    "generation_status": "completed",
+                    "source": "local_file",
+                    "prompt": "A real model wearing the silver dress.",
+                }
+            ]
+        },
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    summary = output.payload["variant_summaries"][0]
+    asset_report = output.payload["reports"][0]["asset_reports"][0]
+    assert summary["qa_status"] == "warn"
+    assert summary["recommended_action"] == "manual_review"
+    assert "visual_qa_human_anatomy_review" in asset_report["flags"]
+
+
 def test_visual_quality_assessment_treats_unusable_extracted_frames_as_manual_review(tmp_path):
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("frame review notes", "stub-model", 0.0)

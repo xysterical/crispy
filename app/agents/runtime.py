@@ -477,6 +477,9 @@ class AgentsRuntime:
             "no missing, cropped, fused, extra, or deformed limbs; keep hands and arms physically plausible during motion. "
         )
 
+    def _mentions_human_subject(self, text: object) -> bool:
+        return bool(self._human_integrity_instruction(str(text or "")))
+
     def _local_video_to_data_url(self, path_str: str, *, max_bytes: int = 20 * 1024 * 1024) -> str | None:
         path = Path(path_str)
         if not path.exists() or not path.is_file():
@@ -2859,6 +2862,20 @@ class AgentsRuntime:
                 if status == "warn":
                     warn = True
                 if "visual_qa_needs_frame_review" in flags:
+                    warn = True
+                if asset_type == "video" and self._mentions_human_subject(
+                    " ".join(
+                        str(item)
+                        for item in [
+                            asset.get("prompt"),
+                            asset.get("segment_prompt_base"),
+                            variant.hook,
+                            variant.message,
+                            scripts_by_variant.get(variant.variant_id),
+                        ]
+                    )
+                ):
+                    flags = sorted(set([*flags, "visual_qa_human_anatomy_review"]))
                     warn = True
                 if asset_type in {"image", "storyboard_frame"} and len(model_image_inputs) < max_model_images:
                     media_url = _media_url_for_model(asset, media_type="image")
