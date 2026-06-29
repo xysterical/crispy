@@ -2338,6 +2338,8 @@ def _submit_next_video_segment(
     segment_payload["segment_id"] = segment.get("segment_id")
     segment_payload["segment_index"] = next_index
     segment_payload["transition_to_next"] = segment.get("transition_to_next")
+    segment_payload["reference_mode"] = reference_mode
+    segment_payload["reference_image_count"] = len(generation_spec.get("image_urls") or []) + len(generation_spec.get("image_with_roles") or [])
     return segment_payload, cost
 
 

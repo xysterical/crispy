@@ -1216,6 +1216,8 @@ def test_assets_refresh_advances_segmented_video_queue(client, monkeypatch):
         assert segments[0]["last_frame_uri"].endswith("V1_S1_last_frame.png")
         assert segments[1]["segment_id"] == "V1_S2"
         assert segments[1]["external_task_id"] == "segment_task_2"
+        assert segments[1]["reference_mode"] == "first_frame"
+        assert segments[1]["reference_image_count"] == 1
 
 
 def test_submit_next_video_segment_uses_local_tail_board_and_human_constraints(monkeypatch, tmp_path):
@@ -1270,6 +1272,8 @@ def test_submit_next_video_segment_uses_local_tail_board_and_human_constraints(m
     )
 
     assert next_segment["segment_id"] == "V1_S2"
+    assert next_segment["reference_mode"] == "reference_board_tail"
+    assert next_segment["reference_image_count"] == 1
 
 
 def test_assets_refresh_updates_stage_output_and_downstream_inputs(client, monkeypatch):

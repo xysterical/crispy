@@ -2576,6 +2576,8 @@ class AgentsRuntime:
                     segment_payload["segment_id"] = segment.segment_id
                     segment_payload["segment_index"] = segment_index
                     segment_payload["transition_to_next"] = segment.transition_to_next
+                    segment_payload["reference_mode"] = reference_mode
+                    segment_payload["reference_image_count"] = len(segment_spec.get("image_urls") or []) + len(segment_spec.get("image_with_roles") or [])
                     status = str(segment_payload.get("generation_status") or "").lower()
                     if status in {"completed", "succeeded", "success", "ready"} and self._artifact_has_payload(segment_payload.get("video_uri")):
                         segment_path = Path(str(segment_payload["video_uri"]))
