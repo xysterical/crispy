@@ -473,6 +473,56 @@ def test_segmented_video_generation_collapses_refs_to_board_when_provider_accept
     assert "single input image is a reference board" in provider.requests[1].prompt
 
 
+def test_segmented_video_generation_preserves_initial_role_references(monkeypatch):
+    runtime = AgentsRuntime()
+    provider = _FakeCompletedVideoProvider()
+    runtime.providers = _FakeRegistry(provider)
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    def fake_extract_last_frame(*, video_path, output_path):
+        output_path.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"))
+        return str(output_path)
+
+    def fake_stitch(*, video_paths, output_path):
+        output_path.write_bytes(b"stitched-video" * 256)
+        return str(output_path)
+
+    monkeypatch.setattr("app.agents.runtime.extract_last_video_frame", fake_extract_last_frame)
+    monkeypatch.setattr("app.agents.runtime.stitch_video_files", fake_stitch)
+
+    runtime.run_video_generation(
+        run_id="runtime-video-role-refs",
+        script_pack=VideoScriptPack(
+            scripts=[
+                VideoScriptItem(
+                    variant_id="V1",
+                    hook="One dress",
+                    script="A continuous segmented ad.",
+                    segments=[
+                        {"segment_id": "V1_S1", "variant_id": "V1", "duration_seconds": 8, "motion_prompt": "start"},
+                        {"segment_id": "V1_S2", "variant_id": "V1", "duration_seconds": 8, "motion_prompt": "continue"},
+                    ],
+                )
+            ],
+            product_context={"product_name": "silver dress"},
+            generation_spec={"size": "9:16", "resolution": "720p", "duration": 16},
+        ),
+        creative_specs={
+            "video_size": "9:16",
+            "video_duration_seconds": 16,
+            "image_with_roles": [{"url": "https://example.com/start.png", "role": "first_frame"}],
+        },
+        provider="openai",
+        model="gpt-4.1",
+        runtime_config={"video": {"provider_name": "fake", "model_name": "fake-video"}, "force_regenerate": True},
+    )
+
+    assert provider.requests[0].image_with_roles == [{"url": "https://example.com/start.png", "role": "first_frame"}]
+    assert provider.requests[0].image_urls == []
+    assert "role references exactly as temporal anchors" in provider.requests[0].prompt
+    assert provider.requests[1].image_with_roles == [{"url": "https://example.com/last-1.png", "role": "first_frame"}]
+
+
 def test_single_video_generation_collapses_refs_to_board_when_provider_accepts_one_image():
     runtime = AgentsRuntime()
     provider = _FakeVideoProvider()

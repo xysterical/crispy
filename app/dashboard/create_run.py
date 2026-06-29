@@ -158,8 +158,8 @@ CREATE_RUN_HTML = """
                         </div>
                         <div class="spec-field" id="field-video-duration">
                           <label>Duration (s)</label>
-                          <input id="video_duration_seconds" type="number" min="4" max="15" value="5" />
-                          <div class="hint muted">4-15 seconds for Seedance-compatible video runs.</div>
+                          <input id="video_duration_seconds" type="number" min="4" max="60" value="5" />
+                          <div class="hint muted">4-60 seconds; runs over 15 seconds are generated as stitched segments.</div>
                         </div>
                         <div class="spec-field" id="field-dtc-site-surface" style="display:none;">
                           <label>DTC Site Surface</label>
@@ -481,11 +481,11 @@ CREATE_RUN_JS = """
     const durationInput = document.getElementById('video_duration_seconds');
     const isVideoMode = ['full_multimodal', 'video_only', 'tiktok_shop_video'].includes(mode);
     durationInput.min = isVideoMode ? '4' : '1';
-    durationInput.max = isVideoMode ? '15' : '60';
+    durationInput.max = '60';
     if (isVideoMode) {
       const current = parseInt(durationInput.value || '0', 10);
       if (!Number.isFinite(current) || current < 4) durationInput.value = '4';
-      if (current > 15) durationInput.value = '15';
+      if (current > 60) durationInput.value = '60';
     }
   }
 
@@ -791,8 +791,8 @@ CREATE_RUN_JS = """
     const audioRefs = parseLineSeparatedUrls(document.getElementById('audio_reference_urls').value);
 
     if (imageRefs.length > 16) return 'Image Reference URLs supports at most 16 entries.';
-    if (isVideoMode && (!Number.isFinite(duration) || duration < 4 || duration > 15)) {
-      return 'Duration must stay within 4-15 seconds for Seedance-compatible video runs.';
+    if (isVideoMode && (!Number.isFinite(duration) || duration < 4 || duration > 60)) {
+      return 'Duration must stay within 4-60 seconds; runs over 15 seconds are stitched from shorter segments.';
     }
     if (videoImageRefs.length > 9) return 'Video Image URLs supports at most 9 entries.';
     if (videoRefs.length > 3) return 'Reference Video URLs supports at most 3 entries.';

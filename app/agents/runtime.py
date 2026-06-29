@@ -2507,6 +2507,7 @@ class AgentsRuntime:
                 bridge_frame_uri: str | None = None
                 segment_queue = [segment.model_dump() for segment in script.segments]
                 base_image_refs = list(generation_spec.get("image_urls") or [])
+                role_image_refs = list(generation_spec.get("image_with_roles") or [])
                 try:
                     max_reference_images = int(generation_spec.get("max_reference_images") or 9)
                 except (TypeError, ValueError):
@@ -2516,17 +2517,22 @@ class AgentsRuntime:
                     segment_spec = {**generation_spec, "duration": segment_duration, "return_last_frame": True}
                     segment_spec.pop("image_urls", None)
                     segment_spec.pop("image_with_roles", None)
-                    segment_reference_payload, reference_mode = self._segment_image_reference_payload(
-                        base_image_refs,
-                        bridge_frame_uri,
-                        max_reference_images=max_reference_images,
-                    )
+                    if segment_index == 0 and role_image_refs:
+                        segment_reference_payload, reference_mode = {"image_with_roles": role_image_refs}, "role_refs"
+                    else:
+                        segment_reference_payload, reference_mode = self._segment_image_reference_payload(
+                            base_image_refs,
+                            bridge_frame_uri,
+                            max_reference_images=max_reference_images,
+                        )
                     segment_spec.update(segment_reference_payload)
                     reference_instruction = ""
                     if reference_mode == "first_frame":
                         reference_instruction = (
                             "Reference usage: first_frame is the previous segment tail; maintain the same model and product identity. "
                         )
+                    elif reference_mode == "role_refs":
+                        reference_instruction = "Reference usage: use the supplied first_frame/last_frame role references exactly as temporal anchors. "
                     elif reference_mode == "reference_board_tail":
                         reference_instruction = (
                             "Reference usage: the single input image is a reference board, not the target composition; continue from the previous tail area while preserving the product/model anchor areas. "

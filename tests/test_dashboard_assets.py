@@ -205,7 +205,7 @@ def test_dashboard_create_run_labels_pipeline_and_specs_clearly(client):
     assert 'id="audio_reference_urls"' in html
     assert 'id="video_first_frame_url"' in html
     assert 'id="video_last_frame_url"' in html
-    assert "4-15 seconds for Seedance-compatible video runs" in html
+    assert "4-60 seconds; runs over 15 seconds are generated as stitched segments" in html
     assert "Up to 9 reference images" in html
     assert "First/last frame mode cannot be combined with video or audio references" in html
     assert "validateCreateRunForm" in html
