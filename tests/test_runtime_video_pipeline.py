@@ -194,6 +194,36 @@ def test_video_scripting_splits_long_duration_into_segments():
     assert segments[-1]["transition_to_next"] == "none"
 
 
+def test_video_scripting_adds_human_motion_risk_constraint_for_model_segments():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    output = runtime.run_video_scripting(
+        run_id="runtime-script-human-motion-risk",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="model styling",
+                    hook="A real model wears the dress",
+                    message="Show the same model in a silver dress across scenes.",
+                )
+            ]
+        ),
+        intake=ProductIntake(
+            product_name="silver dress",
+            asset_media_summary="Reference image shows a real model wearing a silver dress.",
+        ),
+        business_context={"target_audience": "fashion buyers"},
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"video_duration_seconds": 32},
+    )
+
+    segments = output.payload["scripts"][0]["segments"]
+    assert "avoid_high_risk_human_motion" in segments[1]["continuity_constraints"]
+
+
 def test_planning_outputs_creative_director_and_production_plan():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("planning summary", "stub-model", 0.0)

@@ -480,6 +480,11 @@ class AgentsRuntime:
     def _mentions_human_subject(self, text: object) -> bool:
         return bool(self._human_integrity_instruction(str(text or "")))
 
+    def _human_motion_risk_instruction(self, text: object) -> str:
+        if not self._mentions_human_subject(text):
+            return ""
+        return "For people/model shots, prefer slow stable poses, controlled 3/4 turns, or gentle walking; avoid fast twirls, spins, heavy occlusion, crossed limbs, or motion that hides arms/hands unless essential."
+
     def _local_video_to_data_url(self, path_str: str, *, max_bytes: int = 20 * 1024 * 1024) -> str | None:
         path = Path(path_str)
         if not path.exists() or not path.is_file():
@@ -916,6 +921,9 @@ class AgentsRuntime:
                 segment.transition_to_next = "match_cut"
             else:
                 segment.transition_to_next = "none"
+            risk_instruction = self._human_motion_risk_instruction(" ".join([segment.scene, segment.motion_prompt, segment.first_frame_prompt]))
+            if risk_instruction and "avoid_high_risk_human_motion" not in constraints:
+                constraints.append("avoid_high_risk_human_motion")
             segment.continuity_constraints = constraints
             sequenced.append(segment)
         return sequenced
@@ -1871,6 +1879,7 @@ class AgentsRuntime:
                 f"generation_spec={generation_spec}. "
                 f"creative_director_plan={director_plan}. production_plan={production_plan}. quality_gates={quality_gates}. "
                 "Make every shot filmable, product-specific, and constrained by realistic product handling. "
+                f"{self._human_motion_risk_instruction(' '.join([product_name, media_summary, audience, str(variant_set.model_dump()), str(director_plan)]))} "
                 "Carry the director scene arc, emotional beats, and product-truth gates into hooks, shot_plan, and segments. "
                 "For each variant, also output a structured shot_plan array with 3-4 shot objects. "
                 "Each shot must have: shot_id, variant_id, intent (one of: thumb_stop, product_proof, usage_demo, cta_packshot), "
