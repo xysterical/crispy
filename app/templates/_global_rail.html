@@ -1,0 +1,26 @@
+<nav class="global-rail" aria-label="Global navigation">
+  <div class="rail-brand" aria-label="Crispy">
+    <span class="rail-brand-mark">C</span>
+    <span class="rail-brand-text">Crispy</span>
+  </div>
+  <div class="rail-nav">
+    <a class="rail-link{% if rail_active == 'dashboard' %} active{% endif %}" href="/dashboard"{% if rail_active == 'dashboard' %} aria-current="page"{% endif %} title="Dashboard"><span class="rail-icon" aria-hidden="true">&#8962;</span><span class="rail-label">Dashboard</span></a>
+    <a class="rail-link{% if rail_active == 'data' %} active{% endif %}" href="/dashboard/data"{% if rail_active == 'data' %} aria-current="page"{% endif %} title="Data Dashboard"><span class="rail-icon" aria-hidden="true">&#9638;</span><span class="rail-label">Data</span></a>
+    <a class="rail-link{% if rail_active == 'calendar' %} active{% endif %}" href="/dashboard/calendar"{% if rail_active == 'calendar' %} aria-current="page"{% endif %} title="Content Calendar"><span class="rail-icon" aria-hidden="true">&#9716;</span><span class="rail-label">Calendar</span></a>
+    <a class="rail-link{% if rail_active == 'assets' %} active{% endif %}" href="/dashboard/assets"{% if rail_active == 'assets' %} aria-current="page"{% endif %} title="Asset Library"><span class="rail-icon" aria-hidden="true">&#9720;</span><span class="rail-label">Assets</span></a>
+    <a class="rail-link{% if rail_active == 'gm-review' %} active{% endif %}" href="/dashboard/gm-review"{% if rail_active == 'gm-review' %} aria-current="page"{% endif %} title="GM Review"><span class="rail-icon" aria-hidden="true">&#9737;</span><span class="rail-label">GM Review</span></a>
+    <a class="rail-link{% if rail_active == 'shop-analysis' %} active{% endif %}" href="/dashboard/shop-analysis"{% if rail_active == 'shop-analysis' %} aria-current="page"{% endif %} title="Shop Analysis"><span class="rail-icon" aria-hidden="true">&#9671;</span><span class="rail-label">Shop Analysis</span></a>
+    <a class="rail-link{% if rail_active == 'personas' %} active{% endif %}" href="/dashboard/personas"{% if rail_active == 'personas' %} aria-current="page"{% endif %} title="Personas"><span class="rail-icon" aria-hidden="true">&#9783;</span><span class="rail-label">Personas</span></a>
+    <a class="rail-link{% if rail_active == 'configs' %} active{% endif %}" href="/dashboard/agent-apis"{% if rail_active == 'configs' %} aria-current="page"{% endif %} title="API and Integration Configs"><span class="rail-icon" aria-hidden="true">&#9881;</span><span class="rail-label">Configs</span></a>
+  </div>
+  {% if rail_show_database_actions | default(false) %}
+    <div class="rail-spacer"></div>
+    <details class="rail-more">
+      <summary class="rail-summary" title="Database actions"><span class="rail-icon" aria-hidden="true">&#8943;</span><span class="rail-label">Database</span></summary>
+      <div class="rail-more-panel">
+        <button class="rail-action" onclick="backupDatabase()" title="Save a timestamped copy to ~/.crispy/backups/"><span class="rail-icon" aria-hidden="true">&#8681;</span><span class="rail-label">Backup DB</span></button>
+        <button class="rail-action" onclick="showRestoreDialog()" title="Restore database from a backup"><span class="rail-icon" aria-hidden="true">&#8634;</span><span class="rail-label">Restore DB</span></button>
+      </div>
+    </details>
+  {% endif %}
+</nav>

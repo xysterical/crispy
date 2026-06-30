@@ -95,7 +95,9 @@
   }
 {% endblock %}
 {% block body %}
-<body>
+<body class="has-global-rail">
+  {% set rail_active = 'data' %}
+  {% include "_global_rail.html" %}
   <main class="app-shell">
     <header class="hero" style="width:100%;display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:16px;">
       <div>
@@ -103,7 +105,6 @@
         <div class="subtitle">Performance monitoring, analytics insights, and API sync controls for Shopify &amp; Meta.</div>
         <div class="subtitle">Auto-sync pulls fresh data from connected platforms on a configurable schedule.</div>
       </div>
-      <a class="nav-link" href="/dashboard">Back to Dashboard</a>
     </header>
     <div class="app-body">
     <aside class="sidebar">

@@ -199,7 +199,9 @@
   }
 {% endblock %}
 {% block body %}
-<body>
+<body class="has-global-rail">
+  {% set rail_active = 'configs' %}
+  {% include "_global_rail.html" %}
   <div class="toast-wrap">
     <div id="save-toast" class="toast">Saved</div>
   </div>
@@ -210,7 +212,6 @@
         <div class="subtitle">Manage LLM provider credentials for agents and integration credentials for Shopify / Meta.</div>
         <div class="subtitle">Security: only env var names are stored. Env var values are read from the runtime environment.</div>
       </div>
-      <a class="nav-link" href="/dashboard">Back to Dashboard</a>
     </header>
     <section class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">

@@ -16,6 +16,25 @@ def _run_worker_once() -> None:
         db.commit()
 
 
+def test_dashboard_pages_share_global_rail(client):
+    pages = {
+        "/dashboard": "/dashboard",
+        "/dashboard/data": "/dashboard/data",
+        "/dashboard/calendar": "/dashboard/calendar",
+        "/dashboard/assets": "/dashboard/assets",
+        "/dashboard/gm-review": "/dashboard/gm-review",
+        "/dashboard/shop-analysis": "/dashboard/shop-analysis",
+        "/dashboard/personas": "/dashboard/personas",
+        "/dashboard/agent-apis": "/dashboard/agent-apis",
+    }
+    for path, active_href in pages.items():
+        resp = client.get(path)
+        assert resp.status_code == 200
+        assert 'class="global-rail"' in resp.text
+        assert f'class="rail-link active" href="{active_href}"' in resp.text
+        assert "Back to Dashboard" not in resp.text
+
+
 def test_dashboard_data_source_switch(client):
     run_resp = client.post(
         "/runs",

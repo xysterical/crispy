@@ -104,14 +104,15 @@
   }
 {% endblock %}
 {% block body %}
-<body>
+<body class="has-global-rail">
+  {% set rail_active = 'calendar' %}
+  {% include "_global_rail.html" %}
   <div class="app-shell">
     <header class="hero">
       <div>
         <h1>Content Calendar</h1>
         <div class="subtitle">Schedule ad creatives to publishing channels. Connected to Notion for team visibility.</div>
       </div>
-      <a class="nav-link" href="/dashboard">Back to Dashboard</a>
     </header>
     <div style="max-width:100%;min-width:0;">
       <section class="card" style="margin-top:0;">
