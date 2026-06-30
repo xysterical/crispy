@@ -132,7 +132,7 @@ def test_create_run_planning_input_includes_shop_memory(client, db_session):
             industry_code="pet_accessories",
             source_type="shopify_sync",
             score_hint=120.0,
-            memory_type="store_intelligence",
+            memory_type="summary",
             content={
                 "shop_id": shop.id,
                 "shop_name": shop.name,
@@ -183,6 +183,7 @@ def test_create_run_planning_input_includes_shop_memory(client, db_session):
         if item["memory_scope"] == "shop"
     ]
     assert shop_lessons
+    assert shop_lessons[0]["memory_type"] == "summary"
     assert {item["source_type"] for item in shop_lessons} >= {"shop_profile", "shopify_sync", "meta_sync"}
 
 
@@ -240,6 +241,7 @@ def test_shopify_sync_writes_shop_memory_contract(db_session, monkeypatch):
         select(GmMemory).where(GmMemory.memory_scope == "shop", GmMemory.source_type == "shopify_sync")
     )
     content = row.content or {}
+    assert row.memory_type == "summary"
     assert content["shop_id"] == shop.id
     assert {"summary", "winning_patterns", "avoid_patterns", "evidence", "metric_window", "confidence"} <= set(content)
 

@@ -219,7 +219,7 @@ def import_feedback_rows(
                 product_code=product_code,
                 source_type="feedback_import",
                 score_hint=top_product[0][1] if top_product else None,
-                memory_type="strategy",
+                memory_type="summary",
                 content={
                     "source": "weekly_csv_import",
                     "scope": "product",
@@ -253,7 +253,7 @@ def import_feedback_rows(
                 industry_code=industry_code,
                 source_type="feedback_import",
                 score_hint=top_industry[0][1] if top_industry else None,
-                memory_type="strategy",
+                memory_type="summary",
                 content={
                     "source": "weekly_csv_import",
                     "scope": "industry",

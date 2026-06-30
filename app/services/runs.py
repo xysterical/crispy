@@ -661,7 +661,7 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
             GmMemory.product_code == run.product_code,
         )
         .order_by(desc(GmMemory.score_hint), desc(GmMemory.created_at))
-        .limit(10)
+        .limit(20)
     ).all()
     industry_rows = db.scalars(
         select(GmMemory)
@@ -671,7 +671,7 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
             GmMemory.industry_code == run.industry_code,
         )
         .order_by(desc(GmMemory.score_hint), desc(GmMemory.created_at))
-        .limit(10)
+        .limit(20)
     ).all()
     shop_candidates = db.scalars(
         select(GmMemory)
@@ -686,6 +686,9 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
         row for row in shop_candidates
         if (row.content or {}).get("shop_id") == run.workspace_id
     ][:5]
+    product_rows = sorted(product_rows, key=_gm_memory_priority)[:10]
+    industry_rows = sorted(industry_rows, key=_gm_memory_priority)[:10]
+    shop_rows = sorted(shop_rows, key=_gm_memory_priority)[:5]
 
     merged: list[dict] = []
     seen_fingerprints: set[str] = set()
@@ -695,6 +698,7 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
             "product_code": row.product_code,
             "industry_code": row.industry_code,
             "source_type": row.source_type,
+            "memory_type": row.memory_type,
             "score_hint": row.score_hint,
             "content": row.content or {},
         }
@@ -706,6 +710,14 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
         if len(merged) >= limit:
             break
     return merged
+
+
+def _gm_memory_priority(row: GmMemory) -> tuple[int, float, float]:
+    return (
+        0 if row.memory_type == "summary" else 1,
+        -(row.score_hint or 0),
+        -(row.created_at.timestamp() if row.created_at else 0),
+    )
 
 
 def _analytics_insights(db: Session, run: PipelineRun) -> list[dict]:

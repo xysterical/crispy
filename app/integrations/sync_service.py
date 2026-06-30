@@ -192,7 +192,7 @@ async def sync_shopify(
                     memory_scope="product",
                     product_code=key,
                     source_type="shopify_sync",
-                    memory_type="product_intelligence",
+                    memory_type="summary",
                     score_hint=round(daily_avg_revenue, 2),
                     content={
                         "source": "shopify_sync",
@@ -237,7 +237,7 @@ async def sync_shopify(
                     project_id=project.id,
                     memory_scope="shop",
                     source_type="shopify_sync",
-                    memory_type="store_intelligence",
+                    memory_type="summary",
                     score_hint=round(total_store_revenue / active_days, 2),
                     content={
                         "source": "shopify_sync",
@@ -443,7 +443,7 @@ async def sync_meta(
                         project_id=project.id,
                         memory_scope="shop",
                         source_type="meta_sync",
-                        memory_type="store_intelligence",
+                        memory_type="summary",
                         score_hint=round(total_revenue / total_spend, 4) if total_spend > 0 else 0,
                         content={
                             "source": "meta_sync",
