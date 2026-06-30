@@ -39,7 +39,9 @@
   }
 {% endblock %}
 {% block body %}
-<body>
+<body class="has-global-rail">
+  {% set rail_active = 'gm-review' %}
+  {% include "_global_rail.html" %}
   <main class="gm-shell">
     <header class="hero">
       <div>
@@ -49,7 +51,6 @@
       <div class="hero-actions">
         <button class="primary" onclick="generateReview()">Generate Review</button>
         <button onclick="exportMarkdown()">Export Markdown</button>
-        <a class="nav-link" href="/dashboard">Back to Dashboard</a>
       </div>
     </header>
 

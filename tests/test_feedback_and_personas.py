@@ -144,4 +144,5 @@ def test_persona_dashboard_page_loads(client):
     resp = client.get("/dashboard/personas")
     assert resp.status_code == 200
     assert "Persona Board" in resp.text
-    assert "Back to Dashboard" in resp.text
+    assert 'class="rail-link active" href="/dashboard/personas"' in resp.text
+    assert "Back to Dashboard" not in resp.text

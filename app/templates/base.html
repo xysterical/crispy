@@ -125,7 +125,6 @@
       background: linear-gradient(180deg, #f5faf7, var(--bg) 34%, #f8fafc);
       background-attachment: fixed;
     }
-    body.has-global-rail { padding-left: 72px; }
     .app-shell { width: min(1440px, calc(100% - 32px)); margin: 24px auto 48px auto; }
 
     /* ── Typography ── */
@@ -354,26 +353,6 @@
     .nav-link.active { background: var(--accent-light); border-color: var(--accent); color: var(--accent-dark); }
     .topbar { margin-bottom: 18px; }
     .top-actions { display:flex; gap:10px; flex-wrap: wrap; align-items: center; }
-    .global-rail { position: fixed; top: 12px; bottom: 12px; left: 12px; z-index: 997; width: 52px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; padding: 8px; border: 1px solid rgba(148,163,184,0.28); border-radius: var(--radius-xl); background: #fff; box-shadow: var(--shadow-sm); transition: width 180ms cubic-bezier(0.16,1,0.3,1), box-shadow 180ms ease; }
-    .global-rail:hover, .global-rail:focus-within { width: 220px; box-shadow: var(--shadow-lg); }
-    .rail-brand { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 7px; color: var(--text); font-weight: 800; letter-spacing: -0.02em; white-space: nowrap; }
-    .rail-brand-mark { width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; background: var(--accent); color: #fff; font-size: 12px; flex: 0 0 22px; }
-    .rail-label, .rail-brand-text { opacity: 0; transform: translateX(-4px); transition: opacity 140ms ease, transform 140ms ease; }
-    .global-rail:hover .rail-label, .global-rail:focus-within .rail-label, .global-rail:hover .rail-brand-text, .global-rail:focus-within .rail-brand-text { opacity: 1; transform: translateX(0); }
-    .rail-nav { display: flex; flex-direction: column; gap: 4px; min-width: 204px; }
-    .rail-spacer { flex: 1; }
-    .rail-link, .rail-summary { display: grid; grid-template-columns: 28px 1fr; align-items: center; gap: 8px; min-height: 36px; padding: 4px 7px; border: 1px solid transparent; border-radius: var(--radius); color: var(--text-secondary); background: transparent; font-size: 12px; font-weight: 650; text-align: left; white-space: nowrap; cursor: pointer; }
-    .rail-link:hover, .rail-summary:hover { color: var(--text); background: var(--gray-50); border-color: var(--line-light); }
-    .rail-link:active, .rail-summary:active { transform: scale(0.98); }
-    .rail-link.active { color: var(--accent-dark); background: var(--green-50); border-color: var(--green-200); }
-    .rail-icon { width: 28px; height: 28px; border-radius: var(--radius-sm); display: grid; place-items: center; color: inherit; font-size: 14px; }
-    .rail-summary { width: 100%; font-family: inherit; list-style: none; }
-    .rail-summary::-webkit-details-marker { display: none; }
-    .rail-more { position: relative; min-width: 204px; }
-    .rail-more[open] .rail-summary { color: var(--accent-dark); background: var(--green-50); border-color: var(--green-200); }
-    .rail-more-panel { display: grid; gap: 4px; padding: 4px 0 0; }
-    .rail-action { display: grid; grid-template-columns: 28px 1fr; align-items: center; gap: 8px; min-height: 34px; padding: 4px 7px; border: 1px solid transparent; border-radius: var(--radius); color: var(--text-secondary); background: transparent; font-size: 12px; font-weight: 650; text-align: left; }
-    .rail-action:hover { color: var(--text); background: var(--gray-50); border-color: var(--line-light); }
     .data-source-block { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:8px 12px; background: var(--gray-50); border-radius: var(--radius-sm); border:1px solid var(--line); margin-bottom:10px; }
 
     /* ── Pill ── */
@@ -385,20 +364,7 @@
 
     /* ── Responsive ── */
     @media (max-width: 860px) {
-      body.has-global-rail { padding-left: 0; padding-bottom: 72px; }
       .app-shell { width: calc(100% - 16px); margin-top: 12px; }
-      .global-rail { top: auto; right: 8px; bottom: 8px; left: 8px; width: auto; height: 56px; flex-direction: row; align-items: center; overflow-x: auto; overflow-y: hidden; padding: 7px; }
-      .global-rail:hover, .global-rail:focus-within { width: auto; }
-      .rail-brand { display: none; }
-      .rail-nav { flex-direction: row; min-width: 0; }
-      .rail-spacer { display: none; }
-      .rail-link, .rail-summary, .rail-action { grid-template-columns: 28px; width: 36px; min-height: 36px; padding: 4px; }
-      .rail-label { display: none; }
-      .rail-more { min-width: 36px; }
-      .rail-more-panel { position: fixed; right: 10px; bottom: 68px; min-width: 170px; padding: 6px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: #fff; box-shadow: var(--shadow-lg); }
-      .rail-more-panel .rail-action { width: 100%; grid-template-columns: 28px 1fr; }
-      .rail-more-panel .rail-label { display: inline; opacity: 1; transform: none; }
-      .fab-group { right: 18px; bottom: 76px; }
       .deliverables { grid-template-columns: 1fr; }
       .variant-score-card { flex: 0 0 156px; }
       .variant-score-card .thumb { height: 110px; }
@@ -411,6 +377,52 @@
       .runs-actions button { flex: 1 1 48%; min-width: 136px; padding: 11px 16px; font-size: 14px; }
     }
     {% endblock %}
+
+    /* ── Global rail: always loaded because some dashboard pages replace the base styles block. ── */
+    body.has-global-rail { padding-left: 76px; }
+    .global-rail, .global-rail * { box-sizing: border-box; }
+    .global-rail { position: fixed; top: 12px; bottom: 12px; left: 12px; z-index: 997; width: 56px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; padding: 8px; border: 1px solid rgba(148,163,184,0.28); border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgba(15,23,42,0.05); transition: width 180ms cubic-bezier(0.16,1,0.3,1), box-shadow 180ms ease; }
+    .global-rail:hover, .global-rail:focus-within { width: 220px; box-shadow: 0 12px 28px rgba(15,23,42,0.08); }
+    .rail-brand { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 9px; color: var(--text, #0f172a); font-weight: 800; letter-spacing: -0.02em; white-space: nowrap; }
+    .global-rail:hover .rail-brand, .global-rail:focus-within .rail-brand { padding: 0 7px; }
+    .rail-brand-mark { width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; background: var(--accent, #059669); color: #fff; font-size: 12px; flex: 0 0 22px; line-height: 1; }
+    .rail-label, .rail-brand-text { opacity: 0; transform: translateX(-4px); transition: opacity 140ms ease, transform 140ms ease; }
+    .global-rail:hover .rail-label, .global-rail:focus-within .rail-label, .global-rail:hover .rail-brand-text, .global-rail:focus-within .rail-brand-text { opacity: 1; transform: translateX(0); }
+    .global-rail:not(:hover):not(:focus-within) .rail-label, .global-rail:not(:hover):not(:focus-within) .rail-brand-text { display: none; }
+    .rail-nav { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%; min-width: 0; }
+    .global-rail:hover .rail-nav, .global-rail:focus-within .rail-nav { min-width: 204px; }
+    .rail-spacer { flex: 1; }
+    .rail-link, .rail-summary { display: grid; grid-template-columns: 28px 1fr; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 4px 5px; border: 1px solid transparent; border-radius: 8px; color: var(--text-secondary, #475569); background: transparent; font-size: 12px; font-weight: 650; text-align: left; white-space: nowrap; cursor: pointer; text-decoration: none; }
+    .global-rail:not(:hover):not(:focus-within) .rail-link, .global-rail:not(:hover):not(:focus-within) .rail-summary { width: 40px; grid-template-columns: 28px; gap: 0; }
+    .rail-link:hover, .rail-summary:hover { color: var(--text, #0f172a); background: var(--gray-50, #f8fafc); border-color: var(--line-light, #f1f5f9); text-decoration: none; }
+    .rail-link:active, .rail-summary:active { transform: scale(0.96); }
+    .rail-link.active { color: var(--accent-dark, #047857); background: var(--green-50, #ecfdf5); border-color: var(--green-200, #a7f3d0); }
+    .rail-icon { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; color: inherit; font-size: 14px; line-height: 1; }
+    .rail-summary { font-family: inherit; list-style: none; }
+    .rail-summary::-webkit-details-marker { display: none; }
+    .rail-more { position: relative; min-width: 40px; }
+    .global-rail:hover .rail-more, .global-rail:focus-within .rail-more { min-width: 204px; }
+    .rail-more[open] .rail-summary { color: var(--accent-dark, #047857); background: var(--green-50, #ecfdf5); border-color: var(--green-200, #a7f3d0); }
+    .rail-more-panel { display: grid; gap: 4px; padding: 4px 0 0; }
+    .rail-action { display: grid; grid-template-columns: 28px 1fr; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 4px 7px; border: 1px solid transparent; border-radius: 8px; color: var(--text-secondary, #475569); background: transparent; font-size: 12px; font-weight: 650; text-align: left; cursor: pointer; }
+    .rail-action:hover { color: var(--text, #0f172a); background: var(--gray-50, #f8fafc); border-color: var(--line-light, #f1f5f9); }
+    @media (max-width: 860px) {
+      body.has-global-rail { padding-left: 0; padding-bottom: 72px; }
+      .global-rail { top: auto; right: 8px; bottom: 8px; left: 8px; width: auto; height: 56px; flex-direction: row; align-items: center; overflow-x: auto; overflow-y: hidden; padding: 7px; }
+      .global-rail:hover, .global-rail:focus-within { width: auto; }
+      .rail-brand { display: none; }
+      .rail-nav { flex-direction: row; align-items: center; width: auto; min-width: 0; }
+      .global-rail:hover .rail-nav, .global-rail:focus-within .rail-nav { min-width: 0; }
+      .rail-spacer { display: none; }
+      .rail-link, .rail-summary, .rail-action, .global-rail:not(:hover):not(:focus-within) .rail-link, .global-rail:not(:hover):not(:focus-within) .rail-summary { grid-template-columns: 28px; width: 40px; min-height: 40px; padding: 5px; gap: 0; }
+      .rail-label { display: none; }
+      .rail-more { min-width: 40px; }
+      .global-rail:hover .rail-more, .global-rail:focus-within .rail-more { min-width: 40px; }
+      .rail-more-panel { position: fixed; right: 10px; bottom: 68px; min-width: 170px; padding: 6px; border: 1px solid var(--line, #e2e8f0); border-radius: 10px; background: #fff; box-shadow: 0 12px 28px rgba(15,23,42,0.08); }
+      .rail-more-panel .rail-action { width: 100%; grid-template-columns: 28px 1fr; }
+      .rail-more-panel .rail-label { display: inline; opacity: 1; transform: none; }
+      .fab-group { right: 18px; bottom: 76px; }
+    }
   </style>
   {% block head_extra %}{% endblock %}
 </head>

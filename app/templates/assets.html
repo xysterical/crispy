@@ -148,14 +148,15 @@
   }
 {% endblock %}
 {% block body %}
-<body>
+<body class="has-global-rail">
+  {% set rail_active = 'assets' %}
+  {% include "_global_rail.html" %}
   <main class="app-shell">
     <div class="toolbar">
       <div>
         <h1>Asset Library</h1>
         <div class="subtitle">Browse generated outputs across runs, modes, and channels.</div>
       </div>
-      <a class="nav-link" href="/dashboard">Back to Dashboard</a>
     </div>
     <section class="card">
       <div class="filters">

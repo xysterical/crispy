@@ -206,14 +206,15 @@
   }
 {% endblock %}
 {% block body %}
-<body>
+<body class="has-global-rail">
+  {% set rail_active = 'personas' %}
+  {% include "_global_rail.html" %}
   <main class="app-shell">
     <header class="hero">
       <div>
         <h1>Persona Board</h1>
         <div class="subtitle">Notion-style board for agent persona tuning and versioned prompt edits.</div>
       </div>
-      <a class="nav-link" href="/dashboard">Back to Dashboard</a>
     </header>
 
     <section class="card filters">
