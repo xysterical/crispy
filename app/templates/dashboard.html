@@ -2,42 +2,51 @@
 {% block title %}Crispy Dashboard{% endblock %}
 {% block styles %}
   {{ super() }}
-  /* ── Main panels blend into gradient background ── */
+  .dashboard-hero { margin-bottom: 18px; }
+  .dashboard-kicker { color: var(--accent-dark); font-size: 12px; font-weight: 750; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+  .dashboard-layout { display:flex; gap:16px; flex-wrap:wrap; }
   .runs-panel {
-    background: rgba(255, 255, 255, 0.88);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    background: rgba(255, 255, 255, 0.96);
   }
   #run-detail-panel {
-    background: rgba(255, 255, 255, 0.88);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    background: rgba(255, 255, 255, 0.96);
   }
 {% endblock %}
 {% block body %}
-<body>
+<body class="has-global-rail">
+  <nav class="global-rail" aria-label="Global navigation">
+    <div class="rail-brand" aria-label="Crispy">
+      <span class="rail-brand-mark">C</span>
+      <span class="rail-brand-text">Crispy</span>
+    </div>
+    <div class="rail-nav">
+      <a class="rail-link active" href="/dashboard" aria-current="page" title="Dashboard"><span class="rail-icon" aria-hidden="true">&#8962;</span><span class="rail-label">Dashboard</span></a>
+      <a class="rail-link" href="/dashboard/data" title="Data Dashboard"><span class="rail-icon" aria-hidden="true">&#9638;</span><span class="rail-label">Data</span></a>
+      <a class="rail-link" href="/dashboard/calendar" title="Content Calendar"><span class="rail-icon" aria-hidden="true">&#9716;</span><span class="rail-label">Calendar</span></a>
+      <a class="rail-link" href="/dashboard/assets" title="Asset Library"><span class="rail-icon" aria-hidden="true">&#9720;</span><span class="rail-label">Assets</span></a>
+      <a class="rail-link" href="/dashboard/gm-review" title="GM Review"><span class="rail-icon" aria-hidden="true">&#9737;</span><span class="rail-label">GM Review</span></a>
+      <a class="rail-link" href="/dashboard/shop-analysis" title="Shop Analysis"><span class="rail-icon" aria-hidden="true">&#9671;</span><span class="rail-label">Shop Analysis</span></a>
+      <a class="rail-link" href="/dashboard/personas" title="Personas"><span class="rail-icon" aria-hidden="true">&#9783;</span><span class="rail-label">Personas</span></a>
+      <a class="rail-link" href="/dashboard/agent-apis" title="API and Integration Configs"><span class="rail-icon" aria-hidden="true">&#9881;</span><span class="rail-label">Configs</span></a>
+    </div>
+    <div class="rail-spacer"></div>
+    <details class="rail-more">
+      <summary class="rail-summary" title="Database actions"><span class="rail-icon" aria-hidden="true">&#8943;</span><span class="rail-label">Database</span></summary>
+      <div class="rail-more-panel">
+        <button class="rail-action" onclick="backupDatabase()" title="Save a timestamped copy to ~/.crispy/backups/"><span class="rail-icon" aria-hidden="true">&#8681;</span><span class="rail-label">Backup DB</span></button>
+        <button class="rail-action" onclick="showRestoreDialog()" title="Restore database from a backup"><span class="rail-icon" aria-hidden="true">&#8634;</span><span class="rail-label">Restore DB</span></button>
+      </div>
+    </details>
+  </nav>
   <div class="app-shell">
-    <header class="hero">
+    <header class="hero dashboard-hero">
       <div>
+        <div class="dashboard-kicker">Product creative operations</div>
         <h1>Crispy Dashboard</h1>
-        <div class="subtitle">Production MVP control plane for multimodal creative generation and review.</div>
-        <div class="subtitle">Flow: input product/task &rarr; GM intake summary &rarr; planning with product+industry memory &rarr; divergence &rarr; copy/image &amp; video generation &rarr; evaluation winner &rarr; feedback updates GM memory.</div>
+        <div class="subtitle">SKU-centered generation, review, evaluation, and feedback memory for ecommerce creative teams.</div>
       </div>
     </header>
-    <div class="topbar">
-      <div class="top-actions links">
-        <a class="nav-link" href="/dashboard/agent-apis">API &amp; Integration Configs</a>
-        <a class="nav-link" href="/dashboard/shop-analysis">Shop Analysis</a>
-        <a class="nav-link" href="/dashboard/data">Data Dashboard</a>
-        <a class="nav-link" href="/dashboard/gm-review">GM Review</a>
-        <a class="nav-link" href="/dashboard/calendar">Content Calendar</a>
-        <a class="nav-link" href="/dashboard/assets">Asset Library</a>
-        <a class="nav-link" href="/dashboard/personas">Personas</a>
-        <button class="nav-link" onclick="backupDatabase()" title="Save a timestamped copy to ~/.crispy/backups/">Backup DB</button>
-        <button class="nav-link" onclick="showRestoreDialog()" title="Restore database from a backup">Restore DB</button>
-      </div>
-    </div>
-    <div style="display:flex;gap:20px;flex-wrap:wrap;">
+    <div class="dashboard-layout">
       <div style="flex:0 0 480px;min-width:0;">
         <section class="card runs-panel" style="position:sticky;top:12px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -51,7 +60,7 @@
           </div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th style="width:18%">Run ID</th><th style="width:34%">Status</th><th style="width:18%">Mode</th><th style="width:30%">Updated</th></tr></thead>
+              <thead><tr><th style="width:18%">Run ID</th><th style="width:30%">Status</th><th style="width:28%">Mode</th><th style="width:24%">Updated</th></tr></thead>
               <tbody id="runs-body"></tbody>
             </table>
           </div>
