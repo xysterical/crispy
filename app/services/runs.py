@@ -659,6 +659,7 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
             GmMemory.project_id == run.project_id,
             GmMemory.memory_scope == "product",
             GmMemory.product_code == run.product_code,
+            GmMemory.status == "active",
         )
         .order_by(desc(GmMemory.score_hint), desc(GmMemory.created_at))
         .limit(20)
@@ -669,6 +670,7 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
             GmMemory.project_id == run.project_id,
             GmMemory.memory_scope == "industry",
             GmMemory.industry_code == run.industry_code,
+            GmMemory.status == "active",
         )
         .order_by(desc(GmMemory.score_hint), desc(GmMemory.created_at))
         .limit(20)
@@ -678,6 +680,7 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
         .where(
             GmMemory.memory_scope == "shop",
             GmMemory.source_type.in_(["shop_profile", "competitor_analysis", "shopify_sync", "meta_sync"]),
+            GmMemory.status == "active",
         )
         .order_by(desc(GmMemory.score_hint), desc(GmMemory.created_at))
         .limit(50)
@@ -712,9 +715,10 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
     return merged
 
 
-def _gm_memory_priority(row: GmMemory) -> tuple[int, float, float]:
+def _gm_memory_priority(row: GmMemory) -> tuple[int, int, float, float]:
     return (
         0 if row.memory_type == "summary" else 1,
+        -int(bool(row.pinned)),
         -(row.score_hint or 0),
         -(row.created_at.timestamp() if row.created_at else 0),
     )

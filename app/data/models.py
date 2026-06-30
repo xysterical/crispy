@@ -452,6 +452,8 @@ class GmMemory(Base):
     source_type: Mapped[str] = mapped_column(String(64), default="feedback_import")
     score_hint: Mapped[float | None] = mapped_column(Float, nullable=True)
     memory_type: Mapped[str] = mapped_column(String(32), default="strategy")
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     content: Mapped[dict] = mapped_column(json_type(), default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

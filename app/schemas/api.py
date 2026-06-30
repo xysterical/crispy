@@ -421,9 +421,17 @@ class GmMemoryItem(BaseModel):
     industry_code: str | None = None
     source_type: str
     memory_type: str
+    status: str = "active"
+    pinned: bool = False
     score_hint: float | None = None
     content: dict = Field(default_factory=dict)
     created_at: datetime
+
+
+class GmMemoryUpdateRequest(BaseModel):
+    status: Literal["active", "archived", "superseded"] | None = None
+    pinned: bool | None = None
+    superseded_by_id: str | None = None
 
 
 class GmReflectionItem(BaseModel):

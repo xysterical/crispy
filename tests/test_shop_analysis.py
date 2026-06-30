@@ -131,6 +131,22 @@ def test_create_run_planning_input_includes_shop_memory(client, db_session):
             memory_scope="shop",
             industry_code="pet_accessories",
             source_type="shopify_sync",
+            score_hint=999.0,
+            memory_type="summary",
+            status="archived",
+            content={
+                "shop_id": shop.id,
+                "shop_name": shop.name,
+                "summary": "Archived memory should not reach planning.",
+            },
+        )
+    )
+    db_session.add(
+        GmMemory(
+            project_id="shop-memory-placeholder",
+            memory_scope="shop",
+            industry_code="pet_accessories",
+            source_type="shopify_sync",
             score_hint=120.0,
             memory_type="summary",
             content={
@@ -185,6 +201,7 @@ def test_create_run_planning_input_includes_shop_memory(client, db_session):
     assert shop_lessons
     assert shop_lessons[0]["memory_type"] == "summary"
     assert {item["source_type"] for item in shop_lessons} >= {"shop_profile", "shopify_sync", "meta_sync"}
+    assert all(item["content"].get("summary") != "Archived memory should not reach planning." for item in shop_lessons)
 
 
 def test_shopify_sync_writes_shop_memory_contract(client, db_session, monkeypatch):
@@ -250,6 +267,13 @@ def test_shopify_sync_writes_shop_memory_contract(client, db_session, monkeypatc
     assert resp.status_code == 200
     rows = resp.json()
     assert rows[0]["memory_type"] == "summary"
+
+    patch = client.patch(f"/gm-memory/{rows[0]['id']}", json={"pinned": True, "status": "archived"})
+    assert patch.status_code == 200
+    assert patch.json()["pinned"] is True
+    assert patch.json()["status"] == "archived"
+    assert client.get("/gm-memory", params={"scope": "shop", "source_type": "shopify_sync"}).json() == []
+    assert client.get("/gm-memory", params={"scope": "shop", "source_type": "shopify_sync", "status": "archived"}).json()[0]["id"] == rows[0]["id"]
 
 
 def test_shop_analysis_history_after_run(client):

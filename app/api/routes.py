@@ -42,6 +42,7 @@ from app.schemas.api import (
     FeedbackImportRequest,
     FeedbackImportResponse,
     GmMemoryItem,
+    GmMemoryUpdateRequest,
     GmPolicyItem,
     GmPolicyPromoteRequest,
     GmReflectionItem,
@@ -2441,10 +2442,11 @@ def list_gm_memory(
     industry_code: str | None = Query(default=None),
     source_type: str | None = Query(default=None),
     memory_type: str | None = Query(default=None),
+    status: str | None = Query(default="active"),
     limit: int = Query(default=20, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> list[GmMemoryItem]:
-    query = select(GmMemory).order_by(desc(GmMemory.created_at))
+    query = select(GmMemory).order_by(desc(GmMemory.pinned), desc(GmMemory.created_at))
     if scope:
         query = query.where(GmMemory.memory_scope == scope)
     if product_code:
@@ -2455,6 +2457,8 @@ def list_gm_memory(
         query = query.where(GmMemory.source_type == source_type)
     if memory_type:
         query = query.where(GmMemory.memory_type == memory_type)
+    if status:
+        query = query.where(GmMemory.status == status)
     rows = db.scalars(query.limit(limit)).all()
     return [
         GmMemoryItem(
@@ -2466,12 +2470,52 @@ def list_gm_memory(
             industry_code=row.industry_code,
             source_type=row.source_type,
             memory_type=row.memory_type,
+            status=row.status,
+            pinned=bool(row.pinned),
             score_hint=row.score_hint,
             content=row.content or {},
             created_at=row.created_at,
         )
         for row in rows
     ]
+
+
+@router.patch("/gm-memory/{memory_id}", response_model=GmMemoryItem)
+def update_gm_memory(
+    memory_id: str,
+    payload: GmMemoryUpdateRequest,
+    db: Session = Depends(get_db),
+) -> GmMemoryItem:
+    row = db.get(GmMemory, memory_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="GM memory not found")
+    if payload.status is not None:
+        row.status = payload.status
+    if payload.pinned is not None:
+        row.pinned = payload.pinned
+    if payload.superseded_by_id:
+        content = dict(row.content or {})
+        content["superseded_by_id"] = payload.superseded_by_id
+        row.content = content
+        row.status = "superseded"
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return GmMemoryItem(
+        id=row.id,
+        project_id=row.project_id,
+        run_id=row.run_id,
+        memory_scope=row.memory_scope,
+        product_code=row.product_code,
+        industry_code=row.industry_code,
+        source_type=row.source_type,
+        memory_type=row.memory_type,
+        status=row.status,
+        pinned=bool(row.pinned),
+        score_hint=row.score_hint,
+        content=row.content or {},
+        created_at=row.created_at,
+    )
 
 
 @router.get("/gm-reflections", response_model=list[GmReflectionItem])
