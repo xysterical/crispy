@@ -388,6 +388,7 @@
     .rail-brand-mark { width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; background: var(--accent, #059669); color: #fff; font-size: 12px; flex: 0 0 22px; line-height: 1; }
     .rail-label, .rail-brand-text { opacity: 0; transform: translateX(-4px); transition: opacity 140ms ease, transform 140ms ease; }
     .global-rail:hover .rail-label, .global-rail:focus-within .rail-label, .global-rail:hover .rail-brand-text, .global-rail:focus-within .rail-brand-text { opacity: 1; transform: translateX(0); }
+    .global-rail:not(:hover):not(:focus-within) .rail-label, .global-rail:not(:hover):not(:focus-within) .rail-brand-text { display: none; }
     .rail-nav { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%; min-width: 0; }
     .global-rail:hover .rail-nav, .global-rail:focus-within .rail-nav { min-width: 204px; }
     .rail-spacer { flex: 1; }
