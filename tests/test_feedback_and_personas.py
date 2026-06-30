@@ -89,7 +89,9 @@ def test_feedback_import_updates_leaderboard(client):
         ).all()
         assert len(product_memories) >= 1
         assert len(industry_memories) >= 1
-        assert "top_variants" in (product_memories[0].content or {})
+        product_content = product_memories[0].content or {}
+        assert "top_variants" in product_content
+        assert {"summary", "winning_patterns", "avoid_patterns", "evidence", "metric_window", "confidence"} <= set(product_content)
 
     leaderboard = client.get(f"/projects/{project_id}/leaderboard")
     assert leaderboard.status_code == 200

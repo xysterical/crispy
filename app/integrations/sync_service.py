@@ -168,6 +168,7 @@ async def sync_shopify(
                 active_days = max(distinct_days, 1)
                 daily_avg_revenue = agg["total_revenue"] / active_days
                 daily_avg_quantity = agg["total_quantity"] / active_days
+                order_dates = sorted(set(agg["order_dates"]))
 
                 past_data = (
                     db.scalars(
@@ -213,6 +214,14 @@ async def sync_shopify(
                             f"Product {key}: ${agg['total_revenue']:.2f} total revenue, "
                             f"{agg['total_quantity']} units sold over {distinct_days} active days."
                         ),
+                        "winning_patterns": [],
+                        "avoid_patterns": [],
+                        "evidence": [{"source": "shopify_sync", "sync_id": sync_record.id, "active_order_days": distinct_days}],
+                        "metric_window": {
+                            "start": order_dates[0] if order_dates else None,
+                            "end": order_dates[-1] if order_dates else None,
+                        },
+                        "confidence": round(min(0.95, 0.45 + 0.05 * active_days), 2),
                     },
                 )
                 db.add(entry)
@@ -245,6 +254,14 @@ async def sync_shopify(
                             f"Store: ${total_store_revenue:.2f} total revenue, "
                             f"{total_store_quantity} units across {len(by_product)} products."
                         ),
+                        "winning_patterns": [],
+                        "avoid_patterns": [],
+                        "evidence": [{"source": "shopify_sync", "sync_id": sync_record.id, "product_count": len(by_product)}],
+                        "metric_window": {
+                            "start": all_dates[0] if all_dates else None,
+                            "end": all_dates[-1] if all_dates else None,
+                        },
+                        "confidence": round(min(0.95, 0.45 + 0.05 * active_days), 2),
                     },
                 )
                 db.add(store_entry)
@@ -419,6 +436,8 @@ async def sync_meta(
                 total_impressions = sum(r.impressions for r in feedback_rows)
                 total_clicks = sum(r.clicks for r in feedback_rows)
                 total_conversions = sum(r.conversions for r in feedback_rows)
+                starts = [r.period_start.isoformat() for r in feedback_rows if r.period_start]
+                ends = [r.period_end.isoformat() for r in feedback_rows if r.period_end]
                 if total_impressions > 0:
                     store_entry = GmMemory(
                         project_id=project.id,
@@ -445,6 +464,14 @@ async def sync_meta(
                                 f"${total_revenue:.2f} revenue, "
                                 f"ROAS {total_revenue/total_spend:.2f}" if total_spend > 0 else "No spend data"
                             ),
+                            "winning_patterns": [],
+                            "avoid_patterns": [],
+                            "evidence": [{"source": "meta_sync", "sync_id": sync_record.id, "creative_count": len({r.creative_key for r in feedback_rows})}],
+                            "metric_window": {
+                                "start": min(starts) if starts else None,
+                                "end": max(ends) if ends else None,
+                            },
+                            "confidence": round(min(0.95, 0.45 + 0.03 * len(feedback_rows)), 2),
                         },
                     )
                     db.add(store_entry)

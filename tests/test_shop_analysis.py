@@ -186,6 +186,64 @@ def test_create_run_planning_input_includes_shop_memory(client, db_session):
     assert {item["source_type"] for item in shop_lessons} >= {"shop_profile", "shopify_sync", "meta_sync"}
 
 
+def test_shopify_sync_writes_shop_memory_contract(db_session, monkeypatch):
+    import asyncio
+
+    from app.data.models import GmMemory, Product, Project, Workspace
+    from app.integrations.models import ShopifyOrderData, ShopifyOrderLineItem
+    from app.integrations.shopify import ShopifyProvider
+    from app.integrations.sync_service import sync_shopify
+    from sqlalchemy import select
+
+    shop = Workspace(name="sync-contract-shop")
+    db_session.add(shop)
+    db_session.flush()
+    project = Project(workspace_id=shop.id, name="sync-contract-project")
+    db_session.add(project)
+    db_session.flush()
+    db_session.add(Product(project_id=project.id, name="Dog leash", product_code="SKU-1"))
+    db_session.flush()
+
+    async def fake_orders(self):
+        return [
+            ShopifyOrderData(
+                shopify_order_id="1001",
+                created_at="2026-06-20T00:00:00Z",
+                total_price=30,
+                currency="USD",
+                financial_status="paid",
+                line_items=[
+                    ShopifyOrderLineItem(
+                        variant_sku="SKU-1",
+                        product_title="Dog leash",
+                        quantity=2,
+                        price=15,
+                        total_discount=0,
+                    )
+                ],
+            )
+        ]
+
+    monkeypatch.setattr(ShopifyProvider, "fetch_orders", fake_orders)
+    asyncio.run(
+        sync_shopify(
+            db_session,
+            workspace_name="sync-contract-shop",
+            project_name="sync-contract-project",
+            sync_type="orders",
+            store_domain="example.myshopify.com",
+            access_token="token",
+        )
+    )
+
+    row = db_session.scalar(
+        select(GmMemory).where(GmMemory.memory_scope == "shop", GmMemory.source_type == "shopify_sync")
+    )
+    content = row.content or {}
+    assert content["shop_id"] == shop.id
+    assert {"summary", "winning_patterns", "avoid_patterns", "evidence", "metric_window", "confidence"} <= set(content)
+
+
 def test_shop_analysis_history_after_run(client):
     # Run an analysis first
     client.post(

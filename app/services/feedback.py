@@ -52,6 +52,12 @@ def _weighted_score(
     )
 
 
+def _metric_window(rows: list[FeedbackRow]) -> dict:
+    starts = [row.period_start.isoformat() for row in rows if row.period_start]
+    ends = [row.period_end.isoformat() for row in rows if row.period_end]
+    return {"start": min(starts) if starts else None, "end": max(ends) if ends else None}
+
+
 def _get_workspace_project(db: Session, workspace_name: str, project_name: str) -> tuple[Workspace, Project]:
     workspace = db.scalar(select(Workspace).where(Workspace.name == workspace_name))
     if not workspace:
@@ -202,6 +208,7 @@ def import_feedback_rows(
         scored_rows.sort(key=lambda item: item[1], reverse=True)
         top = scored_rows[:3]
         bottom = scored_rows[-3:]
+        metric_window = _metric_window(rows)
         for product_code, items in memory_by_product.items():
             ranked = sorted(items, key=lambda item: item[1], reverse=True)
             top_product = ranked[:3]
@@ -226,6 +233,11 @@ def import_feedback_rows(
                         for variant_id, score, pattern in bottom_product
                     ],
                     "summary": "Preserve product-level winning hook, visual, and script patterns and retire low-score variants.",
+                    "winning_patterns": [item[2] or {"variant_id": item[0]} for item in top_product],
+                    "avoid_patterns": [item[2] or {"variant_id": item[0]} for item in bottom_product],
+                    "evidence": [{"source": "feedback_import", "file_name": file_name, "row_count": len(items)}],
+                    "metric_window": metric_window,
+                    "confidence": round(min(0.95, 0.5 + 0.05 * len(items)), 2),
                 },
             )
             db.add(entry)
@@ -255,6 +267,11 @@ def import_feedback_rows(
                         for variant_id, score, pattern in bottom_industry
                     ],
                     "summary": "Keep industry-level winning angle and visual/script patterns, avoid repeated low-performing variants.",
+                    "winning_patterns": [item[2] or {"variant_id": item[0]} for item in top_industry],
+                    "avoid_patterns": [item[2] or {"variant_id": item[0]} for item in bottom_industry],
+                    "evidence": [{"source": "feedback_import", "file_name": file_name, "row_count": len(items)}],
+                    "metric_window": metric_window,
+                    "confidence": round(min(0.95, 0.5 + 0.05 * len(items)), 2),
                 },
             )
             db.add(entry)
