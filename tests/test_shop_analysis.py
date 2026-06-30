@@ -276,6 +276,56 @@ def test_shopify_sync_writes_shop_memory_contract(client, db_session, monkeypatc
     assert client.get("/gm-memory", params={"scope": "shop", "source_type": "shopify_sync", "status": "archived"}).json()[0]["id"] == rows[0]["id"]
 
 
+def test_gm_memory_compaction_creates_summary_and_supersedes_raw(client, db_session):
+    from app.data.models import GmMemory, Project, Workspace
+    from sqlalchemy import select
+
+    shop = Workspace(name="compact-shop")
+    db_session.add(shop)
+    db_session.flush()
+    project = Project(workspace_id=shop.id, name="compact-project")
+    db_session.add(project)
+    db_session.flush()
+    db_session.add_all(
+        [
+            GmMemory(
+                project_id=project.id,
+                memory_scope="product",
+                product_code="SKU-C",
+                source_type="shop_profile",
+                memory_type="store_intelligence",
+                content={"summary": "Premium utility positioning.", "winning_patterns": ["utility hook"], "confidence": 0.6},
+            ),
+            GmMemory(
+                project_id=project.id,
+                memory_scope="product",
+                product_code="SKU-C",
+                source_type="competitor_analysis",
+                memory_type="store_intelligence",
+                content={"summary": "Avoid generic lifestyle claims.", "avoid_patterns": ["generic lifestyle"], "confidence": 0.7},
+            ),
+        ]
+    )
+    db_session.commit()
+
+    resp = client.post(
+        "/gm-memory/compact",
+        json={"project_id": project.id, "memory_scope": "product", "product_code": "SKU-C"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["memory_type"] == "summary"
+    assert body["source_type"] == "memory_compaction"
+    assert body["content"]["winning_patterns"] == ["utility hook"]
+    assert body["content"]["avoid_patterns"] == ["generic lifestyle"]
+
+    raw = db_session.scalars(
+        select(GmMemory).where(GmMemory.project_id == project.id, GmMemory.memory_type == "store_intelligence")
+    ).all()
+    assert {row.status for row in raw} == {"superseded"}
+    assert all((row.content or {}).get("superseded_by_id") == body["id"] for row in raw)
+
+
 def test_shop_analysis_history_after_run(client):
     # Run an analysis first
     client.post(

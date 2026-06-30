@@ -434,6 +434,15 @@ class GmMemoryUpdateRequest(BaseModel):
     superseded_by_id: str | None = None
 
 
+class GmMemoryCompactRequest(BaseModel):
+    project_id: str
+    memory_scope: Literal["shop", "product", "industry"]
+    product_code: str | None = None
+    industry_code: str | None = None
+    shop_id: str | None = None
+    limit: int = Field(default=20, ge=1, le=200)
+
+
 class GmReflectionItem(BaseModel):
     id: str
     project_id: str

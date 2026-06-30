@@ -41,6 +41,7 @@ from app.schemas.api import (
     ExecutionMemoryLedgerResponse,
     FeedbackImportRequest,
     FeedbackImportResponse,
+    GmMemoryCompactRequest,
     GmMemoryItem,
     GmMemoryUpdateRequest,
     GmPolicyItem,
@@ -111,6 +112,7 @@ from app.services.gm_evolution import (
     promote_gm_policy,
 )
 from app.services.gm_review import build_gm_review_summary, render_gm_review_markdown
+from app.services.gm_memory import compact_gm_memory
 from app.services.intake_assets import process_uploaded_payloads
 from app.services.marketplace_qa import is_marketplace_main_image
 from app.services.personas import get_persona, list_persona_catalog, persona_info, update_persona
@@ -2435,6 +2437,24 @@ def list_runs(db: Session = Depends(get_db)) -> list[RunSummary]:
     ]
 
 
+def _gm_memory_item(row: GmMemory) -> GmMemoryItem:
+    return GmMemoryItem(
+        id=row.id,
+        project_id=row.project_id,
+        run_id=row.run_id,
+        memory_scope=row.memory_scope,
+        product_code=row.product_code,
+        industry_code=row.industry_code,
+        source_type=row.source_type,
+        memory_type=row.memory_type,
+        status=row.status,
+        pinned=bool(row.pinned),
+        score_hint=row.score_hint,
+        content=row.content or {},
+        created_at=row.created_at,
+    )
+
+
 @router.get("/gm-memory", response_model=list[GmMemoryItem])
 def list_gm_memory(
     scope: str | None = Query(default=None),
@@ -2460,24 +2480,28 @@ def list_gm_memory(
     if status:
         query = query.where(GmMemory.status == status)
     rows = db.scalars(query.limit(limit)).all()
-    return [
-        GmMemoryItem(
-            id=row.id,
-            project_id=row.project_id,
-            run_id=row.run_id,
-            memory_scope=row.memory_scope,
-            product_code=row.product_code,
-            industry_code=row.industry_code,
-            source_type=row.source_type,
-            memory_type=row.memory_type,
-            status=row.status,
-            pinned=bool(row.pinned),
-            score_hint=row.score_hint,
-            content=row.content or {},
-            created_at=row.created_at,
-        )
-        for row in rows
-    ]
+    return [_gm_memory_item(row) for row in rows]
+
+
+@router.post("/gm-memory/compact", response_model=GmMemoryItem)
+def compact_gm_memory_endpoint(
+    payload: GmMemoryCompactRequest,
+    db: Session = Depends(get_db),
+) -> GmMemoryItem:
+    row = compact_gm_memory(
+        db,
+        project_id=payload.project_id,
+        memory_scope=payload.memory_scope,
+        product_code=payload.product_code,
+        industry_code=payload.industry_code,
+        shop_id=payload.shop_id,
+        limit=payload.limit,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="No active raw GM memory to compact")
+    db.commit()
+    db.refresh(row)
+    return _gm_memory_item(row)
 
 
 @router.patch("/gm-memory/{memory_id}", response_model=GmMemoryItem)
@@ -2501,21 +2525,7 @@ def update_gm_memory(
     db.add(row)
     db.commit()
     db.refresh(row)
-    return GmMemoryItem(
-        id=row.id,
-        project_id=row.project_id,
-        run_id=row.run_id,
-        memory_scope=row.memory_scope,
-        product_code=row.product_code,
-        industry_code=row.industry_code,
-        source_type=row.source_type,
-        memory_type=row.memory_type,
-        status=row.status,
-        pinned=bool(row.pinned),
-        score_hint=row.score_hint,
-        content=row.content or {},
-        created_at=row.created_at,
-    )
+    return _gm_memory_item(row)
 
 
 @router.get("/gm-reflections", response_model=list[GmReflectionItem])
