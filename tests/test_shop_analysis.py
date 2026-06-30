@@ -187,7 +187,7 @@ def test_create_run_planning_input_includes_shop_memory(client, db_session):
     assert {item["source_type"] for item in shop_lessons} >= {"shop_profile", "shopify_sync", "meta_sync"}
 
 
-def test_shopify_sync_writes_shop_memory_contract(db_session, monkeypatch):
+def test_shopify_sync_writes_shop_memory_contract(client, db_session, monkeypatch):
     import asyncio
 
     from app.data.models import GmMemory, Product, Project, Workspace
@@ -244,6 +244,12 @@ def test_shopify_sync_writes_shop_memory_contract(db_session, monkeypatch):
     assert row.memory_type == "summary"
     assert content["shop_id"] == shop.id
     assert {"summary", "winning_patterns", "avoid_patterns", "evidence", "metric_window", "confidence"} <= set(content)
+    db_session.commit()
+
+    resp = client.get("/gm-memory", params={"scope": "shop", "source_type": "shopify_sync", "memory_type": "summary"})
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert rows[0]["memory_type"] == "summary"
 
 
 def test_shop_analysis_history_after_run(client):

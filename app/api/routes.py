@@ -2439,6 +2439,8 @@ def list_gm_memory(
     scope: str | None = Query(default=None),
     product_code: str | None = Query(default=None),
     industry_code: str | None = Query(default=None),
+    source_type: str | None = Query(default=None),
+    memory_type: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> list[GmMemoryItem]:
@@ -2449,6 +2451,10 @@ def list_gm_memory(
         query = query.where(GmMemory.product_code == product_code)
     if industry_code:
         query = query.where(GmMemory.industry_code == industry_code)
+    if source_type:
+        query = query.where(GmMemory.source_type == source_type)
+    if memory_type:
+        query = query.where(GmMemory.memory_type == memory_type)
     rows = db.scalars(query.limit(limit)).all()
     return [
         GmMemoryItem(
@@ -2459,6 +2465,7 @@ def list_gm_memory(
             product_code=row.product_code,
             industry_code=row.industry_code,
             source_type=row.source_type,
+            memory_type=row.memory_type,
             score_hint=row.score_hint,
             content=row.content or {},
             created_at=row.created_at,

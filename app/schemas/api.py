@@ -420,6 +420,7 @@ class GmMemoryItem(BaseModel):
     product_code: str | None = None
     industry_code: str | None = None
     source_type: str
+    memory_type: str
     score_hint: float | None = None
     content: dict = Field(default_factory=dict)
     created_at: datetime
