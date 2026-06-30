@@ -233,6 +233,8 @@ async def sync_shopify(
                     content={
                         "source": "shopify_sync",
                         "scope": "shop",
+                        "shop_id": workspace.id,
+                        "shop_name": workspace.name,
                         "total_revenue": round(total_store_revenue, 2),
                         "total_quantity": total_store_quantity,
                         "daily_avg_revenue": round(total_store_revenue / active_days, 2),
@@ -427,6 +429,8 @@ async def sync_meta(
                         content={
                             "source": "meta_sync",
                             "scope": "shop",
+                            "shop_id": workspace.id,
+                            "shop_name": workspace.name,
                             "total_spend": round(total_spend, 2),
                             "total_revenue": round(total_revenue, 2),
                             "total_impressions": total_impressions,

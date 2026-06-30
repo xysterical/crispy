@@ -125,6 +125,36 @@ def test_create_run_planning_input_includes_shop_memory(client, db_session):
             },
         )
     )
+    db_session.add(
+        GmMemory(
+            project_id="shop-memory-placeholder",
+            memory_scope="shop",
+            industry_code="pet_accessories",
+            source_type="shopify_sync",
+            score_hint=120.0,
+            memory_type="store_intelligence",
+            content={
+                "shop_id": shop.id,
+                "shop_name": shop.name,
+                "summary": "Store revenue is rising across dog walking products.",
+            },
+        )
+    )
+    db_session.add(
+        GmMemory(
+            project_id="shop-memory-placeholder",
+            memory_scope="shop",
+            industry_code="pet_accessories",
+            source_type="meta_sync",
+            score_hint=2.4,
+            memory_type="store_intelligence",
+            content={
+                "shop_id": shop.id,
+                "shop_name": shop.name,
+                "summary": "Meta account ROAS is healthy for utility-led creatives.",
+            },
+        )
+    )
     db_session.flush()
 
     run = create_run(
@@ -153,7 +183,7 @@ def test_create_run_planning_input_includes_shop_memory(client, db_session):
         if item["memory_scope"] == "shop"
     ]
     assert shop_lessons
-    assert shop_lessons[0]["content"]["profile"]["positioning"] == "Premium hands-free dog walking"
+    assert {item["source_type"] for item in shop_lessons} >= {"shop_profile", "shopify_sync", "meta_sync"}
 
 
 def test_shop_analysis_history_after_run(client):

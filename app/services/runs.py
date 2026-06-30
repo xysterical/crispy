@@ -677,7 +677,7 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
         select(GmMemory)
         .where(
             GmMemory.memory_scope == "shop",
-            GmMemory.source_type.in_(["shop_profile", "competitor_analysis"]),
+            GmMemory.source_type.in_(["shop_profile", "competitor_analysis", "shopify_sync", "meta_sync"]),
         )
         .order_by(desc(GmMemory.score_hint), desc(GmMemory.created_at))
         .limit(50)
