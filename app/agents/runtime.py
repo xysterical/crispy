@@ -3013,6 +3013,14 @@ class AgentsRuntime:
                 "product_truth_contract": product_truth,
             }
             reports.append(report)
+            product_truth_flags = sorted(
+                {
+                    str(flag)
+                    for asset_report in asset_reports
+                    for flag in (asset_report.get("flags") or [])
+                    if str(flag).startswith("visual_qa_product_truth")
+                }
+            )
             summaries.append(
                 {
                     "variant_id": variant.variant_id,
@@ -3020,7 +3028,8 @@ class AgentsRuntime:
                     "visual_score": report["visual_score"],
                     "blocking_issue_count": len(report["blocking_issues"]),
                     "recommended_action": recommended_action,
-                    "issues": report["blocking_issues"],
+                    "issues": sorted(set([*report["blocking_issues"], *product_truth_flags])),
+                    "product_truth_flags": product_truth_flags,
                     "frame_review_flags": sorted(
                         {
                             str(flag)
@@ -3041,6 +3050,7 @@ class AgentsRuntime:
             task_instruction=(
                 "Review these structured visual QA records for ad-candidate risk. "
                 "Focus on product fidelity, physical plausibility, channel fit, and whether any candidate should be blocked before evaluation. "
+                "When product_truth_flags are present, compare attached media against the product_truth_contract before passing the candidate. "
                 "Return concise operator notes; do not choose the final winner.\n"
                 f"intake_facts={json.dumps(intake, ensure_ascii=False)[:3000]}\n"
                 f"product_truth_contract={json.dumps(product_truth, ensure_ascii=False)[:2000]}\n"

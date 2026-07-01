@@ -1263,6 +1263,53 @@ def test_visual_quality_assessment_uses_frame_review_for_completed_videos(tmp_pa
     assert any(check["status"] == "manual_review" for check in asset_report["checks"])
 
 
+def test_visual_quality_assessment_surfaces_product_truth_flags():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("product truth review notes", "stub-model", 0.0)
+
+    output = runtime.run_visual_quality_assessment(
+        run_id="runtime-product-truth-flags",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="secure fit",
+                    hook="Clip in confidence",
+                    message="Show the harness clearly.",
+                )
+            ]
+        ),
+        intake={
+            "product_name": "blue pet harness",
+            "product_truth_contract": {
+                "colors": ["blue", "black"],
+                "must_preserve": ["blue pet harness"],
+            },
+        },
+        copy_images={
+            "image_assets": [
+                {
+                    "variant_id": "V1",
+                    "uri": "assets/nonexistent.png",
+                    "visual_qa": {
+                        "status": "warn",
+                        "score": 72,
+                        "flags": ["visual_qa_product_truth_structure_review"],
+                        "checks": [{"key": "product_truth_structure", "status": "manual_review"}],
+                    },
+                }
+            ]
+        },
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    summary = output.payload["variant_summaries"][0]
+    assert summary["recommended_action"] == "manual_review"
+    assert summary["product_truth_flags"] == ["visual_qa_product_truth_structure_review"]
+    assert "visual_qa_product_truth_structure_review" in summary["issues"]
+
+
 def test_visual_quality_assessment_flags_human_anatomy_review_for_model_videos(tmp_path):
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("human review notes", "stub-model", 0.0)
