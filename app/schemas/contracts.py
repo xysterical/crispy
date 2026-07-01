@@ -182,6 +182,7 @@ class ProductIntake(BaseModel):
     video_references: list[dict] = Field(default_factory=list)
     asset_media_summary: str = ""
     visual_identity: ProductVisualIdentity = Field(default_factory=ProductVisualIdentity)
+    product_truth_contract: dict[str, Any] = Field(default_factory=dict)
 
 
 class PlanningBrief(BaseModel):

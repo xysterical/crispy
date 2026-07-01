@@ -298,6 +298,48 @@ def test_planning_outputs_creative_director_and_production_plan():
     assert any("bedroom morning" in scene for scene in plan["scene_hints"])
     assert production["segment_strategy"]["estimated_segment_count"] == 3
     assert output.payload["quality_gates"][0]["gate"] == "product_truth_lock"
+    assert output.payload["creative_director_plan"]["product_truth_contract"]["must_preserve"][:2] == [
+        "Robe Dress",
+        "robe dress silhouette",
+    ]
+
+
+def test_video_scripting_carries_product_truth_contract():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("", "stub-model", 0.0)
+    intake = ProductIntake(
+        product_name="silver dress",
+        asset_media_summary="Reference image shows a real model wearing a silver dress.",
+        visual_identity={
+            "colors": ["silver"],
+            "materials": ["fabric"],
+            "must_preserve_details": ["silver color", "twisted neckline"],
+        },
+    )
+
+    output = runtime.run_video_scripting(
+        run_id="truth-contract-script",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="fit proof",
+                    hook="Show the neckline clearly",
+                    message="Keep the same dress across scenes.",
+                )
+            ]
+        ),
+        intake=intake,
+        business_context={"target_audience": "fashion buyers"},
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"video_duration_seconds": 20},
+    )
+
+    contract = output.payload["product_context"]["product_truth_contract"]
+    assert contract["colors"] == ["silver"]
+    assert "twisted neckline" in contract["must_preserve"]
+    assert "do_not_add_remove_or_replace_product_parts" in contract["forbidden_changes"]
 
 
 def test_video_scripting_carries_planning_director_plan_into_fallback():

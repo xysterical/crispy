@@ -25,6 +25,7 @@ from app.services.creative_specs import (
     normalize_storyboard_candidate_count,
 )
 from app.services.marketplace_qa import (
+    build_product_truth_contract,
     infer_visual_identity,
     inspect_marketplace_image,
     is_marketplace_main_image,
@@ -562,6 +563,18 @@ class AgentsRuntime:
                 break
         return data_urls, manifest
 
+    def _product_truth_contract(self, intake: ProductIntake | None) -> dict:
+        if not intake:
+            return {}
+        if isinstance(intake.product_truth_contract, dict) and intake.product_truth_contract:
+            return intake.product_truth_contract
+        visual_identity = intake.visual_identity.model_dump() if hasattr(intake.visual_identity, "model_dump") else dict(intake.visual_identity or {})
+        return build_product_truth_contract(
+            product_name=intake.product_name,
+            visual_identity=visual_identity,
+            sku_summary=intake.sku_summary,
+        )
+
     def _planning_director_blocks(
         self,
         *,
@@ -579,8 +592,9 @@ class AgentsRuntime:
             intake.business_context.get("target_audience") or intake.business_context.get("audience") or []
         )
         visual_identity = intake.visual_identity.model_dump()
+        product_truth = self._product_truth_contract(intake)
         preserve = list(dict.fromkeys(
-            [str(item) for item in visual_identity.get("must_preserve_details", []) if str(item).strip()]
+            [str(item) for item in (product_truth.get("must_preserve") or visual_identity.get("must_preserve_details", [])) if str(item).strip()]
             or [product_name]
         ))
         media_truth = intake.asset_media_summary or visual_identity.get("raw_media_summary") or brief
@@ -608,6 +622,7 @@ class AgentsRuntime:
             "emotional_beats": ["curiosity", "recognition", "desire", "confidence"],
             "scene_arc": scene_arc,
             "must_preserve_visuals": preserve,
+            "product_truth_contract": product_truth,
             "scene_hints": scene_hints,
             "do_not_show": constraints,
             "media_truth_summary": media_truth[:1200],
@@ -782,6 +797,7 @@ class AgentsRuntime:
         audience_list = self._normalize_text_list(
             business_context.get("target_audience") or business_context.get("audience") or []
         )
+        product_truth = self._product_truth_contract(intake)
         return {
             "product_name": product_name,
             "audience": ", ".join(audience_list[:3]) if audience_list else "target buyers",
@@ -792,6 +808,7 @@ class AgentsRuntime:
             "media_summary": intake.asset_media_summary if intake and intake.asset_media_summary else "",
             "platform": str(creative_specs.get("platform") or ""),
             "creative_goal": str(creative_specs.get("creative_goal") or ""),
+            "product_truth_contract": product_truth,
         }
 
     def _video_generation_spec(self, creative_specs: dict | None) -> dict:
@@ -1128,6 +1145,11 @@ class AgentsRuntime:
                 image_references=intake.image_references,
                 video_references=intake.video_references,
             )
+        )
+        intake.product_truth_contract = build_product_truth_contract(
+            product_name=intake.product_name,
+            visual_identity=intake.visual_identity.model_dump(),
+            sku_summary=intake.sku_summary,
         )
         normalized = {**intake.model_dump(), "llm_summary": summary}
         uri = self.media.write_text_artifact(run_id, "intake_summary.json", intake.model_dump_json(indent=2))
@@ -1849,6 +1871,7 @@ class AgentsRuntime:
         }
         media_summary = str(product_context.get("media_summary") or "")
         product_name = str(product_context.get("product_name") or "the product")
+        product_truth = product_context.get("product_truth_contract") or {}
         value_props = [str(item) for item in (product_context.get("value_props") or []) if str(item).strip()]
         audience = str(product_context.get("audience") or "target buyers")
         cta = str(product_context.get("primary_cta") or "Shop Now")
@@ -1860,6 +1883,7 @@ class AgentsRuntime:
                 "Generate video hooks and scripts with the product context. "
                 f"product={product_name}, audience={audience}, value_props={value_props}, "
                 f"media_summary={media_summary}, variants={variant_set.model_dump()}. "
+                f"product_truth_contract={product_truth}. "
                 f"reference_summary={reference_summary}. "
                 f"generation_spec={generation_spec}. "
                 f"creative_director_plan={director_plan}. production_plan={production_plan}. quality_gates={quality_gates}. "
@@ -2112,12 +2136,14 @@ class AgentsRuntime:
         )
         product_context = script_pack.product_context or {}
         product_name = str(product_context.get("product_name") or "the product")
+        product_truth = product_context.get("product_truth_contract") or {}
         prompt = self._compose_stage_prompt(
             runtime_config=runtime_config,
             agent_role="Storyboard Agent",
             task_instruction=(
                 f"Create storyboard frames from scripts: {script_pack.model_dump()}. "
                 f"reference_summary={reference_summary}. "
+                f"product_truth_contract={product_truth}. "
                 f"creative_director_plan={director_plan}. production_plan={production_plan}. quality_gates={quality_gates}. "
                 "Treat storyboard as the visual QA plan before video generation: continuity, object logic, product visibility."
             ),
@@ -2148,7 +2174,7 @@ class AgentsRuntime:
                 scene = self._scene_arc_item(director_handoff, idx)
                 emotions = director_plan.get("emotional_beats") or []
                 emotion = emotions[idx % len(emotions)] if emotions else "buyer confidence"
-                must_preserve = ", ".join((director_plan.get("must_preserve_visuals") or [])[:4]) or product_name
+                must_preserve = ", ".join((director_plan.get("must_preserve_visuals") or product_truth.get("must_preserve") or [])[:4]) or product_name
                 gate_names = (
                     ", ".join(str((g.get("gate") if isinstance(g, dict) else g) or g) for g in quality_gates[:3])
                     if quality_gates
@@ -2726,6 +2752,13 @@ class AgentsRuntime:
         marketplace_goal = is_marketplace_main_image(creative_specs)
         review_hints = get_dtc_site_review_hints(creative_specs)
         visual_identity = dict(intake.get("visual_identity") or {}) if isinstance(intake, dict) else {}
+        product_truth = dict(intake.get("product_truth_contract") or {}) if isinstance(intake, dict) else {}
+        if not product_truth and visual_identity:
+            product_truth = build_product_truth_contract(
+                product_name=str(intake.get("product_name") or "the product"),
+                visual_identity=visual_identity,
+                sku_summary=list(intake.get("sku_summary") or []),
+            )
 
         def _asset_items(payload: dict, key: str) -> list[dict]:
             rows = payload.get(key) or []
@@ -2954,6 +2987,7 @@ class AgentsRuntime:
                 "export_ready": export_ready,
                 "script_hook": script.get("hook"),
                 "review_hints": review_hints,
+                "product_truth_contract": product_truth,
             }
             reports.append(report)
             summaries.append(
@@ -2986,6 +3020,7 @@ class AgentsRuntime:
                 "Focus on product fidelity, physical plausibility, channel fit, and whether any candidate should be blocked before evaluation. "
                 "Return concise operator notes; do not choose the final winner.\n"
                 f"intake_facts={json.dumps(intake, ensure_ascii=False)[:3000]}\n"
+                f"product_truth_contract={json.dumps(product_truth, ensure_ascii=False)[:2000]}\n"
                 f"business_context={json.dumps(business_context, ensure_ascii=False)[:1800]}\n"
                 f"qa_records={json.dumps(summaries, ensure_ascii=False)[:5000]}\n"
                 f"attached_media_manifest={json.dumps(model_media_manifest, ensure_ascii=False)[:3000]}\n"

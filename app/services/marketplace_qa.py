@@ -145,6 +145,47 @@ def infer_visual_identity(
     }
 
 
+def build_product_truth_contract(
+    *,
+    product_name: str,
+    visual_identity: dict | None = None,
+    sku_summary: list[dict] | None = None,
+) -> dict:
+    visual_identity = visual_identity or {}
+    sku_summary = sku_summary or []
+    sku_ids = [
+        str(row.get("sku") or row.get("SKU") or row.get("product_code") or row.get("variant_sku")).strip()
+        for row in sku_summary
+        if isinstance(row, dict) and str(row.get("sku") or row.get("SKU") or row.get("product_code") or row.get("variant_sku") or "").strip()
+    ]
+    must_preserve = [
+        str(item).strip()
+        for item in (visual_identity.get("must_preserve_details") or [])
+        if str(item).strip()
+    ]
+    product_type = str(visual_identity.get("product_type") or product_name or "the product")
+    if product_type and product_type not in must_preserve:
+        must_preserve.insert(0, product_type)
+    return {
+        "version": 1,
+        "product_name": product_name,
+        "sku_ids": list(dict.fromkeys(sku_ids))[:12],
+        "must_preserve": list(dict.fromkeys(must_preserve))[:12],
+        "colors": list(visual_identity.get("colors") or []),
+        "materials": list(visual_identity.get("materials") or []),
+        "visible_text_logo": list(visual_identity.get("visible_text_logo") or []),
+        "reference_images": list(visual_identity.get("best_reference_images") or [])[:4],
+        "reference_frames": list(visual_identity.get("best_reference_frames") or [])[:4],
+        "forbidden_changes": [
+            "do_not_change_product_color_material_or_shape",
+            "do_not_add_remove_or_replace_product_parts",
+            "do_not_invent_logos_packaging_certifications_or_accessories",
+            "do_not_hide_must_preserve_details",
+        ],
+        "missing_fact_warnings": list(visual_identity.get("missing_fact_warnings") or []),
+    }
+
+
 def _safe_local_path(uri: str | None) -> Path | None:
     if not uri or uri.startswith(("http://", "https://", "data:")):
         return None
