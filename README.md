@@ -155,14 +155,6 @@ Your database is automatically backed up to `~/.crispy/backups/` every time the 
 
 ## Technical Details
 
-See **[agents.md](agents.md)** for:
-- Full pipeline stage plans and agent mapping
-- Data model reference
-- Complete API documentation
-- Model routing and configuration architecture
-- GM Memory system design
-- Worker, concurrency, and retry logic
-- Development guide (adding stages, providers, etc.)
 
 ## Notes
 

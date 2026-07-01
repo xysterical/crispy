@@ -1,3 +1,9 @@
+# Agent Operating Rules
+
+- When uncertain, explain the assumption first. Do not hide confusion; state the tradeoff honestly.
+- For large projects or heavy tasks, split work into small tasks, sort by necessity, build the necessary layers first, and commit after each completed layer.
+- Use Conventional Commits. Match the language used by prior commits; if there is no precedent, use English.
+
 # Crispy — Technical Reference
 
 ## Architecture Snapshot
