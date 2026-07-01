@@ -327,7 +327,7 @@ def test_gm_memory_compaction_creates_summary_and_supersedes_raw(client, db_sess
 
 
 def test_planning_trace_records_applied_gm_memory(client):
-    from app.data.models import AgentTraceEvent, GmMemory, PipelineRun
+    from app.data.models import AgentTraceEvent, GmMemory, PipelineRun, StageTask
     from app.data.session import SessionLocal
     from app.services.runs import execute_next_queued_stage
     from sqlalchemy import select
@@ -361,7 +361,10 @@ def test_planning_trace_records_applied_gm_memory(client):
                 product_code="TRACE-SKU",
                 source_type="feedback_import",
                 memory_type="summary",
-                content={"summary": "Utility hooks outperform lifestyle hooks."},
+                content={
+                    "summary": "Utility hooks outperform lifestyle hooks.",
+                    "winning_patterns": [{"angle": "hands-free utility proof"}],
+                },
             )
         )
         db.commit()
@@ -382,6 +385,10 @@ def test_planning_trace_records_applied_gm_memory(client):
         assert event.payload["memory_count"] >= 1
         assert event.payload["references"][0]["memory_id"]
         assert event.payload["references"][0]["summary"] == "Utility hooks outperform lifestyle hooks."
+        planning_task = db.scalar(
+            select(StageTask).where(StageTask.run_id == run["id"], StageTask.stage_name == "planning")
+        )
+        assert "hands-free utility proof" in planning_task.output_payload["strategic_angles"]
 
 
 def test_shop_analysis_history_after_run(client):

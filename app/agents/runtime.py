@@ -68,6 +68,25 @@ class StageOutput:
     forecast: ConversionForecast | None = None
 
 
+def _gm_lesson_angle_priorities(gm_lessons: list[dict]) -> list[str]:
+    angles: list[str] = []
+    for lesson in gm_lessons:
+        content = lesson.get("content") or {}
+        candidates = list(content.get("winning_patterns") or [])
+        candidates.extend(item.get("pattern") or {} for item in (content.get("top_variants") or []))
+        for item in candidates:
+            if isinstance(item, dict):
+                value = item.get("angle") or item.get("hook") or item.get("message")
+            else:
+                value = item
+            if value and str(value).strip():
+                angles.append(str(value).strip())
+        summary = content.get("summary")
+        if summary and not angles:
+            angles.append(str(summary).strip()[:160])
+    return list(dict.fromkeys(angles))
+
+
 class AgentsRuntime:
     def __init__(self) -> None:
         self.providers = ProviderRegistry()
@@ -1148,7 +1167,8 @@ class AgentsRuntime:
         )
         summary, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         value_props = intake.business_context.get("key_value_props", [])
-        strategic_angles = (gm_policy.get("angle_priorities") or [])[:3] or value_props[:3] or [
+        memory_angles = _gm_lesson_angle_priorities(gm_lessons)
+        strategic_angles = (gm_policy.get("angle_priorities") or [])[:3] or memory_angles[:3] or value_props[:3] or [
             "time-saving daily workflow",
             "visible before/after proof",
             "risk-free practical messaging",
