@@ -265,6 +265,7 @@ class VideoSegmentPlan(BaseModel):
     transition_to_next: str = "match_cut"
     variation_type: Literal["small", "medium", "large"] = "small"
     continuity_constraints: list[str] = Field(default_factory=list)
+    segment_contract: dict[str, Any] = Field(default_factory=dict)
 
 
 class VideoScriptItem(BaseModel):

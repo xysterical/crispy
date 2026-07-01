@@ -233,6 +233,11 @@ def test_video_scripting_splits_long_duration_into_segments():
     assert "start_from_previous_tail_frame" in segments[1]["continuity_constraints"]
     assert "end_on_bridgeable_action_for_next_segment" in segments[0]["continuity_constraints"]
     assert segments[-1]["transition_to_next"] == "none"
+    assert segments[0]["segment_contract"]["segment_id"] == "V1_S1"
+    assert segments[0]["segment_contract"]["product_name"] == "olive satin dress"
+    assert "product_truth_visible_in_first_frame" in segments[0]["segment_contract"]["preflight_checks"]
+    assert "bridgeable_tail_frame" in segments[0]["segment_contract"]["preflight_checks"]
+    assert "final_product_readable" in segments[-1]["segment_contract"]["preflight_checks"]
 
 
 def test_video_scripting_adds_human_motion_risk_constraint_for_model_segments():
@@ -513,6 +518,7 @@ def test_video_generation_stitches_completed_segments(monkeypatch):
                         "first_frame_prompt": "apartment reveal",
                         "last_frame_prompt": "walking out",
                         "motion_prompt": "model smiles in apartment",
+                        "segment_contract": {"must_preserve": ["olive satin dress"], "preflight_checks": ["product_truth_visible_in_first_frame"]},
                     },
                     {
                         "segment_id": "V1_S2",
@@ -554,6 +560,8 @@ def test_video_generation_stitches_completed_segments(monkeypatch):
     assert video["segments"][1]["reference_mode"] == "first_frame"
     assert video["segments"][1]["reference_image_count"] == 1
     assert "only opening hook" in provider.requests[0].prompt
+    assert "Segment contract" in provider.requests[0].prompt
+    assert video["segments"][0]["segment_contract"]["must_preserve"] == ["olive satin dress"]
     assert "Continue the exact action from the supplied first_frame reference" in provider.requests[1].prompt
     assert "do not restart with a new intro" in provider.requests[2].prompt
     assert video["source"] == "stitched_segments"

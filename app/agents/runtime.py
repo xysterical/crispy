@@ -944,6 +944,44 @@ class AgentsRuntime:
             sequenced.append(segment)
         return sequenced
 
+    def _apply_segment_contracts(
+        self,
+        segments: list[VideoSegmentPlan],
+        *,
+        product_truth: dict,
+        product_name: str,
+    ) -> list[VideoSegmentPlan]:
+        if not segments:
+            return segments
+        must_preserve = list(product_truth.get("must_preserve") or [product_name])
+        for idx, segment in enumerate(segments):
+            contract = dict(segment.segment_contract or {})
+            contract.update(
+                {
+                    "version": 1,
+                    "segment_id": segment.segment_id,
+                    "segment_index": idx,
+                    "segment_count": len(segments),
+                    "product_name": product_name,
+                    "must_preserve": must_preserve[:12],
+                    "colors": list(product_truth.get("colors") or []),
+                    "materials": list(product_truth.get("materials") or []),
+                    "forbidden_changes": list(product_truth.get("forbidden_changes") or []),
+                    "continuity_constraints": list(segment.continuity_constraints or []),
+                    "first_frame_prompt": segment.first_frame_prompt,
+                    "last_frame_prompt": segment.last_frame_prompt,
+                    "transition_to_next": segment.transition_to_next,
+                    "preflight_checks": [
+                        "product_truth_visible_in_first_frame",
+                        "same_product_identity_across_segment",
+                        "no_added_or_removed_core_product_parts",
+                        "bridgeable_tail_frame" if idx < len(segments) - 1 else "final_product_readable",
+                    ],
+                }
+            )
+            segment.segment_contract = contract
+        return segments
+
     def _build_video_segments(
         self,
         *,
@@ -953,6 +991,7 @@ class AgentsRuntime:
         total_seconds: int,
         creative_specs: dict | None,
         product_name: str,
+        product_truth: dict | None = None,
     ) -> list[VideoSegmentPlan]:
         durations = self._segment_durations(total_seconds, self._max_video_segment_seconds(creative_specs))
         if len(durations) == 1:
@@ -986,7 +1025,12 @@ class AgentsRuntime:
                     continuity_constraints=shot.product_continuity_constraints,
                 )
             )
-        return self._sequence_long_video_segments(segments, product_name)
+        segments = self._sequence_long_video_segments(segments, product_name)
+        return self._apply_segment_contracts(
+            segments,
+            product_truth=product_truth or {},
+            product_name=product_name,
+        )
 
     def _video_prompt_quality_block(self, product_context: dict | None) -> str:
         product_name = str((product_context or {}).get("product_name") or "the product")
@@ -1996,6 +2040,7 @@ class AgentsRuntime:
                     total_seconds=int(generation_spec.get("duration") or 8),
                     creative_specs=creative_specs,
                     product_name=product_name,
+                    product_truth=product_truth,
                 )
                 scripts.append(
                     VideoScriptItem(
@@ -2085,9 +2130,15 @@ class AgentsRuntime:
                         total_seconds=int(generation_spec.get("duration") or 8),
                         creative_specs=creative_specs,
                         product_name=product_name,
+                        product_truth=product_truth,
                     )
                 else:
                     segments = self._sequence_long_video_segments(segments, product_name)
+                    segments = self._apply_segment_contracts(
+                        segments,
+                        product_truth=product_truth,
+                        product_name=product_name,
+                    )
                 scripts.append(
                     VideoScriptItem(
                         variant_id=entry.get("variant_id", f"V{len(scripts)+1}"),
@@ -2605,6 +2656,7 @@ class AgentsRuntime:
                         f"{reference_instruction}"
                         f"First frame: {segment.first_frame_prompt}. Last frame target: {segment.last_frame_prompt}. "
                         f"Continuity constraints: {segment.continuity_constraints}. "
+                        f"Segment contract: {segment.segment_contract}. "
                         f"Transition to next: {segment.transition_to_next}."
                     )
                     segment_prompt += self._human_integrity_instruction(segment_prompt)
@@ -2628,6 +2680,7 @@ class AgentsRuntime:
                     segment_payload["segment_id"] = segment.segment_id
                     segment_payload["segment_index"] = segment_index
                     segment_payload["transition_to_next"] = segment.transition_to_next
+                    segment_payload["segment_contract"] = segment.segment_contract
                     segment_payload["reference_mode"] = reference_mode
                     segment_payload["reference_image_count"] = len(segment_spec.get("image_urls") or []) + len(segment_spec.get("image_with_roles") or [])
                     status = str(segment_payload.get("generation_status") or "").lower()
