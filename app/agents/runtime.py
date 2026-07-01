@@ -2456,7 +2456,15 @@ class AgentsRuntime:
         video_size = str(generation_spec.get("size") or creative_specs.get("video_size") or "9:16")
         resolution = str(generation_spec.get("resolution") or creative_specs.get("resolution") or "720p")
         duration_seconds = int(generation_spec.get("duration") or creative_specs.get("video_duration_seconds") or 8)
-        prompt = f"Generate videos from script pack: {script_pack.model_dump()}"
+        prompt = self._compose_stage_prompt(
+            runtime_config=runtime_config,
+            agent_role="Video Generation Agent",
+            task_instruction=(
+                f"Generate videos from script pack: {script_pack.model_dump()}. "
+                f"product_context={product_context}. generation_spec={generation_spec}. "
+                "Return ONLY valid JSON shaped as {\"video_prompts\":[{\"variant_id\":\"V1\",\"prompt\":\"...\"}]}."
+            ),
+        )
         try:
             response_text, text_model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
         except Exception:

@@ -44,14 +44,14 @@ tiktok_shop_video:
 
 ```yaml
 intake: gm_orchestrator
-planning: ideation_agent
-divergence: ideation_agent
-copy_image_generation: generation_agent
-video_scripting: generation_agent
-storyboard_image_generation: generation_agent
-video_generation: generation_agent
-visual_quality_assessment: generation_agent
-evaluation_selection: scoring_agent
+planning: planning_agent
+divergence: variant_strategy_agent
+copy_image_generation: copy_image_agent
+video_scripting: video_script_agent
+storyboard_image_generation: storyboard_agent
+video_generation: video_generation_agent
+visual_quality_assessment: visual_qa_agent
+evaluation_selection: evaluation_agent
 ```
 
 Source of truth: `app/agents/registry.py`
@@ -73,11 +73,16 @@ Persona files are structured markdown loaded at runtime:
 ```
 personas/
 ├── gm/gm_orchestrator.md       # Intake processing
+├── stages/01_product_research_agent.md
 ├── stages/02_planning_agent.md  # Strategy drafting
-├── stages/03_generation_agent.md# Copy, image, video generation
-├── stages/04_scoring_agent.md   # Evaluation & selection
-├── stages/05_compliance_agent.md# Compliance checks
+├── stages/03_variant_strategy_agent.md
+├── stages/04_copy_image_agent.md
+├── stages/05_video_script_agent.md
+├── stages/06_storyboard_agent.md
+├── stages/07_video_generation_agent.md
 ├── stages/08_visual_qa_agent.md # Visual quality assessment
+├── stages/08_evaluation_agent.md
+├── stages/09_compliance_agent.md# Compliance checks
 └── stages/shop_analyst.md       # Shop analysis
 ```
 

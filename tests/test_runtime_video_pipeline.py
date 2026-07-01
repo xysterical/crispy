@@ -105,6 +105,47 @@ def test_human_integrity_instruction_only_applies_to_people_prompts():
     )
 
 
+def test_video_generation_prompt_includes_persona_contract():
+    runtime = AgentsRuntime()
+    runtime.providers = _FakeRegistry(_FakeVideoProvider())
+    captured_prompts: list[str] = []
+
+    def capture_chat(provider, model, prompt, runtime_config, **kwargs):
+        captured_prompts.append(prompt)
+        return '{"video_prompts":[{"variant_id":"V1","prompt":"Show the product in use."}]}', model, 0.0
+
+    runtime._chat_complete = capture_chat
+    runtime.run_video_generation(
+        "persona-video-run",
+        VideoScriptPack(
+            scripts=[
+                VideoScriptItem(
+                    variant_id="V1",
+                    hook="Hook",
+                    script="Show the product.",
+                )
+            ],
+            product_context={"product_name": "packing cube"},
+        ),
+        creative_specs={},
+        provider="openai",
+        model="gpt-4.1",
+        runtime_config={
+            "compiled_persona": {
+                "lead_agent": {
+                    "agent_name": "video_generation_agent",
+                    "title": "Video Generation Agent",
+                    "contract": {"mission": "Produce video assets from approved scripts."},
+                },
+                "collaborators": [],
+            }
+        },
+    )
+
+    assert "Persona Contract" in captured_prompts[0]
+    assert "Video Generation Agent" in captured_prompts[0]
+
+
 def test_video_scripting_uses_submitted_product_context_without_leash_defaults():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
