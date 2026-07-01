@@ -566,6 +566,10 @@ def test_video_generation_stitches_completed_segments(monkeypatch):
     assert "do not restart with a new intro" in provider.requests[2].prompt
     assert video["source"] == "stitched_segments"
     assert video["stitch_preflight"]["status"] == "pass"
+    assert video["segment_ledger"]["status"] == "completed"
+    assert video["segment_ledger"]["segments"][0]["segment_id"] == "V1_S1"
+    assert video["segment_ledger"]["segments"][0]["tail_frame"]
+    assert video["segment_ledger"]["segments"][0]["contract"]["must_preserve"] == ["olive satin dress"]
     assert video["duration_seconds"] == 35.0
     assert len(video["segments"]) == 3
     assert video["video_uri"].endswith("V1_stitched.mp4")

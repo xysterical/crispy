@@ -1145,8 +1145,8 @@ def test_assets_refresh_advances_segmented_video_queue(client, monkeypatch):
                     "resolution": "720p",
                     "generation_spec": {"size": "9:16", "resolution": "720p"},
                     "segment_queue": [
-                        {"segment_id": "V1_S1", "duration_seconds": 8, "motion_prompt": "first", "transition_to_next": "match_cut"},
-                        {"segment_id": "V1_S2", "duration_seconds": 8, "motion_prompt": "second", "transition_to_next": "none"},
+                        {"segment_id": "V1_S1", "duration_seconds": 8, "motion_prompt": "first", "transition_to_next": "match_cut", "segment_contract": {"must_preserve": ["blue harness"]}},
+                        {"segment_id": "V1_S2", "duration_seconds": 8, "motion_prompt": "second", "transition_to_next": "none", "segment_contract": {"must_preserve": ["blue harness"]}},
                     ],
                     "segments": [
                         {
@@ -1218,6 +1218,9 @@ def test_assets_refresh_advances_segmented_video_queue(client, monkeypatch):
         assert segments[1]["external_task_id"] == "segment_task_2"
         assert segments[1]["reference_mode"] == "first_frame"
         assert segments[1]["reference_image_count"] == 1
+        assert asset.payload["segment_ledger"]["status"] == "pending"
+        assert asset.payload["segment_ledger"]["segments"][0]["tail_frame"]
+        assert asset.payload["segment_ledger"]["segments"][1]["contract"]["must_preserve"] == ["blue harness"]
 
 
 def test_submit_next_video_segment_uses_local_tail_frame_and_human_constraints(monkeypatch, tmp_path):

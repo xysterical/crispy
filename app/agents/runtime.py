@@ -984,24 +984,91 @@ class AgentsRuntime:
 
     def _stitch_preflight(self, *, segments: list[VideoSegmentPlan], segment_payloads: list[dict]) -> dict:
         checks: list[dict] = []
+        pending = False
         if len(segment_payloads) != len(segments):
-            checks.append({"key": "segment_count", "status": "fail", "message": "Not all segment payloads are available."})
+            checks.append({"key": "segment_count", "status": "warn", "message": "Not all segment payloads are available yet."})
+            pending = True
         for idx, segment in enumerate(segments):
             payload = segment_payloads[idx] if idx < len(segment_payloads) else {}
             status = str(payload.get("generation_status") or "").lower()
-            if status not in {"completed", "succeeded", "success", "ready"}:
+            if status in {"", "submitted", "queued", "pending", "processing", "running", "missing"}:
+                checks.append({"key": f"{segment.segment_id}.status", "status": "warn", "message": f"Segment is {status or 'missing'}."})
+                pending = True
+            elif status not in {"completed", "succeeded", "success", "ready"}:
                 checks.append({"key": f"{segment.segment_id}.status", "status": "fail", "message": f"Segment is {status or 'missing'}."})
-            if not payload.get("segment_contract"):
+            if not payload.get("segment_contract") and not segment.segment_contract:
                 checks.append({"key": f"{segment.segment_id}.segment_contract", "status": "fail", "message": "Segment contract is missing."})
             if idx < len(segments) - 1 and not payload.get("last_frame_uri") and not payload.get("last_frame_url"):
-                checks.append({"key": f"{segment.segment_id}.tail_frame", "status": "fail", "message": "Bridge tail frame is missing."})
+                if status in {"completed", "succeeded", "success", "ready"}:
+                    checks.append({"key": f"{segment.segment_id}.tail_frame", "status": "fail", "message": "Bridge tail frame is missing."})
+                else:
+                    checks.append({"key": f"{segment.segment_id}.tail_frame", "status": "warn", "message": "Bridge tail frame is not available yet."})
+                    pending = True
         if not checks:
             checks.append({"key": "stitch_preflight", "status": "pass", "message": "All completed segments are stitch-ready."})
         failed = any(check["status"] == "fail" for check in checks)
         return {
-            "status": "fail" if failed else "pass",
+            "status": "fail" if failed else "pending" if pending else "pass",
             "checks": checks,
             "flags": ["stitch_preflight_failed"] if failed else [],
+        }
+
+    def _segment_ledger(
+        self,
+        *,
+        variant_id: str,
+        segment_queue: list[dict],
+        segment_payloads: list[dict],
+        stitch_preflight: dict | None = None,
+    ) -> dict:
+        stitch_preflight = stitch_preflight or {}
+        payload_by_id = {str(item.get("segment_id")): item for item in segment_payloads if isinstance(item, dict)}
+        failed_keys = {
+            str(check.get("key") or "")
+            for check in (stitch_preflight.get("checks") or [])
+            if isinstance(check, dict) and check.get("status") == "fail"
+        }
+        rows: list[dict] = []
+        first_blocked_segment_id = None
+        for idx, queued in enumerate(segment_queue):
+            segment_id = str(queued.get("segment_id") or f"{variant_id}_S{idx + 1}")
+            payload = payload_by_id.get(segment_id) or {}
+            status = str(payload.get("generation_status") or ("queued" if idx >= len(segment_payloads) else "pending")).lower()
+            contract = payload.get("segment_contract") or queued.get("segment_contract") or {}
+            segment_failed = any(key.startswith(f"{segment_id}.") for key in failed_keys)
+            ledger_status = "needs_regeneration" if segment_failed else status
+            if segment_failed and not first_blocked_segment_id:
+                first_blocked_segment_id = segment_id
+            rows.append(
+                {
+                    "segment_id": segment_id,
+                    "segment_index": idx,
+                    "status": ledger_status,
+                    "generation_status": payload.get("generation_status"),
+                    "contract": contract,
+                    "reference_mode": payload.get("reference_mode"),
+                    "reference_image_count": payload.get("reference_image_count", 0),
+                    "video_uri": payload.get("video_uri"),
+                    "tail_frame": payload.get("last_frame_url") or payload.get("last_frame_uri"),
+                    "qa_status": (payload.get("visual_qa") or {}).get("status") if isinstance(payload.get("visual_qa"), dict) else None,
+                    "preflight_failed": segment_failed,
+                }
+            )
+        if stitch_preflight.get("status") == "fail":
+            status = "needs_regeneration"
+        elif rows and all(row["status"] in {"completed", "succeeded", "success", "ready"} for row in rows):
+            status = "completed"
+        elif any(row["status"] in {"processing", "pending", "queued", "submitted", "running"} for row in rows):
+            status = "pending"
+        else:
+            status = "pending" if rows else "empty"
+        return {
+            "version": 1,
+            "variant_id": variant_id,
+            "status": status,
+            "first_blocked_segment_id": first_blocked_segment_id,
+            "segments": rows,
+            "stitch_preflight_status": stitch_preflight.get("status"),
         }
 
     def _build_video_segments(
@@ -2732,6 +2799,12 @@ class AgentsRuntime:
                         video_paths=completed_segment_paths,
                         output_path=self.media.settings.assets_dir / run_id / f"{script.variant_id}_stitched{asset_suffix}.mp4",
                     )
+                segment_ledger = self._segment_ledger(
+                    variant_id=script.variant_id,
+                    segment_queue=segment_queue,
+                    segment_payloads=segment_payloads,
+                    stitch_preflight=stitch_preflight,
+                )
                 video_payload = {
                     "variant_id": script.variant_id,
                     "video_uri": stitched_uri or (segment_payloads[-1]["video_uri"] if segment_payloads else ""),
@@ -2740,6 +2813,7 @@ class AgentsRuntime:
                     "generation_status": "completed" if stitched_uri else "pending",
                     "segments": segment_payloads,
                     "segment_queue": segment_queue,
+                    "segment_ledger": segment_ledger,
                     "stitch_preflight": stitch_preflight,
                     "segment_prompt_base": video_prompt,
                     "asset_suffix": asset_suffix,

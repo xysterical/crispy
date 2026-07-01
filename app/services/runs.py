@@ -43,6 +43,7 @@ from app.schemas.contracts import (
     ProductIntake,
     VariantSet,
     VideoBundle,
+    VideoSegmentPlan,
     VideoScriptPack,
 )
 from app.services.agent_api_configs import (
@@ -2324,6 +2325,7 @@ def _segment_prompt(base_prompt: str, segment: dict) -> str:
         f"{base_prompt}\n\nSegment {segment.get('segment_id')}: {segment.get('motion_prompt')}. "
         f"First frame: {segment.get('first_frame_prompt')}. Last frame target: {segment.get('last_frame_prompt')}. "
         f"Continuity constraints: {segment.get('continuity_constraints') or []}. "
+        f"Segment contract: {segment.get('segment_contract') or {}}. "
         f"Transition to next: {segment.get('transition_to_next')}."
     )
 
@@ -2392,6 +2394,7 @@ def _submit_next_video_segment(
     segment_payload["segment_id"] = segment.get("segment_id")
     segment_payload["segment_index"] = next_index
     segment_payload["transition_to_next"] = segment.get("transition_to_next")
+    segment_payload["segment_contract"] = segment.get("segment_contract") or {}
     segment_payload["reference_mode"] = reference_mode
     segment_payload["reference_image_count"] = len(generation_spec.get("image_urls") or []) + len(generation_spec.get("image_with_roles") or [])
     return segment_payload, cost
@@ -2471,7 +2474,22 @@ def _refresh_segmented_video_payload(
         if str(segment.get("generation_status") or "").lower() in {"completed", "succeeded", "success", "ready"}
         and runtime._artifact_has_payload(segment.get("video_uri"))
     ]
-    if queued and len(complete_paths) == len(queued):
+    stitch_segments = []
+    for idx, segment in enumerate(queued):
+        if not isinstance(segment, dict):
+            continue
+        stitch_segments.append(
+            VideoSegmentPlan.model_validate(
+                {
+                    "segment_id": segment.get("segment_id") or f"{payload.get('variant_id') or 'variant'}_S{idx + 1}",
+                    "variant_id": segment.get("variant_id") or payload.get("variant_id") or "variant",
+                    "duration_seconds": segment.get("duration_seconds") or 8,
+                    **segment,
+                }
+            )
+        )
+    stitch_preflight = runtime._stitch_preflight(segments=stitch_segments, segment_payloads=segments) if stitch_segments else {}
+    if queued and len(complete_paths) == len(queued) and stitch_preflight.get("status") == "pass":
         stitched_uri = stitch_video_files(
             video_paths=complete_paths,
             output_path=runtime.media.settings.assets_dir / run.id / f"{payload.get('variant_id')}_stitched{payload.get('asset_suffix') or ''}.mp4",
@@ -2487,6 +2505,13 @@ def _refresh_segmented_video_payload(
         payload["generation_status"] = "pending"
         if segments:
             payload["video_uri"] = segments[-1].get("video_uri") or payload.get("video_uri")
+    payload["stitch_preflight"] = stitch_preflight
+    payload["segment_ledger"] = runtime._segment_ledger(
+        variant_id=str(payload.get("variant_id") or "variant"),
+        segment_queue=queued,
+        segment_payloads=segments,
+        stitch_preflight=stitch_preflight,
+    )
     return payload, refreshed, completed
 
 
