@@ -908,6 +908,21 @@ def _single_script_pack(db: Session, run_id: str, variant_id: str) -> VideoScrip
     return VideoScriptPack(scripts=selected)
 
 
+def _latest_video_payload_for_variant(db: Session, run_id: str, variant_id: str) -> dict | None:
+    assets = db.scalars(
+        select(VariantAsset).where(
+            VariantAsset.run_id == run_id,
+            VariantAsset.stage_name == "video_generation",
+            VariantAsset.asset_type == "video",
+        )
+    ).all()
+    for asset in sorted(assets, key=lambda item: item.created_at, reverse=True):
+        payload = asset.payload or {}
+        if payload.get("variant_id") == variant_id:
+            return dict(payload)
+    return None
+
+
 def _merge_stage_payload(stage_name: str, existing: dict, new_payload: dict) -> dict:
     existing = dict(existing or {})
     if stage_name == "copy_image_generation":
@@ -2936,6 +2951,7 @@ def regenerate_variant_assets(
         storyboard_output = _get_stage_output(db, run_id, "storyboard_image_generation")
         storyboard_frames = (storyboard_output or {}).get("frames", [])
         variant_frames = [f for f in storyboard_frames if f.get("variant_id") == variant_id]
+        resume_payload = _latest_video_payload_for_variant(db, run_id, variant_id)
 
         output = runtime.run_video_generation(
             run.id,
@@ -2943,7 +2959,7 @@ def regenerate_variant_assets(
             creative_specs=task.input_payload.get("creative_specs", {}),
             provider=provider_name,
             model=model_name,
-            runtime_config=runtime_config,
+            runtime_config={**runtime_config, "resume_video_payload": resume_payload} if resume_payload else runtime_config,
             storyboard_frames=variant_frames,
         )
     else:

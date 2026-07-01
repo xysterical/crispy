@@ -1071,6 +1071,39 @@ class AgentsRuntime:
             "stitch_preflight_status": stitch_preflight.get("status"),
         }
 
+    def _segment_resume_state(self, *, segments: list[VideoSegmentPlan], resume_payload: dict | None) -> tuple[int, list[dict], list[Path], str | None]:
+        if not segments or not isinstance(resume_payload, dict) or not resume_payload:
+            return 0, [], [], None
+        ledger = resume_payload.get("segment_ledger") or {}
+        blocked_id = ledger.get("first_blocked_segment_id")
+        if not blocked_id:
+            for row in ledger.get("segments") or []:
+                if isinstance(row, dict) and row.get("status") in {"needs_regeneration", "failed", "error"}:
+                    blocked_id = row.get("segment_id")
+                    break
+        if not blocked_id:
+            return 0, [], [], None
+        resume_index = next((idx for idx, segment in enumerate(segments) if segment.segment_id == blocked_id), 0)
+        existing_by_id = {
+            str(item.get("segment_id")): dict(item)
+            for item in (resume_payload.get("segments") or [])
+            if isinstance(item, dict)
+        }
+        preserved: list[dict] = []
+        completed_paths: list[Path] = []
+        bridge_frame_uri = None
+        for segment in segments[:resume_index]:
+            payload = existing_by_id.get(segment.segment_id)
+            if not payload:
+                break
+            status = str(payload.get("generation_status") or "").lower()
+            if status not in {"completed", "succeeded", "success", "ready"} or not self._artifact_has_payload(payload.get("video_uri")):
+                break
+            preserved.append(payload)
+            completed_paths.append(Path(str(payload["video_uri"])))
+            bridge_frame_uri = payload.get("last_frame_url") or payload.get("last_frame_uri")
+        return len(preserved), preserved, completed_paths, bridge_frame_uri
+
     def _build_video_segments(
         self,
         *,
@@ -2701,10 +2734,11 @@ class AgentsRuntime:
             asset_suffix = str((runtime_config or {}).get("asset_name_suffix") or "")
             force_regenerate = bool((runtime_config or {}).get("force_regenerate"))
             if script.segments:
-                segment_payloads: list[dict] = []
-                completed_segment_paths: list[Path] = []
-                bridge_frame_uri: str | None = None
                 segment_queue = [segment.model_dump() for segment in script.segments]
+                resume_index, segment_payloads, completed_segment_paths, bridge_frame_uri = self._segment_resume_state(
+                    segments=script.segments,
+                    resume_payload=(runtime_config or {}).get("resume_video_payload"),
+                )
                 base_image_refs = list(generation_spec.get("image_urls") or [])
                 role_image_refs = list(generation_spec.get("image_with_roles") or [])
                 try:
@@ -2716,7 +2750,7 @@ class AgentsRuntime:
                     fallback_model=model,
                     runtime_config=runtime_config,
                 )
-                for segment_index, segment in enumerate(script.segments):
+                for segment_index, segment in enumerate(script.segments[resume_index:], start=resume_index):
                     segment_duration = int(segment.duration_seconds)
                     segment_spec = {**generation_spec, "duration": segment_duration, "return_last_frame": True}
                     segment_spec.pop("image_urls", None)

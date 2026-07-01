@@ -575,6 +575,103 @@ def test_video_generation_stitches_completed_segments(monkeypatch):
     assert video["video_uri"].endswith("V1_stitched.mp4")
 
 
+def test_segmented_video_generation_resumes_from_failed_segment(monkeypatch, tmp_path):
+    runtime = AgentsRuntime()
+    provider = _FakeCompletedVideoProvider()
+    runtime.providers = _FakeRegistry(provider)
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    preserved = tmp_path / "V1_S1.mp4"
+    preserved.write_bytes(b"\x00\x00\x00\x20ftypisom" + (b"1" * 2048))
+
+    def fake_extract_last_frame(*, video_path, output_path):
+        output_path.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"))
+        return str(output_path)
+
+    def fake_stitch(*, video_paths, output_path):
+        output_path.write_bytes(b"stitched-video" * 256)
+        return str(output_path)
+
+    monkeypatch.setattr("app.agents.runtime.extract_last_video_frame", fake_extract_last_frame)
+    monkeypatch.setattr("app.agents.runtime.stitch_video_files", fake_stitch)
+
+    script_pack = VideoScriptPack(
+        scripts=[
+            VideoScriptItem(
+                variant_id="V1",
+                hook="One dress, three moods",
+                script="A segmented ad.",
+                segments=[
+                    {
+                        "segment_id": "V1_S1",
+                        "variant_id": "V1",
+                        "duration_seconds": 8,
+                        "motion_prompt": "start",
+                        "segment_contract": {"must_preserve": ["olive satin dress"]},
+                    },
+                    {
+                        "segment_id": "V1_S2",
+                        "variant_id": "V1",
+                        "duration_seconds": 8,
+                        "motion_prompt": "continue",
+                        "segment_contract": {"must_preserve": ["olive satin dress"]},
+                    },
+                    {
+                        "segment_id": "V1_S3",
+                        "variant_id": "V1",
+                        "duration_seconds": 8,
+                        "motion_prompt": "finish",
+                        "segment_contract": {"must_preserve": ["olive satin dress"]},
+                    },
+                ],
+            )
+        ],
+        product_context={"product_name": "olive satin dress"},
+        generation_spec={"size": "9:16", "resolution": "720p", "duration": 24},
+    )
+
+    output = runtime.run_video_generation(
+        run_id="runtime-video-resume-segment",
+        script_pack=script_pack,
+        creative_specs={"video_size": "9:16", "video_duration_seconds": 24},
+        provider="openai",
+        model="gpt-4.1",
+        runtime_config={
+            "video": {"provider_name": "fake", "model_name": "fake-video"},
+            "force_regenerate": True,
+            "resume_video_payload": {
+                "variant_id": "V1",
+                "segments": [
+                    {
+                        "segment_id": "V1_S1",
+                        "segment_index": 0,
+                        "video_uri": str(preserved),
+                        "generation_status": "completed",
+                        "last_frame_url": "https://example.com/s1-tail.png",
+                        "segment_contract": {"must_preserve": ["olive satin dress"]},
+                    }
+                ],
+                "segment_ledger": {
+                    "first_blocked_segment_id": "V1_S2",
+                    "segments": [
+                        {"segment_id": "V1_S1", "status": "completed"},
+                        {"segment_id": "V1_S2", "status": "needs_regeneration"},
+                    ],
+                },
+            },
+        },
+    )
+
+    video = output.payload["videos"][0]
+    assert [request.duration_seconds for request in provider.requests] == [8, 8]
+    assert video["segments"][0]["segment_id"] == "V1_S1"
+    assert video["segments"][0]["video_uri"] == str(preserved)
+    assert video["segments"][1]["segment_id"] == "V1_S2"
+    assert video["segments"][1]["reference_mode"] == "first_frame"
+    assert provider.requests[0].image_with_roles == [{"url": "https://example.com/s1-tail.png", "role": "first_frame"}]
+    assert video["segment_ledger"]["status"] == "completed"
+
+
 def test_stitch_preflight_blocks_missing_segment_contract():
     runtime = AgentsRuntime()
 
