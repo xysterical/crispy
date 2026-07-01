@@ -1218,6 +1218,9 @@ def test_assets_refresh_advances_segmented_video_queue(client, monkeypatch):
         assert segments[1]["external_task_id"] == "segment_task_2"
         assert segments[1]["reference_mode"] == "first_frame"
         assert segments[1]["reference_image_count"] == 1
+        assert segments[1]["reference_manifest"][0]["source"] == "tail_frame"
+        assert segments[1]["reference_manifest"][0]["provider_usable"] is True
+        assert segments[1]["hosted_reference_ready"] is True
         assert asset.payload["segment_ledger"]["status"] == "pending"
         assert asset.payload["segment_ledger"]["segments"][0]["tail_frame"]
         assert asset.payload["segment_ledger"]["segments"][1]["contract"]["must_preserve"] == ["blue harness"]
@@ -1277,6 +1280,10 @@ def test_submit_next_video_segment_uses_local_tail_frame_and_human_constraints(m
     assert next_segment["segment_id"] == "V1_S2"
     assert next_segment["reference_mode"] == "tail_with_anchors"
     assert next_segment["reference_image_count"] == 1
+    assert next_segment["reference_manifest"][0]["source"] == "tail_frame"
+    assert next_segment["reference_manifest"][0]["used"] is True
+    assert next_segment["reference_manifest"][0]["transport"] == "data_url"
+    assert next_segment["hosted_reference_ready"] is True
 
 
 def test_assets_refresh_updates_stage_output_and_downstream_inputs(client, monkeypatch):

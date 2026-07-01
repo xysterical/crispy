@@ -754,6 +754,12 @@ def test_segmented_video_generation_uses_local_tail_frame_with_identity_anchors(
     assert provider.requests[1].image_urls[0].startswith("data:image/png;base64,")
     assert provider.requests[1].image_urls[1] == "https://example.com/storyboard-anchor.png"
     assert "image 1 is the previous segment tail frame" in provider.requests[1].prompt
+    segment_manifest = output.payload["videos"][0]["segments"][1]["reference_manifest"]
+    assert segment_manifest[0]["source"] == "tail_frame"
+    assert segment_manifest[0]["provider_usable"] is True
+    assert segment_manifest[0]["used"] is True
+    assert segment_manifest[0]["transport"] == "data_url"
+    assert output.payload["videos"][0]["segment_ledger"]["segments"][1]["hosted_reference_ready"] is True
 
 
 def test_apimart_segmented_video_skips_unhosted_local_tail_frame(monkeypatch):
@@ -806,6 +812,24 @@ def test_apimart_segmented_video_skips_unhosted_local_tail_frame(monkeypatch):
     assert provider.requests[1].image_urls == ["https://example.com/storyboard-anchor.png"]
     assert provider.requests[1].image_with_roles == []
     assert output.payload["videos"][0]["segments"][1]["reference_mode"] == "anchors"
+    segment = output.payload["videos"][0]["segments"][1]
+    assert segment["hosted_reference_ready"] is True
+    assert any(
+        item["source"] == "tail_frame"
+        and item["provider_usable"] is False
+        and item["used"] is False
+        and item["reason"] == "requires_hosted_reference"
+        for item in segment["reference_manifest"]
+    )
+    assert any(
+        item["uri"] == "https://example.com/storyboard-anchor.png"
+        and item["provider_usable"] is True
+        and item["used"] is True
+        for item in segment["reference_manifest"]
+    )
+    ledger_segment = output.payload["videos"][0]["segment_ledger"]["segments"][1]
+    assert ledger_segment["hosted_reference_ready"] is True
+    assert ledger_segment["reference_manifest"] == segment["reference_manifest"]
 
 
 def test_segmented_video_generation_truncates_refs_when_provider_accepts_one_image(monkeypatch, tmp_path):

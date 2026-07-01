@@ -2374,7 +2374,7 @@ def _submit_next_video_segment(
         max_reference_images = 9
     generation_spec.pop("image_urls", None)
     generation_spec.pop("image_with_roles", None)
-    reference_payload, reference_mode = runtime._segment_image_reference_payload(
+    reference_payload, reference_mode, reference_manifest = runtime._segment_image_reference_payload(
         base_image_refs,
         str(bridge_frame_uri) if bridge_frame_uri else None,
         max_reference_images=max_reference_images,
@@ -2412,6 +2412,10 @@ def _submit_next_video_segment(
     segment_payload["segment_contract"] = segment.get("segment_contract") or {}
     segment_payload["reference_mode"] = reference_mode
     segment_payload["reference_image_count"] = len(generation_spec.get("image_urls") or []) + len(generation_spec.get("image_with_roles") or [])
+    segment_payload["reference_manifest"] = reference_manifest
+    segment_payload["hosted_reference_ready"] = all(
+        bool(item.get("provider_usable")) for item in reference_manifest if isinstance(item, dict) and item.get("used")
+    )
     return segment_payload, cost
 
 

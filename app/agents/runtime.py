@@ -387,23 +387,97 @@ class AgentsRuntime:
         *,
         max_reference_images: int = 9,
         allow_data_urls: bool = True,
-    ) -> tuple[dict, str]:
-        if allow_data_urls:
-            base_refs = [str(item).strip() for item in (base_image_urls or []) if str(item).strip()]
-        else:
-            base_refs = [url for item in (base_image_urls or []) if (url := self._provider_reference_url(item))]
+    ) -> tuple[dict, str, list[dict]]:
+        manifest: list[dict] = []
         max_refs = max(1, min(9, int(max_reference_images or 9)))
+        refs: list[str] = []
+        used_tail_frame = False
+
+        def add_manifest(
+            *,
+            uri: str,
+            source: str,
+            role: str,
+            provider_usable: bool,
+            used: bool = False,
+            reason: str | None = None,
+            transport: str | None = None,
+        ) -> None:
+            row = {
+                "uri": uri,
+                "source": source,
+                "role": role,
+                "provider_usable": provider_usable,
+                "used": used,
+            }
+            if reason:
+                row["reason"] = reason
+            if transport:
+                row["transport"] = transport
+            manifest.append(row)
+
+        def add_ref(uri: str, *, source: str, role: str, transport: str) -> bool:
+            if len(refs) >= max_refs:
+                add_manifest(
+                    uri=uri,
+                    source=source,
+                    role=role,
+                    provider_usable=True,
+                    used=False,
+                    reason="max_reference_images_exceeded",
+                    transport=transport,
+                )
+                return False
+            refs.append(uri)
+            add_manifest(uri=uri, source=source, role=role, provider_usable=True, used=True, transport=transport)
+            return True
+
         if bridge_frame_uri:
             bridge_url = self._provider_reference_url(bridge_frame_uri)
             if bridge_url:
-                return {"image_with_roles": [{"url": bridge_url, "role": "first_frame"}]}, "first_frame"
+                add_manifest(
+                    uri=bridge_url,
+                    source="tail_frame",
+                    role="first_frame",
+                    provider_usable=True,
+                    used=True,
+                    transport="hosted_url",
+                )
+                return {"image_with_roles": [{"url": bridge_url, "role": "first_frame"}]}, "first_frame", manifest
             bridge_data_url = self._local_image_to_data_url(bridge_frame_uri) if allow_data_urls else None
             if bridge_data_url:
-                refs = [bridge_data_url, *base_refs]
-                return {"image_urls": refs[:max_refs]}, "tail_with_anchors"
-        if base_refs:
-            return {"image_urls": base_refs[:max_refs]}, "anchors"
-        return {}, ""
+                used_tail_frame = add_ref(bridge_data_url, source="tail_frame", role="first_frame", transport="data_url")
+            else:
+                add_manifest(
+                    uri=str(bridge_frame_uri),
+                    source="tail_frame",
+                    role="first_frame",
+                    provider_usable=False,
+                    reason="requires_hosted_reference" if not allow_data_urls else "unreadable_reference",
+                )
+
+        for item in base_image_urls or []:
+            uri = str(item or "").strip()
+            if not uri:
+                continue
+            hosted_url = self._provider_reference_url(uri)
+            if hosted_url:
+                add_ref(hosted_url, source="base_image", role="anchor", transport="hosted_url")
+                continue
+            if uri.startswith("data:") and allow_data_urls:
+                add_ref(uri, source="base_image", role="anchor", transport="data_url")
+                continue
+            add_manifest(
+                uri=uri,
+                source="base_image",
+                role="anchor",
+                provider_usable=False,
+                reason="requires_hosted_reference" if not allow_data_urls else "unsupported_reference_uri",
+            )
+
+        if refs:
+            return {"image_urls": refs}, "tail_with_anchors" if used_tail_frame else "anchors", manifest
+        return {}, "", manifest
 
     def _last_frame_url_from_raw(self, *payloads: dict | None) -> str | None:
         for payload in payloads:
@@ -1035,6 +1109,7 @@ class AgentsRuntime:
             payload = payload_by_id.get(segment_id) or {}
             status = str(payload.get("generation_status") or ("queued" if idx >= len(segment_payloads) else "pending")).lower()
             contract = payload.get("segment_contract") or queued.get("segment_contract") or {}
+            reference_manifest = payload.get("reference_manifest") if isinstance(payload.get("reference_manifest"), list) else []
             segment_failed = any(key.startswith(f"{segment_id}.") for key in failed_keys)
             ledger_status = "needs_regeneration" if segment_failed else status
             if segment_failed and not first_blocked_segment_id:
@@ -1048,6 +1123,10 @@ class AgentsRuntime:
                     "contract": contract,
                     "reference_mode": payload.get("reference_mode"),
                     "reference_image_count": payload.get("reference_image_count", 0),
+                    "reference_manifest": reference_manifest,
+                    "hosted_reference_ready": all(
+                        bool(item.get("provider_usable")) for item in reference_manifest if isinstance(item, dict) and item.get("used")
+                    ),
                     "video_uri": payload.get("video_uri"),
                     "tail_frame": payload.get("last_frame_url") or payload.get("last_frame_uri"),
                     "qa_status": (payload.get("visual_qa") or {}).get("status") if isinstance(payload.get("visual_qa"), dict) else None,
@@ -2757,8 +2836,20 @@ class AgentsRuntime:
                     segment_spec.pop("image_with_roles", None)
                     if segment_index == 0 and role_image_refs:
                         segment_reference_payload, reference_mode = {"image_with_roles": role_image_refs}, "role_refs"
+                        reference_manifest = [
+                            {
+                                "uri": str(item.get("url") or ""),
+                                "source": "role_ref",
+                                "role": str(item.get("role") or "reference"),
+                                "provider_usable": True,
+                                "used": True,
+                                "transport": "hosted_url",
+                            }
+                            for item in role_image_refs
+                            if isinstance(item, dict) and item.get("url")
+                        ]
                     else:
-                        segment_reference_payload, reference_mode = self._segment_image_reference_payload(
+                        segment_reference_payload, reference_mode, reference_manifest = self._segment_image_reference_payload(
                             base_image_refs,
                             bridge_frame_uri,
                             max_reference_images=max_reference_images,
@@ -2811,6 +2902,10 @@ class AgentsRuntime:
                     segment_payload["segment_contract"] = segment.segment_contract
                     segment_payload["reference_mode"] = reference_mode
                     segment_payload["reference_image_count"] = len(segment_spec.get("image_urls") or []) + len(segment_spec.get("image_with_roles") or [])
+                    segment_payload["reference_manifest"] = reference_manifest
+                    segment_payload["hosted_reference_ready"] = all(
+                        bool(item.get("provider_usable")) for item in reference_manifest if item.get("used")
+                    )
                     status = str(segment_payload.get("generation_status") or "").lower()
                     if status in {"completed", "succeeded", "success", "ready"} and self._artifact_has_payload(segment_payload.get("video_uri")):
                         segment_path = Path(str(segment_payload["video_uri"]))
@@ -2871,7 +2966,7 @@ class AgentsRuntime:
                         max_reference_images = int(generation_spec.get("max_reference_images") or 9)
                     except (TypeError, ValueError):
                         max_reference_images = 9
-                    reference_payload, reference_mode = self._segment_image_reference_payload(
+                    reference_payload, reference_mode, _reference_manifest = self._segment_image_reference_payload(
                         list(generation_spec.get("image_urls") or []),
                         None,
                         max_reference_images=max_reference_images,
