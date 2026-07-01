@@ -7,7 +7,7 @@ import pytest
 
 from app.agents.runtime import AgentsRuntime
 from app.providers.llm import GeneratedVideo, VideoGenResult
-from app.schemas.contracts import PlanningBrief, ProductIntake, VariantCandidate, VariantSet, VideoScriptItem, VideoScriptPack
+from app.schemas.contracts import PlanningBrief, ProductIntake, VariantCandidate, VariantSet, VideoScriptItem, VideoScriptPack, VideoSegmentPlan
 
 
 class _FakeVideoProvider:
@@ -565,9 +565,29 @@ def test_video_generation_stitches_completed_segments(monkeypatch):
     assert "Continue the exact action from the supplied first_frame reference" in provider.requests[1].prompt
     assert "do not restart with a new intro" in provider.requests[2].prompt
     assert video["source"] == "stitched_segments"
+    assert video["stitch_preflight"]["status"] == "pass"
     assert video["duration_seconds"] == 35.0
     assert len(video["segments"]) == 3
     assert video["video_uri"].endswith("V1_stitched.mp4")
+
+
+def test_stitch_preflight_blocks_missing_segment_contract():
+    runtime = AgentsRuntime()
+
+    preflight = runtime._stitch_preflight(
+        segments=[
+            VideoSegmentPlan(segment_id="V1_S1", variant_id="V1", duration_seconds=8),
+            VideoSegmentPlan(segment_id="V1_S2", variant_id="V1", duration_seconds=8),
+        ],
+        segment_payloads=[
+            {"generation_status": "completed", "last_frame_uri": "assets/V1_S1_last.png"},
+            {"generation_status": "completed"},
+        ],
+    )
+
+    assert preflight["status"] == "fail"
+    assert "stitch_preflight_failed" in preflight["flags"]
+    assert any(check["key"] == "V1_S1.segment_contract" for check in preflight["checks"])
 
 
 def test_segmented_video_generation_uses_local_tail_frame_with_identity_anchors(monkeypatch):

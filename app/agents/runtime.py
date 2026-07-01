@@ -982,6 +982,28 @@ class AgentsRuntime:
             segment.segment_contract = contract
         return segments
 
+    def _stitch_preflight(self, *, segments: list[VideoSegmentPlan], segment_payloads: list[dict]) -> dict:
+        checks: list[dict] = []
+        if len(segment_payloads) != len(segments):
+            checks.append({"key": "segment_count", "status": "fail", "message": "Not all segment payloads are available."})
+        for idx, segment in enumerate(segments):
+            payload = segment_payloads[idx] if idx < len(segment_payloads) else {}
+            status = str(payload.get("generation_status") or "").lower()
+            if status not in {"completed", "succeeded", "success", "ready"}:
+                checks.append({"key": f"{segment.segment_id}.status", "status": "fail", "message": f"Segment is {status or 'missing'}."})
+            if not payload.get("segment_contract"):
+                checks.append({"key": f"{segment.segment_id}.segment_contract", "status": "fail", "message": "Segment contract is missing."})
+            if idx < len(segments) - 1 and not payload.get("last_frame_uri") and not payload.get("last_frame_url"):
+                checks.append({"key": f"{segment.segment_id}.tail_frame", "status": "fail", "message": "Bridge tail frame is missing."})
+        if not checks:
+            checks.append({"key": "stitch_preflight", "status": "pass", "message": "All completed segments are stitch-ready."})
+        failed = any(check["status"] == "fail" for check in checks)
+        return {
+            "status": "fail" if failed else "pass",
+            "checks": checks,
+            "flags": ["stitch_preflight_failed"] if failed else [],
+        }
+
     def _build_video_segments(
         self,
         *,
@@ -2583,6 +2605,11 @@ class AgentsRuntime:
         artifacts: list[dict] = []
         video_models_used: set[str] = set()
         for script in script_pack.scripts:
+            script.segments = self._apply_segment_contracts(
+                script.segments,
+                product_truth=dict(product_context.get("product_truth_contract") or {}),
+                product_name=str(product_context.get("product_name") or "the product"),
+            )
             tiktok_details = script.tiktok.model_dump() if script.tiktok else {}
             tiktok_line = ""
             if tiktok_details:
@@ -2699,7 +2726,8 @@ class AgentsRuntime:
                         break
 
                 stitched_uri = None
-                if len(completed_segment_paths) == len(script.segments):
+                stitch_preflight = self._stitch_preflight(segments=script.segments, segment_payloads=segment_payloads)
+                if len(completed_segment_paths) == len(script.segments) and stitch_preflight["status"] == "pass":
                     stitched_uri = stitch_video_files(
                         video_paths=completed_segment_paths,
                         output_path=self.media.settings.assets_dir / run_id / f"{script.variant_id}_stitched{asset_suffix}.mp4",
@@ -2712,6 +2740,7 @@ class AgentsRuntime:
                     "generation_status": "completed" if stitched_uri else "pending",
                     "segments": segment_payloads,
                     "segment_queue": segment_queue,
+                    "stitch_preflight": stitch_preflight,
                     "segment_prompt_base": video_prompt,
                     "asset_suffix": asset_suffix,
                     "video_size": video_size,
