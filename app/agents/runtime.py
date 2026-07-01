@@ -2992,6 +2992,11 @@ class AgentsRuntime:
                             platform_readiness[platform] = str(readiness)
                 if "visual_qa_video_processing" in flags or str(asset.get("generation_status") or "").lower() in {"submitted", "queued", "pending", "processing", "running"}:
                     pending = True
+                stitch_preflight = asset.get("stitch_preflight") or {}
+                if asset_type == "video" and isinstance(stitch_preflight, dict) and stitch_preflight.get("status") == "fail":
+                    stitch_flags = [str(flag) for flag in (stitch_preflight.get("flags") or [])]
+                    flags = sorted(set([*flags, *(stitch_flags or ["stitch_preflight_failed"])]))
+                    blocking_issues.extend(stitch_flags or ["stitch_preflight_failed"])
                 if status == "warn":
                     warn = True
                 if "visual_qa_needs_frame_review" in flags:
@@ -3048,6 +3053,7 @@ class AgentsRuntime:
                         "frame_uris": asset.get("frame_uris") or [],
                         "flags": flags,
                         "checks": qa.get("checks") or [],
+                        "stitch_preflight": stitch_preflight if asset_type == "video" else None,
                         "marketplace_qa": marketplace_qa if marketplace_goal and asset_type == "image" else None,
                     }
                 )

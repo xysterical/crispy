@@ -1493,6 +1493,55 @@ def test_visual_quality_assessment_surfaces_required_frame_checks_without_shot_p
     assert any(check["key"] == "cta_clarity" and check["status"] == "manual_review" for check in asset_report["checks"])
 
 
+def test_visual_quality_assessment_requests_regeneration_on_stitch_preflight_failure(tmp_path):
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("stitch preflight notes", "stub-model", 0.0)
+
+    video_path = tmp_path / "segment_pending.mp4"
+    video_path.write_bytes(b"\x00\x00\x00\x20ftypisom" + (b"1" * 2048))
+
+    output = runtime.run_visual_quality_assessment(
+        run_id="runtime-stitch-preflight-visual-qa",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="multi-segment proof",
+                    hook="Keep the same product moving",
+                    message="Segmented video should stitch cleanly.",
+                )
+            ]
+        ),
+        videos={
+            "videos": [
+                {
+                    "variant_id": "V1",
+                    "video_uri": str(video_path),
+                    "uri": str(video_path),
+                    "generation_status": "completed",
+                    "source": "segmented_pending",
+                    "stitch_preflight": {
+                        "status": "fail",
+                        "flags": ["stitch_preflight_failed"],
+                        "checks": [{"key": "V1_S1.tail_frame", "status": "fail"}],
+                    },
+                }
+            ]
+        },
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    summary = output.payload["variant_summaries"][0]
+    asset_report = output.payload["reports"][0]["asset_reports"][0]
+
+    assert summary["qa_status"] == "fail"
+    assert summary["recommended_action"] == "request_regeneration"
+    assert "stitch_preflight_failed" in summary["issues"]
+    assert "stitch_preflight_failed" in asset_report["flags"]
+    assert asset_report["stitch_preflight"]["status"] == "fail"
+
+
 # ---------------------------------------------------------------------------
 # _parse_llm_json tests
 # ---------------------------------------------------------------------------
