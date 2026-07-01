@@ -669,6 +669,21 @@ class AgentsRuntime:
                 return content, "url"
         return decode_placeholder_png(), "placeholder"
 
+    def _require_generated_image_asset(self, image_payload: dict) -> None:
+        qa = image_payload.get("visual_qa") or {}
+        flags = [str(flag) for flag in qa.get("flags") or []]
+        source = str(image_payload.get("source") or "")
+        blocking_flags = {
+            "visual_qa_placeholder",
+            "visual_qa_decode_error",
+            "visual_qa_empty_file",
+            "visual_qa_missing_file",
+            "visual_qa_missing_uri",
+        }
+        if source in {"placeholder", "generation_error"} or qa.get("status") == "fail" or any(flag in blocking_flags for flag in flags):
+            reason = ", ".join(flags) or str(image_payload.get("error") or "invalid_image")
+            raise RuntimeError(f"image generation failed local QA: {reason}")
+
     def _materialize_generated_video(self, generated_video) -> tuple[bytes, str]:
         if generated_video.b64_data:
             try:
@@ -1497,6 +1512,7 @@ class AgentsRuntime:
                 payload=image_payload,
                 expected_ratio=image_size,
             )
+            self._require_generated_image_asset(image_payload)
             image_payload["marketplace_qa"] = inspect_marketplace_image(
                 uri=image_uri,
                 payload=image_payload,
@@ -1580,13 +1596,14 @@ class AgentsRuntime:
             if intake and intake.asset_media_summary
             else "No reference media analysis."
         )
+        product_truth = self._product_truth_contract(intake)
         estimated_cost = 0.0
         text_model_used = model
         reference_inputs = self._reference_image_inputs(intake, extra_references=historical_references)
         spec_reference_inputs = [str(item).strip() for item in (creative_specs.get("reference_image_urls") or []) if str(item).strip()]
         if spec_reference_inputs:
             reference_inputs = [*reference_inputs, *spec_reference_inputs]
-        if reference_inputs:
+        if reference_inputs and visual_summary == "No reference media analysis.":
             vision_prompt = (
                 "Analyze uploaded product sample image(s). Return concise product facts for ad generation: "
                 "material, color, structure, wearing position, functional highlights, and what should remain consistent."
@@ -1615,7 +1632,7 @@ class AgentsRuntime:
                     else f"Generate concise Meta ad copy variants for US {locale}. "
                 )
                 + f"dtc_surface_strategy={surface_strategy}. "
-                + f"business_context={business_context}, product_visual_summary={visual_summary}, variants={variant_set.model_dump()}. "
+                + f"business_context={business_context}, product_visual_summary={visual_summary}, product_truth_contract={product_truth}, variants={variant_set.model_dump()}. "
                 + "Keep copy specific, conversion-oriented, and claim-safe. Do not invent certifications or guarantees."
             ),
         )
@@ -1660,6 +1677,7 @@ class AgentsRuntime:
                 + "Show the product in a realistic commercial composition that matches the intended use case. "
                 + "Keep product details aligned with this summary: "
                 + f"{visual_summary}. "
+                + f"Product truth contract: {product_truth}. "
                 + f"Style: realistic, brand-safe, no text overlay, sharp product visibility, conversion-oriented. "
                 + f"Use aspect ratio {image_size}, target resolution {resolution}. "
                 + "Visual QA gate: product must be clearly inspectable, physically plausible, not malformed, and not a generic stock image."
@@ -1725,6 +1743,7 @@ class AgentsRuntime:
                 payload=image_payload,
                 expected_ratio=image_size,
             )
+            self._require_generated_image_asset(image_payload)
             images.append(image_ref)
             artifacts.append(
                 {

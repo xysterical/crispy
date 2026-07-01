@@ -342,6 +342,97 @@ def test_video_scripting_carries_product_truth_contract():
     assert "do_not_add_remove_or_replace_product_parts" in contract["forbidden_changes"]
 
 
+def test_copy_image_generation_reuses_intake_media_summary_for_reference_images(tmp_path):
+    runtime = AgentsRuntime()
+    chat_calls = []
+
+    def fake_chat_complete(*args, **kwargs):
+        chat_calls.append(kwargs)
+        return ("copy hint", "text-model", 0.0)
+
+    def fake_generate_image(*, prompt, reference_image_urls=None, **kwargs):
+        assert "blue upper panel and black padded lower section" in prompt
+        assert "do_not_change_product_color_material_or_shape" in prompt
+        assert reference_image_urls
+        return (
+            type("ImageResult", (), {"estimated_cost": 0.0, "images": [object()], "model_used": "image-model"})(),
+            "stub-image-provider",
+            "stub-image-model",
+        )
+
+    ref = tmp_path / "harness.png"
+    ref.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"))
+    runtime._chat_complete = fake_chat_complete
+    runtime._generate_image = fake_generate_image
+    runtime._materialize_generated_image = lambda selected: (b"image-bytes" * 256, "b64_json")
+    runtime._local_media_qa = lambda **kwargs: {"status": "pass", "score": 100, "flags": [], "checks": []}
+
+    output = runtime.run_copy_image_generation(
+        run_id="copy-summary-reuse",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="secure fit",
+                    hook="Clip in confidence",
+                    message="Show the harness clearly.",
+                )
+            ]
+        ),
+        intake=ProductIntake(
+            product_name="blue pet harness",
+            asset_media_summary="blue upper panel and black padded lower section",
+            image_references=[{"uri": str(ref)}],
+            visual_identity={"must_preserve_details": ["blue upper panel", "black padded lower section"]},
+        ),
+        business_context={"target_audience": "dog owners", "primary_cta": "Shop Now"},
+        creative_specs={},
+        market="US",
+        locale="en-US",
+        provider="deepseek",
+        model="deepseek-v4-pro",
+    )
+
+    assert len(chat_calls) == 1
+    assert not chat_calls[0].get("image_urls")
+    assert output.payload["image_assets"][0]["prompt"].find("reference_analysis_failed") == -1
+
+
+def test_copy_image_generation_blocks_placeholder_assets():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("copy hint", "text-model", 0.0)
+    runtime._generate_image = lambda **kwargs: (
+        type("ImageResult", (), {"estimated_cost": 0.0, "images": [], "model_used": "image-model"})(),
+        "stub-image-provider",
+        "stub-image-model",
+    )
+
+    with pytest.raises(RuntimeError, match="image generation failed local QA"):
+        runtime.run_copy_image_generation(
+            run_id="copy-placeholder-blocked",
+            variant_set=VariantSet(
+                variants=[
+                    VariantCandidate(
+                        variant_id="V1",
+                        angle="secure fit",
+                        hook="Clip in confidence",
+                        message="Show the harness clearly.",
+                    )
+                ]
+            ),
+            intake=ProductIntake(
+                product_name="blue pet harness",
+                asset_media_summary="blue upper panel and black padded lower section",
+            ),
+            business_context={"target_audience": "dog owners", "primary_cta": "Shop Now"},
+            creative_specs={},
+            market="US",
+            locale="en-US",
+            provider="deepseek",
+            model="deepseek-v4-pro",
+        )
+
+
 def test_video_scripting_carries_planning_director_plan_into_fallback():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
