@@ -326,6 +326,64 @@ def test_gm_memory_compaction_creates_summary_and_supersedes_raw(client, db_sess
     assert all((row.content or {}).get("superseded_by_id") == body["id"] for row in raw)
 
 
+def test_planning_trace_records_applied_gm_memory(client):
+    from app.data.models import AgentTraceEvent, GmMemory, PipelineRun
+    from app.data.session import SessionLocal
+    from app.services.runs import execute_next_queued_stage
+    from sqlalchemy import select
+
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "trace-shop",
+            "project_name": "trace-project",
+            "product_name": "trace leash",
+            "product_code": "TRACE-SKU",
+            "industry_code": "pet_accessories",
+            "campaign_name": "trace-campaign",
+            "creative_preset": "custom",
+            "creative_specs": {
+                "image_size": "1:1",
+                "video_size": "1:1",
+                "resolution": "720p",
+                "video_duration_seconds": 5,
+            },
+        },
+    )
+    assert create_resp.status_code == 200
+    run = create_resp.json()
+    with SessionLocal() as db:
+        run_model = db.get(PipelineRun, run["id"])
+        db.add(
+            GmMemory(
+                project_id=run_model.project_id,
+                memory_scope="product",
+                product_code="TRACE-SKU",
+                source_type="feedback_import",
+                memory_type="summary",
+                content={"summary": "Utility hooks outperform lifestyle hooks."},
+            )
+        )
+        db.commit()
+    with SessionLocal() as db:
+        execute_next_queued_stage(db)
+        db.commit()
+    client.post(f"/runs/{run['id']}/advance", json={"notes": "intake ok"})
+    with SessionLocal() as db:
+        execute_next_queued_stage(db)
+        db.commit()
+        event = db.scalar(
+            select(AgentTraceEvent).where(
+                AgentTraceEvent.run_id == run["id"],
+                AgentTraceEvent.event_type == "gm_memory_applied",
+            )
+        )
+        assert event is not None
+        assert event.payload["memory_count"] >= 1
+        assert event.payload["references"][0]["memory_id"]
+        assert event.payload["references"][0]["summary"] == "Utility hooks outperform lifestyle hooks."
+
+
 def test_shop_analysis_history_after_run(client):
     # Run an analysis first
     client.post(

@@ -697,11 +697,14 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
     seen_fingerprints: set[str] = set()
     for row in [*product_rows[:3], *shop_rows[:3], *industry_rows[:2]]:
         payload = {
+            "id": row.id,
             "memory_scope": row.memory_scope,
             "product_code": row.product_code,
             "industry_code": row.industry_code,
             "source_type": row.source_type,
             "memory_type": row.memory_type,
+            "status": row.status,
+            "pinned": bool(row.pinned),
             "score_hint": row.score_hint,
             "content": row.content or {},
         }
@@ -722,6 +725,25 @@ def _gm_memory_priority(row: GmMemory) -> tuple[int, int, float, float]:
         -(row.score_hint or 0),
         -(row.created_at.timestamp() if row.created_at else 0),
     )
+
+
+def _gm_memory_trace_payload(gm_lessons: list[dict]) -> dict:
+    references = []
+    for item in gm_lessons[:5]:
+        content = item.get("content") or {}
+        references.append({
+            "memory_id": item.get("id"),
+            "memory_scope": item.get("memory_scope"),
+            "source_type": item.get("source_type"),
+            "memory_type": item.get("memory_type"),
+            "summary": content.get("summary") or content.get("source") or "",
+            "reason": "matched product/shop/industry planning context",
+        })
+    return {
+        "memory_count": len(gm_lessons),
+        "references": references,
+        "influence": "included in planning gm_lessons prompt context",
+    }
 
 
 def _analytics_insights(db: Session, run: PipelineRun) -> list[dict]:
@@ -1473,10 +1495,23 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
             output = runtime.run_intake(run.id, task.input_payload, provider=provider_name, model=model_name, runtime_config=runtime_config)
         elif task.stage_name == "planning":
             intake = ProductIntake.model_validate(task.input_payload["intake"])
+            gm_lessons = task.input_payload.get("gm_lessons", [])
+            add_agent_trace_event(
+                db,
+                run_id=run.id,
+                stage_task_id=task.id,
+                stage_name=task.stage_name,
+                agent_name=lead_agent,
+                event_type="gm_memory_applied",
+                message=f"Planning applied {len(gm_lessons)} GM memory entries.",
+                provider_name=provider_name,
+                model_name=model_name,
+                payload=_gm_memory_trace_payload(gm_lessons),
+            )
             output = runtime.run_planning(
                 run.id,
                 intake,
-                gm_lessons=task.input_payload.get("gm_lessons", []),
+                gm_lessons=gm_lessons,
                 gm_policy=task.input_payload.get("gm_policy", {}),
                 creative_specs=task.input_payload.get("creative_specs", {}),
                 enable_research=bool(task.input_payload.get("enable_research")),
