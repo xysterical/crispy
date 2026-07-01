@@ -1419,6 +1419,7 @@ class AgentsRuntime:
         audience = business_context.get("target_audience", "marketplace shoppers")
         cta = business_context.get("primary_cta", "View Product")
         product_name = intake.product_name if intake else str(business_context.get("product_name") or "the product")
+        product_truth = self._product_truth_contract(intake)
 
         for idx, item in enumerate(variant_set.variants):
             role = roles[idx % len(roles)]
@@ -1505,6 +1506,7 @@ class AgentsRuntime:
                 "reference_source_count": len(reference_inputs),
                 "reference_manifest": reference_manifest,
                 "visual_identity": visual_identity,
+                "product_truth_contract": product_truth,
             }
             image_payload["visual_qa"] = self._local_media_qa(
                 asset_type="image",
@@ -1735,6 +1737,7 @@ class AgentsRuntime:
                 "image_model": image_model,
                 "error": error_text,
                 "provider_errors": provider_errors,
+                "product_truth_contract": product_truth,
             }
             image_payload["reference_source_count"] = len(historical_references or [])
             image_payload["visual_qa"] = self._local_media_qa(
@@ -2312,6 +2315,7 @@ class AgentsRuntime:
                         "external_task_id": task_id,
                         "generation_status": status,
                         "raw_response": raw_response,
+                        "product_truth_contract": product_truth,
                     }
                     candidate_payload["visual_qa"] = self._local_media_qa(
                         asset_type="storyboard_frame",

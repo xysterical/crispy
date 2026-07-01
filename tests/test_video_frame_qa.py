@@ -6,7 +6,7 @@ import pytest
 
 from app.services.intake_assets import process_uploaded_payloads
 from app.services.video_frames import sample_video_frames
-from app.services.visual_qa import inspect_extracted_video_frames
+from app.services.visual_qa import inspect_extracted_video_frames, inspect_visual_asset
 
 
 def test_sample_video_frames_falls_back_for_invalid_video(tmp_path):
@@ -146,3 +146,52 @@ def test_process_uploaded_payloads_keeps_duplicate_video_filenames_distinct():
     assert all(Path(video["uri"]).exists() for video in videos)
     assert all(Path(frame).exists() for video in videos for frame in video["frame_placeholders"])
     assert len([item for item in artifacts if item["type"] == "input_video_frame"]) == 6
+
+
+def test_visual_asset_checks_product_truth_contract_colors(tmp_path):
+    from PIL import Image, ImageDraw
+
+    image_path = tmp_path / "harness_colors.png"
+    image = Image.new("RGB", (240, 240), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, 120, 240), fill=(0, 120, 220))
+    draw.rectangle((120, 0, 180, 240), fill=(20, 20, 20))
+    draw.rectangle((180, 0, 240, 240), fill=(150, 150, 150))
+    image.save(image_path)
+
+    qa = inspect_visual_asset(
+        asset_type="image",
+        uri=str(image_path),
+        payload={
+            "product_truth_contract": {
+                "colors": ["blue", "black", "gray"],
+                "must_preserve": ["blue pet harness"],
+            }
+        },
+    )
+
+    assert qa["status"] == "warn"
+    assert "visual_qa_product_truth_color_mismatch" not in qa["flags"]
+    assert "visual_qa_product_truth_structure_review" in qa["flags"]
+
+
+def test_visual_asset_fails_when_contract_colors_are_missing(tmp_path):
+    from PIL import Image
+
+    image_path = tmp_path / "red_wrong_product.png"
+    Image.new("RGB", (240, 240), (220, 20, 20)).save(image_path)
+
+    qa = inspect_visual_asset(
+        asset_type="image",
+        uri=str(image_path),
+        payload={
+            "product_truth_contract": {
+                "colors": ["blue", "black"],
+                "must_preserve": ["blue pet harness"],
+            }
+        },
+    )
+
+    assert qa["status"] == "fail"
+    assert "visual_qa_product_truth_color_mismatch" in qa["flags"]
+    assert any(check["key"] == "product_truth_colors" and check["status"] == "fail" for check in qa["checks"])

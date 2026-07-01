@@ -53,6 +53,59 @@ def _image_metrics(path: Path) -> dict[str, Any]:
         return {"decode_error": str(exc)[:240]}
 
 
+def _image_color_presence(path: Path) -> dict[str, float]:
+    try:
+        from PIL import Image  # type: ignore
+    except Exception:
+        return {}
+    try:
+        with Image.open(path) as image:
+            pixels = list(image.convert("RGB").resize((64, 64)).getdata())
+    except Exception:
+        return {}
+    total = max(1, len(pixels))
+    buckets = {"black": 0, "blue": 0, "gray": 0, "silver": 0}
+    for red, green, blue in pixels:
+        high = max(red, green, blue)
+        low = min(red, green, blue)
+        saturation = high - low
+        luma = (red + green + blue) / 3
+        if luma < 65:
+            buckets["black"] += 1
+        if blue >= 75 and blue > red + 25 and blue >= green - 15:
+            buckets["blue"] += 1
+        if saturation < 28 and 55 <= luma <= 205:
+            buckets["gray"] += 1
+        if saturation < 35 and luma >= 145:
+            buckets["silver"] += 1
+    return {key: round(value / total, 4) for key, value in buckets.items()}
+
+
+def _contract_colors(product_truth_contract: dict[str, Any]) -> list[str]:
+    allowed = {"black", "blue", "gray", "grey", "silver"}
+    colors: list[str] = []
+    for value in product_truth_contract.get("colors") or []:
+        color = str(value).strip().lower()
+        if color in allowed:
+            colors.append("gray" if color == "grey" else color)
+    for value in product_truth_contract.get("must_preserve") or []:
+        raw = str(value).strip().lower()
+        if raw.startswith("color:"):
+            color = raw.split(":", 1)[1].strip()
+            if color in allowed:
+                colors.append("gray" if color == "grey" else color)
+    return sorted(set(colors))
+
+
+def _contract_review_terms(product_truth_contract: dict[str, Any]) -> list[str]:
+    terms: list[str] = []
+    for value in product_truth_contract.get("must_preserve") or []:
+        text = str(value).strip()
+        if text and not text.lower().startswith(("color:", "material:")):
+            terms.append(text)
+    return list(dict.fromkeys(terms))[:6]
+
+
 def _has_mp4_signature(path: Path) -> bool:
     try:
         header = path.read_bytes()[:32]
@@ -148,6 +201,37 @@ def inspect_visual_asset(
             checks.append({"key": "text_overlay", "status": "warn", "message": "Prompt appears to allow text overlay."})
             flags.append("visual_qa_text_overlay_risk")
             score -= 10
+        product_truth_contract = payload.get("product_truth_contract") or {}
+        if isinstance(product_truth_contract, dict) and product_truth_contract:
+            required_colors = _contract_colors(product_truth_contract)
+            if required_colors:
+                color_presence = _image_color_presence(path)
+                metrics["contract_color_presence"] = color_presence
+                missing = [color for color in required_colors if color_presence.get(color, 0.0) < 0.004]
+                if missing:
+                    checks.append(
+                        {
+                            "key": "product_truth_colors",
+                            "status": "fail",
+                            "message": f"Required product colors are not visible enough: {', '.join(missing)}.",
+                        }
+                    )
+                    flags.append("visual_qa_product_truth_color_mismatch")
+                    score -= 45
+                else:
+                    checks.append({"key": "product_truth_colors", "status": "pass", "message": "Required product colors are present."})
+            review_terms = _contract_review_terms(product_truth_contract)
+            if review_terms:
+                checks.append(
+                    {
+                        "key": "product_truth_structure",
+                        "status": "manual_review",
+                        "message": "Review generated image against must-preserve product structure.",
+                        "details": review_terms,
+                    }
+                )
+                flags.append("visual_qa_product_truth_structure_review")
+                score -= 5
     elif asset_type == "video":
         if status in {"submitted", "queued", "pending", "processing", "running"} or source == "external_task_pending":
             checks.append({"key": "async_status", "status": "warn", "message": f"Video task is still {status or source}."})
