@@ -459,6 +459,51 @@ def test_copy_image_generation_blocks_placeholder_assets():
         )
 
 
+def test_copy_image_generation_includes_qa_repair_prompt():
+    runtime = AgentsRuntime()
+    captured_prompts: list[str] = []
+    runtime._chat_complete = lambda *args, **kwargs: ("copy hint", "text-model", 0.0)
+    runtime._local_media_qa = lambda **kwargs: {"status": "pass", "score": 100, "flags": [], "checks": []}
+    runtime._materialize_generated_image = lambda selected: (b"image-bytes" * 256, "b64_json")
+
+    def fake_generate_image(*, prompt, **kwargs):
+        captured_prompts.append(prompt)
+        return (
+            type("ImageResult", (), {"estimated_cost": 0.0, "images": [object()], "model_used": "image-model"})(),
+            "stub-image-provider",
+            "stub-image-model",
+        )
+
+    runtime._generate_image = fake_generate_image
+
+    runtime.run_copy_image_generation(
+        run_id="copy-qa-repair",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="secure fit",
+                    hook="Clip in confidence",
+                    message="Show the harness clearly.",
+                )
+            ]
+        ),
+        intake=ProductIntake(product_name="blue pet harness"),
+        business_context={"target_audience": "dog owners", "primary_cta": "Shop Now"},
+        creative_specs={},
+        market="US",
+        locale="en-US",
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        runtime_config={
+            "force_regenerate": True,
+            "qa_repair": {"prompt": "Regeneration repair instructions: restore product visibility."},
+        },
+    )
+
+    assert "Regeneration repair instructions: restore product visibility." in captured_prompts[0]
+
+
 def test_video_scripting_carries_planning_director_plan_into_fallback():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)

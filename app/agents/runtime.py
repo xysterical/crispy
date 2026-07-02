@@ -1319,6 +1319,14 @@ class AgentsRuntime:
         compiled_persona = (runtime_config or {}).get("compiled_persona")
         return render_persona_prompt(compiled_persona)
 
+    def _qa_repair_prompt_block(self, runtime_config: dict | None) -> str:
+        repair = (runtime_config or {}).get("qa_repair")
+        if isinstance(repair, dict):
+            prompt = str(repair.get("prompt") or "").strip()
+        else:
+            prompt = str((runtime_config or {}).get("qa_repair_prompt") or "").strip()
+        return f"\n\n{prompt}" if prompt else ""
+
     def _compose_stage_prompt(
         self,
         *,
@@ -1756,6 +1764,7 @@ class AgentsRuntime:
                 f"Role: {image_role}; style requirements: {role['style']}. "
                 f"Output: square {export_size_px}x{export_size_px}px master, pure white background" + (f", marketplace-ready for {', '.join(platform_targets)}" if platform_targets else "") + ". "
                 "If source media is low quality, improve lighting, material clarity, edge quality, and color balance while preserving product truth."
+                f"{self._qa_repair_prompt_block(runtime_config)}"
             )
             image_uri = ""
             image_source = "placeholder"
@@ -1997,6 +2006,7 @@ class AgentsRuntime:
                 + f"Style: realistic, brand-safe, no text overlay, sharp product visibility, conversion-oriented. "
                 + f"Use aspect ratio {image_size}, target resolution {resolution}. "
                 + "Visual QA gate: product must be clearly inspectable, physically plausible, not malformed, and not a generic stock image."
+                + self._qa_repair_prompt_block(runtime_config)
             )
             image_uri = ""
             image_source = "placeholder"
@@ -2242,6 +2252,7 @@ class AgentsRuntime:
                 "\"variant_id\":\"V1\",\"duration_seconds\":12,\"scene\":\"...\",\"shot_intent\":\"thumb_stop\","
                 "\"first_frame_prompt\":\"...\",\"last_frame_prompt\":\"...\",\"motion_prompt\":\"...\","
                 "\"transition_to_next\":\"match_cut\",\"variation_type\":\"small\",\"continuity_constraints\":[\"...\"]}]}]}."
+                f"{self._qa_repair_prompt_block(runtime_config)}"
             ),
         )
         response_text, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
@@ -2559,6 +2570,7 @@ class AgentsRuntime:
                         "Work across product categories: show real use context, hands, environment, scale, or buyer outcome as appropriate; "
                         "use a person only when the product or brief calls for human use, and do not force fashion/model framing for non-wearables. "
                         f"{self._video_prompt_quality_block(product_context)}"
+                        f"{self._qa_repair_prompt_block(runtime_config)}"
                     )
                 source = "placeholder"
                 image_provider = ""
@@ -2880,6 +2892,7 @@ class AgentsRuntime:
                     f"target resolution {resolution}, duration {duration_seconds} seconds. "
                     f"{self._video_prompt_quality_block(product_context)}"
                 )
+            video_prompt += self._qa_repair_prompt_block(runtime_config)
             asset_suffix = str((runtime_config or {}).get("asset_name_suffix") or "")
             force_regenerate = bool((runtime_config or {}).get("force_regenerate"))
             if script.segments:

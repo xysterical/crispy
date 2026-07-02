@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+
 from sqlalchemy import inspect, select
 
 from app.data.session import SessionLocal, apply_runtime_migrations
@@ -10,6 +12,21 @@ def _run_worker_once() -> None:
     with SessionLocal() as db:
         execute_next_queued_stage(db)
         db.commit()
+
+
+def _patch_valid_generated_images(monkeypatch):
+    def fake_materialize_generated_image(_selected):
+        from PIL import Image
+
+        image = Image.new("RGB", (200, 200))
+        for x in range(200):
+            for y in range(200):
+                image.putpixel((x, y), ((x * 3) % 255, (y * 5) % 255, ((x + y) * 2) % 255))
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue(), "b64_json"
+
+    monkeypatch.setattr("app.services.runs.runtime._materialize_generated_image", fake_materialize_generated_image)
 
 
 def _create_run(client) -> dict:
@@ -76,7 +93,9 @@ def test_rejected_stage_rerun_includes_execution_memory_in_task_input(client):
         assert execution_memory["run"]["last_human_decisions"]
 
 
-def test_execution_memory_endpoint_and_variant_summary(client):
+def test_execution_memory_endpoint_and_variant_summary(client, monkeypatch):
+    _patch_valid_generated_images(monkeypatch)
+
     run = _create_run(client)
     run_id = run["id"]
 
@@ -105,7 +124,9 @@ def test_execution_memory_endpoint_and_variant_summary(client):
     assert "active_regeneration_goals" in memory_payload
 
 
-def test_variant_regeneration_exposes_execution_memory_summary(client):
+def test_variant_regeneration_exposes_execution_memory_summary(client, monkeypatch):
+    _patch_valid_generated_images(monkeypatch)
+
     run = _create_run(client)
     run_id = run["id"]
 

@@ -9,13 +9,67 @@ from app.data.models import VariantAsset
 from app.data.session import SessionLocal
 from app.providers.llm import GeneratedVideo, VideoGenResult
 from app.orchestrator.state_machine import STAGE_ORDER, stage_plan_for
-from app.services.runs import _build_task_input, _submit_next_video_segment, execute_next_queued_stage
+from app.services.runs import _build_task_input, _qa_repair_context, _submit_next_video_segment, execute_next_queued_stage
 
 
 def _run_worker_once() -> None:
     with SessionLocal() as db:
         execute_next_queued_stage(db)
         db.commit()
+
+
+def _patch_valid_generated_images(monkeypatch):
+    def fake_materialize_generated_image(_selected):
+        from PIL import Image
+
+        image = Image.new("RGB", (200, 200))
+        for x in range(200):
+            for y in range(200):
+                image.putpixel((x, y), ((x * 3) % 255, (y * 5) % 255, ((x + y) * 2) % 255))
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue(), "b64_json"
+
+    monkeypatch.setattr("app.services.runs.runtime._materialize_generated_image", fake_materialize_generated_image)
+
+
+def test_qa_repair_context_maps_visual_qa_flags_to_actions():
+    class EmptyRows:
+        def all(self):
+            return []
+
+    class FakeDb:
+        def scalars(self, *_args, **_kwargs):
+            return EmptyRows()
+
+    variant = SimpleNamespace(
+        id="variant-row",
+        metadata_json={
+            "visual_quality": {
+                "blocking_issues": ["visual_qa_product_truth_color_mismatch"],
+                "asset_reports": [
+                    {
+                        "flags": ["visual_qa_placeholder"],
+                        "image_asset_contract": {"flags": ["product_fill_low"]},
+                    }
+                ],
+            }
+        },
+    )
+
+    repair = _qa_repair_context(
+        db=FakeDb(),
+        variant=variant,
+        reason="try again",
+        target_stage="copy_image_generation",
+    )
+
+    assert repair["actions"] == [
+        "Produce a real usable visual asset; do not return a placeholder, blank image, or error artifact.",
+        "Restore the required product colors from the product truth contract.",
+        "Make the product larger and clearly inspectable in frame.",
+    ]
+    assert "Regeneration repair instructions" in repair["prompt"]
 
 
 def test_channel_is_included_in_agent_task_input(client):
@@ -239,7 +293,9 @@ def test_run_deliverables_and_variants_endpoints(client):
     assert any(reason.startswith("visual_qa_agent_status=") for reason in ranked_first["reasons"])
 
 
-def test_variant_review_endpoints_update_variant_library(client):
+def test_variant_review_endpoints_update_variant_library(client, monkeypatch):
+    _patch_valid_generated_images(monkeypatch)
+
     create_resp = client.post(
         "/runs",
         json={
@@ -299,18 +355,7 @@ def test_variant_review_endpoints_update_variant_library(client):
 
 
 def test_pipeline_mode_copy_image_only(client, monkeypatch):
-    def fake_materialize_generated_image(_selected):
-        from PIL import Image
-
-        image = Image.new("RGB", (200, 200))
-        for x in range(200):
-            for y in range(200):
-                image.putpixel((x, y), ((x * 3) % 255, (y * 5) % 255, ((x + y) * 2) % 255))
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        return buffer.getvalue(), "b64_json"
-
-    monkeypatch.setattr("app.services.runs.runtime._materialize_generated_image", fake_materialize_generated_image)
+    _patch_valid_generated_images(monkeypatch)
 
     create_resp = client.post(
         "/runs",

@@ -2761,6 +2761,79 @@ def _default_regeneration_stage(run: PipelineRun) -> str:
     raise ValueError(f"pipeline mode {run.pipeline_mode} has no regeneratable stage")
 
 
+def _qa_repair_context(
+    *,
+    db: Session,
+    variant: RunVariant,
+    reason: str,
+    target_stage: str,
+) -> dict:
+    visual_quality = (variant.metadata_json or {}).get("visual_quality") or {}
+    flags: list[str] = []
+    flags.extend(str(item) for item in (visual_quality.get("blocking_issues") or []) if str(item).strip())
+    for report in visual_quality.get("asset_reports") or []:
+        if not isinstance(report, dict):
+            continue
+        flags.extend(str(item) for item in (report.get("flags") or []) if str(item).strip())
+        contract = report.get("image_asset_contract") or {}
+        if isinstance(contract, dict):
+            flags.extend(str(item) for item in (contract.get("flags") or []) if str(item).strip())
+        preflight = report.get("stitch_preflight") or {}
+        if isinstance(preflight, dict):
+            flags.extend(str(item) for item in (preflight.get("flags") or []) if str(item).strip())
+    assets = db.scalars(
+        select(VariantAsset).where(VariantAsset.run_variant_id == variant.id).order_by(VariantAsset.created_at.desc())
+    ).all()
+    for asset in assets[:8]:
+        payload = asset.payload or {}
+        for key in ("visual_qa", "image_asset_contract", "marketplace_qa"):
+            row = payload.get(key) or {}
+            if isinstance(row, dict):
+                flags.extend(str(item) for item in (row.get("flags") or []) if str(item).strip())
+        ledger = payload.get("segment_ledger") or {}
+        if isinstance(ledger, dict):
+            blocked_id = ledger.get("first_blocked_segment_id")
+            if blocked_id:
+                flags.append(f"segment_blocked:{blocked_id}")
+    flag_set = list(dict.fromkeys(flags))
+    rules = {
+        "visual_qa_placeholder": "Produce a real usable visual asset; do not return a placeholder, blank image, or error artifact.",
+        "visual_qa_decode_error": "Return a valid decodable media file.",
+        "visual_qa_empty_file": "Return a non-empty generated asset.",
+        "visual_qa_missing_file": "Regenerate the missing asset file.",
+        "visual_qa_missing_uri": "Return a concrete asset URI.",
+        "visual_qa_product_truth_color_mismatch": "Restore the required product colors from the product truth contract.",
+        "visual_qa_product_truth_structure_review": "Preserve the submitted product structure and visible parts.",
+        "visual_qa_low_information": "Increase visible product detail and visual information.",
+        "visual_qa_unusable_frame_sequence": "Generate readable first, middle, and final video frames.",
+        "visual_qa_needs_frame_review": "Make the sampled video frames clear enough for review.",
+        "stitch_preflight_failed": "Repair the failed segment continuity before stitching.",
+        "visual_qa_human_anatomy_review": "Keep any human pose physically plausible.",
+        "marketplace_background_not_white": "Use a clean pure white marketplace background.",
+        "marketplace_placeholder": "Produce a real marketplace product image, not a placeholder.",
+        "marketplace_missing_reference": "Use the submitted source product reference.",
+        "marketplace_resolution_low": "Meet the requested marketplace export resolution.",
+        "product_fill_low": "Make the product larger and clearly inspectable in frame.",
+    }
+    actions = [text for key, text in rules.items() if key in flag_set]
+    for flag in flag_set:
+        if flag.startswith("segment_blocked:"):
+            actions.append(f"Resume from {flag.split(':', 1)[1]} and keep previous completed segments unchanged.")
+    if not actions and reason.strip():
+        actions.append(f"Address operator request: {reason.strip()[:160]}.")
+    actions = list(dict.fromkeys(actions))[:4]
+    prompt = (
+        "Regeneration repair instructions: keep the current variant angle and strategy; repair only the failed asset details. "
+        + " ".join(f"{idx + 1}. {action}" for idx, action in enumerate(actions))
+    )
+    return {
+        "target_stage": target_stage,
+        "prompt": prompt,
+        "actions": actions,
+        "evidence_flags": flag_set[:12],
+    }
+
+
 def regenerate_variant_assets(
     db: Session,
     *,
@@ -2810,6 +2883,7 @@ def regenerate_variant_assets(
     model_name = resolved["model_name"]
     scope = f"regen-{utcnow().strftime('%Y%m%d%H%M%S%f')}"
     asset_suffix = f"_{scope}"
+    qa_repair = _qa_repair_context(db=db, variant=variant, reason=reason, target_stage=stage_name)
     write_regeneration_memory(
         db,
         run_id=run.id,
@@ -2825,6 +2899,8 @@ def regenerate_variant_assets(
         "asset_name_suffix": asset_suffix,
         "regeneration_reason": reason,
         "regeneration_variant_id": variant_id,
+        "qa_repair": qa_repair,
+        "qa_repair_prompt": qa_repair["prompt"],
     }
     task.input_payload = _build_task_input(db, run, task)
     task.input_payload = append_execution_memory_payload(
@@ -2853,6 +2929,7 @@ def regenerate_variant_assets(
                 "target_stage": stage_name,
                 "reason": reason,
                 "scope": scope,
+                "qa_repair_actions": qa_repair["actions"],
                 "created_at": utcnow().isoformat(),
             },
         ],
@@ -2868,7 +2945,14 @@ def regenerate_variant_assets(
         message=f"{lead_agent} started regeneration for variant {variant_id}.",
         provider_name=provider_name,
         model_name=model_name,
-        payload={"variant_id": variant_id, "target_stage": stage_name, "reason": reason, "scope": scope},
+        payload={
+            "variant_id": variant_id,
+            "target_stage": stage_name,
+            "reason": reason,
+            "scope": scope,
+            "qa_repair_actions": qa_repair["actions"],
+            "qa_repair_evidence_flags": qa_repair["evidence_flags"],
+        },
     )
 
     def trace_regeneration_model_event(event_type: str, message: str, payload: dict | None = None) -> None:
@@ -2986,7 +3070,12 @@ def regenerate_variant_assets(
                 stage_name=stage_name,
                 artifact_type=artifact["type"],
                 uri=artifact["uri"],
-                payload={**(artifact["payload"] or {}), "regeneration_scope": scope, "regeneration_reason": reason},
+                payload={
+                    **(artifact["payload"] or {}),
+                    "regeneration_scope": scope,
+                    "regeneration_reason": reason,
+                    "qa_repair": qa_repair,
+                },
             )
         )
     _variant_library_sync(db, run, task, output.payload, idempotency_scope=scope)
@@ -3017,6 +3106,7 @@ def regenerate_variant_assets(
             "target_stage": stage_name,
             "reason": reason,
             "scope": scope,
+            "qa_repair_actions": qa_repair["actions"],
             "completed_at": utcnow().isoformat(),
         },
     }
