@@ -215,6 +215,32 @@ def test_video_scripting_uses_submitted_product_context_without_leash_defaults()
         assert banned not in script_text
 
 
+def test_divergence_adds_visual_proof_spec_for_concept_variants():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    output = runtime.run_divergence(
+        run_id="runtime-divergence-visual-proof",
+        planning=PlanningBrief(
+            strategic_angles=["anti-pull control"],
+            creative_director_plan={
+                "scene_arc": [
+                    {"scene_direction": "controlled dog walk with front chest leash redirection"},
+                ]
+            },
+        ),
+        variant_count=1,
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    variant = output.payload["variants"][0]
+    spec = variant["visual_proof_spec"]
+    assert spec["desired_scene"] == "controlled dog walk with front chest leash redirection"
+    assert "dog lunging forward as if pulling is still uncontrolled" in spec["must_not_show"]
+    assert output.payload["experiment_matrix"][0]["visual_proof_spec"] == spec
+
+
 def test_video_scripting_splits_long_duration_into_segments():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
@@ -493,6 +519,7 @@ def test_copy_image_generation_exposes_pending_image_task():
         locale="en-US",
         provider="deepseek",
         model="deepseek-v4-pro",
+        runtime_config={"force_regenerate": True},
     )
 
     image = output.payload["image_assets"][0]
@@ -501,6 +528,50 @@ def test_copy_image_generation_exposes_pending_image_task():
     assert image["generation_status"] == "submitted"
     assert image["image_asset_contract"]["blocking"] is False
     assert "visual_qa_asset_processing" in image["image_asset_contract"]["flags"]
+
+
+def test_copy_image_generation_uses_variant_visual_proof_spec():
+    runtime = AgentsRuntime()
+    captured_prompts: list[str] = []
+    runtime._chat_complete = lambda *args, **kwargs: ("copy hint", "text-model", 0.0)
+    runtime._local_media_qa = lambda **kwargs: {"status": "pass", "score": 100, "flags": [], "checks": []}
+    runtime._materialize_generated_image = lambda selected: (b"image-bytes" * 256, "b64_json")
+
+    def fake_generate_image(*, prompt, **kwargs):
+        captured_prompts.append(prompt)
+        return (
+            type("ImageResult", (), {"estimated_cost": 0.0, "images": [object()], "model_used": "image-model"})(),
+            "stub-image-provider",
+            "stub-image-model",
+        )
+
+    runtime._generate_image = fake_generate_image
+
+    output = runtime.run_copy_image_generation(
+        run_id="copy-visual-proof",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="anti-pull control",
+                    hook="Show the front chest D-ring redirecting leash tension",
+                    message="Do not show a dog lunging forward as if pulling is uncontrolled.",
+                )
+            ]
+        ),
+        intake=ProductIntake(product_name="anti-pull dog harness"),
+        business_context={"target_audience": "dog owners", "primary_cta": "Shop Now"},
+        creative_specs={},
+        market="US",
+        locale="en-US",
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        runtime_config={"force_regenerate": True},
+    )
+
+    assert "Variant visual proof spec" in captured_prompts[0]
+    assert "dog lunging forward as if pulling is still uncontrolled" in captured_prompts[0]
+    assert output.payload["image_assets"][0]["visual_proof_spec"]["semantic_fail_conditions"]
 
 
 def test_copy_image_generation_includes_qa_repair_prompt():
@@ -1620,6 +1691,49 @@ def test_visual_quality_assessment_surfaces_product_truth_flags():
     assert summary["recommended_action"] == "manual_review"
     assert summary["product_truth_flags"] == ["visual_qa_product_truth_structure_review"]
     assert "visual_qa_product_truth_structure_review" in summary["issues"]
+
+
+def test_visual_quality_assessment_surfaces_visual_proof_spec():
+    runtime = AgentsRuntime()
+    captured_prompt: dict[str, str] = {}
+
+    def fake_chat_complete(provider, model, prompt, runtime_config, **kwargs):
+        captured_prompt["prompt"] = prompt
+        return "visual proof review notes", "stub-model", 0.0
+
+    runtime._chat_complete = fake_chat_complete
+
+    output = runtime.run_visual_quality_assessment(
+        run_id="runtime-visual-proof-spec",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="anti-pull control",
+                    hook="Show the front chest D-ring redirecting leash tension",
+                    message="Do not show uncontrolled pulling.",
+                )
+            ]
+        ),
+        copy_images={
+            "image_assets": [
+                {
+                    "variant_id": "V1",
+                    "uri": "assets/nonexistent.png",
+                    "visual_qa": {"status": "pass", "score": 98, "flags": [], "checks": []},
+                }
+            ]
+        },
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    summary = output.payload["variant_summaries"][0]
+    report = output.payload["reports"][0]
+    spec = summary["visual_proof_spec"]
+    assert "semantic_fail_conditions" in spec
+    assert report["asset_reports"][0]["visual_proof_spec"] == spec
+    assert "visual_proof_spec" in captured_prompt["prompt"]
 
 
 def test_visual_quality_assessment_blocks_image_asset_contract_failure():

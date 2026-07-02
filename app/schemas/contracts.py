@@ -203,6 +203,7 @@ class VariantCandidate(BaseModel):
     hook: str
     message: str
     rationale: str = ""
+    visual_proof_spec: dict[str, Any] = Field(default_factory=dict)
 
 
 class VariantSet(BaseModel):

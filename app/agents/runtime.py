@@ -1329,6 +1329,33 @@ class AgentsRuntime:
             prompt = str((runtime_config or {}).get("qa_repair_prompt") or "").strip()
         return f"\n\n{prompt}" if prompt else ""
 
+    def _variant_visual_proof_spec(self, variant: VariantCandidate, scene_direction: str = "") -> dict:
+        existing = dict(variant.visual_proof_spec or {})
+        if existing:
+            return existing
+        source_text = " ".join([variant.angle, variant.hook, variant.message, scene_direction]).strip()
+        spec = {
+            "desired_scene": scene_direction or variant.hook or variant.angle,
+            "proof_mechanism": variant.message or variant.hook,
+            "must_show": [item for item in [variant.angle, variant.hook] if item],
+            "must_not_show": ["generic lifestyle scene without visible product proof"],
+            "semantic_fail_conditions": ["visual does not prove the stated product benefit"],
+        }
+        if re.search(r"\banti[- ]?pull|no[- ]?pull|pulling|leash|front chest|d[- ]?ring\b|防拉|防暴冲|牵引", source_text, re.IGNORECASE):
+            spec["must_show"].extend(["dog wearing the harness", "leash connected at the front chest D-ring", "controlled walking posture"])
+            spec["must_not_show"].extend(["dog lunging forward as if pulling is still uncontrolled", "leash attached only like a regular collar"])
+            spec["semantic_fail_conditions"].extend(["image communicates active pulling instead of controlled anti-pull redirection"])
+        return spec
+
+    def _variant_visual_proof_prompt_block(self, variant: VariantCandidate) -> str:
+        spec = self._variant_visual_proof_spec(variant)
+        if not spec:
+            return ""
+        return (
+            f"Variant visual proof spec: {json.dumps(spec, ensure_ascii=False)}. "
+            "Make the image prove this specific visual mechanism, not just the broad product category. "
+        )
+
     def _compose_stage_prompt(
         self,
         *,
@@ -1645,16 +1672,24 @@ class AgentsRuntime:
             scene = self._scene_arc_item(director_handoff, i)
             scene_direction = scene.get("scene_direction") or scene.get("beat") or "real product-use scene"
             emotion = emotional_beats[i % len(emotional_beats)] if emotional_beats else "clear buyer confidence"
+            hook = f"{variant_id}: {angle} through {scene_direction}"
+            message = f"{variant_id}: make the buyer feel {emotion} while proving the product in-scene."
+            seed_variant = VariantCandidate(variant_id=variant_id, angle=angle, hook=hook, message=message)
+            visual_proof_spec = self._variant_visual_proof_spec(
+                seed_variant,
+                scene_direction,
+            )
             variants.append(
                 VariantCandidate(
                     variant_id=variant_id,
                     angle=angle,
-                    hook=f"{variant_id}: {angle} through {scene_direction}",
-                    message=f"{variant_id}: make the buyer feel {emotion} while proving the product in-scene.",
+                    hook=hook,
+                    message=message,
                     rationale=(
                         f"Tests `{angle}` against director beat `{scene_direction}`; preserve "
                         f"{', '.join(must_preserve[:3]) or 'core product truth'}."
                     ),
+                    visual_proof_spec=visual_proof_spec,
                 )
             )
         variant_set = VariantSet(variants=variants)
@@ -1663,6 +1698,7 @@ class AgentsRuntime:
                 "variant_id": item.variant_id,
                 "test_axis": item.angle,
                 "hypothesis": item.message,
+                "visual_proof_spec": item.visual_proof_spec,
                 "director_beat": self._scene_arc_item(director_handoff, idx),
                 "success_signal": "Higher qualified click-through or stronger reviewer preference than adjacent variants.",
                 "kill_condition": "Weak product relevance, unsupported claim, or visual concept cannot show the product truthfully.",
@@ -2001,6 +2037,7 @@ class AgentsRuntime:
                     else f"Create a social media ad image for North American market ({market}, {locale}). "
                 )
                 + f"{self._dtc_surface_prompt_block(creative_specs)}"
+                + self._variant_visual_proof_prompt_block(item)
                 + "Show the product in a realistic commercial composition that matches the intended use case. "
                 + "Keep product details aligned with this summary: "
                 + f"{visual_summary}. "
@@ -2078,6 +2115,7 @@ class AgentsRuntime:
                 "generation_status": status,
                 "raw_response": raw_response,
                 "product_truth_contract": product_truth,
+                "visual_proof_spec": self._variant_visual_proof_spec(item),
             }
             image_payload["reference_source_count"] = len(historical_references or [])
             image_payload["visual_qa"] = self._local_media_qa(
@@ -3221,6 +3259,7 @@ class AgentsRuntime:
 
         for variant in variant_set.variants:
             variant_assets = [item for item in asset_rows if item.get("variant_id") == variant.variant_id]
+            visual_proof_spec = self._variant_visual_proof_spec(variant)
             asset_reports: list[dict] = []
             blocking_issues: list[str] = []
             platform_readiness: dict[str, str] = {}
@@ -3370,6 +3409,7 @@ class AgentsRuntime:
                         "stitch_preflight": stitch_preflight if asset_type == "video" else None,
                         "image_asset_contract": image_asset_contract if asset_type in {"image", "storyboard_frame"} else None,
                         "marketplace_qa": marketplace_qa if marketplace_goal and asset_type == "image" else None,
+                        "visual_proof_spec": asset.get("visual_proof_spec") or visual_proof_spec,
                     }
                 )
 
@@ -3414,6 +3454,7 @@ class AgentsRuntime:
                 "script_hook": script.get("hook"),
                 "review_hints": review_hints,
                 "product_truth_contract": product_truth,
+                "visual_proof_spec": visual_proof_spec,
             }
             reports.append(report)
             product_truth_flags = sorted(
@@ -3444,6 +3485,7 @@ class AgentsRuntime:
                     "platform_readiness": platform_readiness,
                     "export_ready": export_ready,
                     "review_hints": review_hints,
+                    "visual_proof_spec": visual_proof_spec,
                 }
             )
 
@@ -3454,6 +3496,7 @@ class AgentsRuntime:
                 "Review these structured visual QA records for ad-candidate risk. "
                 "Focus on product fidelity, physical plausibility, channel fit, and whether any candidate should be blocked before evaluation. "
                 "When product_truth_flags are present, compare attached media against the product_truth_contract before passing the candidate. "
+                "When visual_proof_spec is present, check whether the media proves the desired_scene/proof_mechanism and avoids semantic_fail_conditions. "
                 "Return concise operator notes; do not choose the final winner.\n"
                 f"intake_facts={json.dumps(intake, ensure_ascii=False)[:3000]}\n"
                 f"product_truth_contract={json.dumps(product_truth, ensure_ascii=False)[:2000]}\n"
