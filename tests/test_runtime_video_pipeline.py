@@ -431,6 +431,109 @@ def test_planning_outputs_creative_director_and_production_plan():
     ]
 
 
+def test_prompt_grammar_flows_from_planning_to_video_script_and_storyboard():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("not json", "stub-model", 0.0)
+    runtime._local_media_qa = lambda **kwargs: {"status": "pass", "score": 100, "flags": [], "checks": []}
+    runtime._generate_image = lambda **kwargs: (
+        ImageGenResult(
+            model_used="image-model",
+            images=[
+                GeneratedImage(
+                    b64_json="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+                )
+            ],
+        ),
+        "stub-image-provider",
+        "stub-image-model",
+    )
+
+    intake = ProductIntake(
+        product_name="Anti-pull dog harness",
+        manual_research_brief=(
+            "TikTok Shop 12s video. Style reference: candid handheld early-2000s home-video realism. "
+            "Show a real dog-walk proof moment, not generic cute pet lifestyle."
+        ),
+        asset_media_summary=(
+            "White-background product image of an anti-pull dog harness with orange, teal-blue, "
+            "and beige woven straps, black D-rings, dark blue buckle parts, and a yellow adjustment buckle."
+        ),
+        business_context={
+            "target_audience": ["urban dog owners whose dogs pull on walks"],
+            "key_value_props": ["front chest D-ring redirects pulling"],
+            "primary_cta": "Shop on TikTok",
+            "prohibited_claims": ["no guaranteed instant behavior correction"],
+        },
+        product_truth_contract={
+            "must_preserve": ["orange woven strap", "teal-blue vertical strap", "black metal D-rings"],
+            "forbidden_changes": ["do_not_remove_d_rings_or_buckle"],
+        },
+    )
+    creative_specs = {"video_size": "9:16", "video_duration_seconds": 12, "tiktok_video_style": "ugc_demo"}
+
+    planning_output = runtime.run_planning(
+        run_id="prompt-grammar-flow",
+        intake=intake,
+        gm_lessons=[],
+        creative_specs=creative_specs,
+        enable_research=False,
+        provider="openai",
+        model="gpt-4.1",
+    )
+    planning = PlanningBrief(**{key: planning_output.payload[key] for key in PlanningBrief.model_fields})
+    prompt_grammar = planning_output.payload["creative_director_plan"]["prompt_grammar"]
+
+    assert "autofocus hunting" in prompt_grammar["camera_style"]
+    assert "leash jingles" in prompt_grammar["audio_plan"]
+    assert "front chest D-ring" in planning.creative_director_plan["scene_arc"][0]["scene_direction"]
+    scene_directions = [item["scene_direction"] for item in planning.creative_director_plan["scene_arc"]]
+    assert len(scene_directions) == len(set(scene_directions))
+
+    variant_set = VariantSet(
+        variants=[
+            VariantCandidate(
+                variant_id="V1",
+                angle="front chest D-ring redirects pulling",
+                hook="Show the front chest D-ring redirecting leash tension",
+                message="Make the controlled walking posture visible.",
+            )
+        ]
+    )
+    script_output = runtime.run_video_scripting(
+        run_id="prompt-grammar-flow",
+        variant_set=variant_set,
+        intake=intake,
+        business_context=intake.business_context,
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs=creative_specs,
+        pipeline_mode="tiktok_shop_video",
+        planning=planning,
+    )
+    first_shot = script_output.payload["scripts"][0]["shot_plan"][0]
+    first_shot_text = script_output.payload["scripts"][0]["shot_list"][0]
+
+    assert "Prompt grammar" not in first_shot_text
+    assert "product proof: show" in first_shot_text
+    assert len(first_shot_text) < 500
+    assert "autofocus hunting" in first_shot["motion_description"]
+    assert "leash jingles" in first_shot["audio_description"]
+
+    storyboard_output = runtime.run_storyboard_image_generation(
+        run_id="prompt-grammar-flow",
+        script_pack=VideoScriptPack(**{key: script_output.payload[key] for key in VideoScriptPack.model_fields}),
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs=creative_specs,
+        planning=planning,
+    )
+    first_frame_prompt = storyboard_output.payload["frames"][0]["prompt"]
+
+    assert "autofocus hunting" in first_frame_prompt
+    assert "leash jingles" in first_frame_prompt
+    assert "Visual proof spec: Visual proof: show" in first_frame_prompt
+
+
 def test_video_scripting_carries_product_truth_contract():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("", "stub-model", 0.0)

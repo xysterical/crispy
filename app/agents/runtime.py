@@ -658,6 +658,106 @@ class AgentsRuntime:
             sku_summary=intake.sku_summary,
         )
 
+    def _planning_prompt_grammar(
+        self,
+        *,
+        product_name: str,
+        brief: str,
+        media_truth: str,
+        creative_specs: dict,
+        constraints: list[str],
+        product_truth: dict,
+    ) -> dict:
+        source = " ".join([brief, media_truth, json.dumps(creative_specs, ensure_ascii=False)]).lower()
+        is_documentary = any(
+            term in source
+            for term in (
+                "documentary",
+                "home-video",
+                "home video",
+                "camcorder",
+                "early-2000",
+                "handheld",
+                "candid",
+                "ugc",
+                "vlog",
+                "实拍",
+                "手持",
+                "纪实",
+            )
+        )
+        is_pov = "pov" in source or "第一人称" in source
+        is_sticker = any(term in source for term in ("2d", "sticker", "anime", "cartoon", "贴纸", "动漫", "卡通", "纸片"))
+
+        camera_style = "vertical handheld UGC camera with natural micro-shake and product-readable framing"
+        visual_style = "realistic product-use video with concrete setting, visible product proof, and no generic beauty-shot filler"
+        if is_documentary:
+            visual_style = "documentary realism / candid home-video realism with ordinary real-world details"
+            camera_style = (
+                "handheld documentary capture with drift, imperfect framing, autofocus hunting, exposure shifts, "
+                "mild motion blur, and no cinematic stabilization"
+            )
+        if is_pov:
+            camera_style = f"first-person POV; {camera_style}"
+        if is_sticker:
+            visual_style = "live-action base footage plus flat 2D sticker/comic layer"
+
+        duration = int(creative_specs.get("video_duration_seconds") or creative_specs.get("duration") or 8)
+        audio_plan = "natural on-set audio: footsteps, product handling, room tone, and light ambient environment"
+        if any(term in source for term in ("dog", "leash", "harness", "pet", "犬", "狗", "牵引")):
+            audio_plan = "natural dog-walk ambience: leash jingles, paws/footsteps, light street sound, handler movement, no music"
+        elif is_documentary:
+            audio_plan = "natural ambient sound only; no music, no narration unless the brief explicitly asks for it"
+
+        negative_constraints = list(dict.fromkeys(
+            [
+                *[str(item) for item in constraints if str(item).strip()],
+                *[str(item) for item in product_truth.get("forbidden_changes", []) if str(item).strip()],
+                "no generic lifestyle scene without visible product proof",
+            ]
+        ))
+        if is_documentary:
+            negative_constraints.extend(["no cinematic camera moves", "no modern glossy color grading"])
+        if is_sticker:
+            negative_constraints.extend(["do not relight the flat 2D layer", "do not turn sticker layer into 3D"])
+
+        return {
+            "visual_style": visual_style,
+            "camera_style": camera_style,
+            "timeline_density": f"{duration}s timeline with timestamped beats; each beat names action, product proof, camera behavior, and audio cue",
+            "audio_plan": audio_plan,
+            "negative_constraints": list(dict.fromkeys(negative_constraints)),
+            "layer_rules": "real footage only" if not is_sticker else "real kitchen/scene layer stays live-action; sticker/comic layer stays flat 2D",
+            "source_reference_policy": f"adapt craft principles to {product_name}; do not copy unrelated subjects, jokes, or settings",
+        }
+
+    def _prompt_grammar_text(self, prompt_grammar: dict | None) -> str:
+        if not prompt_grammar:
+            return ""
+        negatives = ", ".join(str(item) for item in (prompt_grammar.get("negative_constraints") or [])[:6])
+        parts = [
+            f"visual style: {prompt_grammar.get('visual_style')}",
+            f"camera: {prompt_grammar.get('camera_style')}",
+            f"audio: {prompt_grammar.get('audio_plan')}",
+            f"timeline: {prompt_grammar.get('timeline_density')}",
+        ]
+        if negatives:
+            parts.append(f"avoid: {negatives}")
+        layer_rules = str(prompt_grammar.get("layer_rules") or "").strip()
+        if layer_rules:
+            parts.append(f"layers: {layer_rules}")
+        return "Prompt grammar: " + "; ".join(part for part in parts if part.split(": ", 1)[-1])
+
+    def _visual_proof_prompt_text(self, visual_proof_spec: dict | None) -> str:
+        if not visual_proof_spec:
+            return ""
+        must_show = ", ".join(str(item) for item in (visual_proof_spec.get("must_show") or [])[:5])
+        avoid_items = list(visual_proof_spec.get("must_not_show") or [])
+        avoid_items.extend(visual_proof_spec.get("semantic_fail_conditions") or [])
+        avoid = ", ".join(str(item) for item in avoid_items[:4])
+        mechanism = str(visual_proof_spec.get("proof_mechanism") or "the stated product benefit")
+        return f"Visual proof: show {must_show}; prove {mechanism}; avoid {avoid}."
+
     def _planning_director_blocks(
         self,
         *,
@@ -685,16 +785,34 @@ class AgentsRuntime:
             item.strip(" -*")
             for item in re.split(r"[\n,;，；]+", f"{brief}\n{media_truth}")
             if 8 <= len(item.strip(" -*")) <= 90
-            and any(word in item.lower() for word in ("scene", "setting", "bedroom", "cafe", "dinner", "office", "gallery", "wedding", "evening", "morning", "street"))
+            and any(word in item.lower() for word in ("scene", "setting", "bedroom", "cafe", "dinner", "office", "gallery", "wedding", "evening", "morning", "street", "sidewalk", "walk", "kitchen", "counter", "terrace", "residential"))
         ][:4]
+        source_text = " ".join([product_name, brief, media_truth]).lower()
+        if re.search(r"\banti[- ]?pull|leash|harness|dog walk|牵引|防拉|狗\b", source_text):
+            dog_walk_hints = [
+                "sidewalk dog-walk start with dog wearing the harness and leash clipped to the front chest D-ring",
+                "close handheld view of the front chest D-ring redirecting leash tension",
+                "quiet residential walk shifts from mild pull to controlled posture",
+            ]
+            if not any("front chest" in item.lower() for item in scene_hints):
+                scene_hints = dog_walk_hints + scene_hints
         duration = int(creative_specs.get("video_duration_seconds") or 8)
         max_segment = self._max_video_segment_seconds(creative_specs)
         segment_count = max(1, (duration + max_segment - 1) // max_segment)
-        proof_scene = scene_hints[0] if scene_hints else f"close view of {', '.join(preserve[:3])}"
-        lifestyle_scene = scene_hints[1] if len(scene_hints) > 1 else "move through varied but plausible scenes from the brief or product context"
-        cta_scene = scene_hints[2] if len(scene_hints) > 2 else "end on product-forward frame with a simple purchase cue"
+        thumb_scene = scene_hints[0] if scene_hints else f"open with {product_name} clearly visible in a specific lived-in setting"
+        proof_scene = scene_hints[1] if len(scene_hints) > 1 else f"close view of {', '.join(preserve[:3])}"
+        lifestyle_scene = scene_hints[2] if len(scene_hints) > 2 else "move through varied but plausible scenes from the brief or product context"
+        cta_scene = scene_hints[3] if len(scene_hints) > 3 else "end on product-forward frame with a simple purchase cue"
+        prompt_grammar = self._planning_prompt_grammar(
+            product_name=product_name,
+            brief=brief,
+            media_truth=media_truth,
+            creative_specs=creative_specs,
+            constraints=constraints,
+            product_truth=product_truth,
+        )
         scene_arc = [
-            {"beat": "thumb_stop", "intent": "prove the product is worth watching", "scene_direction": f"open with {product_name} clearly visible in a specific lived-in setting"},
+            {"beat": "thumb_stop", "intent": "prove the product is worth watching", "scene_direction": thumb_scene},
             {"beat": "product_truth", "intent": "lock visual identity", "scene_direction": proof_scene},
             {"beat": "lifestyle_proof", "intent": "show buyer transformation", "scene_direction": lifestyle_scene},
             {"beat": "cta", "intent": "make the next action obvious", "scene_direction": cta_scene},
@@ -709,6 +827,7 @@ class AgentsRuntime:
             "scene_hints": scene_hints,
             "do_not_show": constraints,
             "media_truth_summary": media_truth[:1200],
+            "prompt_grammar": prompt_grammar,
             "source_inspiration": ["ViMax-style scene/storyboard decomposition", "OpenMontage-style proposal-to-production handoff"],
         }
         production_plan = {
@@ -1311,11 +1430,17 @@ class AgentsRuntime:
         )
 
     def _video_prompt_quality_block(self, product_context: dict | None) -> str:
-        product_name = str((product_context or {}).get("product_name") or "the product")
+        product_context = product_context or {}
+        product_name = str(product_context.get("product_name") or "the product")
+        director_handoff = dict(product_context.get("director_plan") or {})
+        director_plan = dict(director_handoff.get("creative_director_plan") or {})
+        prompt_grammar = dict(product_context.get("prompt_grammar") or director_plan.get("prompt_grammar") or {})
+        grammar_line = self._prompt_grammar_text(prompt_grammar)
         return (
             f"Keep {product_name} visually consistent with the submitted product context. "
             "Preserve recognizable form, materials, proportions, attachment logic, and key functional details. "
             "Do not invent extra components, hide critical product details, or produce physically implausible interactions."
+            f" {grammar_line}"
         )
 
     def _business_strategy_system_prompt(self, agent_role: str) -> str:
@@ -2329,6 +2454,10 @@ class AgentsRuntime:
         product_context["visual_proof_specs"] = visual_proof_specs
         if director_handoff:
             product_context["director_plan"] = director_handoff
+        prompt_grammar = dict(director_plan.get("prompt_grammar") or {})
+        if prompt_grammar:
+            product_context["prompt_grammar"] = prompt_grammar
+        prompt_grammar_line = self._prompt_grammar_text(prompt_grammar)
         reference_summary = {
             "image_count": len(reference_bundle.get("images") or []),
             "frame_count": len(reference_bundle.get("frames") or []),
@@ -2352,9 +2481,10 @@ class AgentsRuntime:
                 f"reference_summary={reference_summary}. "
                 f"generation_spec={generation_spec}. "
                 f"creative_director_plan={director_plan}. production_plan={production_plan}. quality_gates={quality_gates}. "
+                f"prompt_grammar={prompt_grammar}. "
                 "Make every shot filmable, product-specific, and constrained by realistic product handling. "
                 f"{self._human_motion_risk_instruction(' '.join([product_name, media_summary, audience, str(variant_set.model_dump()), str(director_plan)]))} "
-                "Carry the director scene arc, emotional beats, product-truth gates, and visual_proof_specs into hooks, shot_plan, and segments. "
+                "Carry the director scene arc, emotional beats, product-truth gates, visual_proof_specs, and prompt_grammar into hooks, shot_plan, and segments. "
                 "Every shot_plan and segment must prove its proof_mechanism and avoid semantic_fail_conditions. "
                 "For each variant, also output a structured shot_plan array with 3-4 shot objects. "
                 "Each shot must have: shot_id, variant_id, intent (one of: thumb_stop, product_proof, usage_demo, cta_packshot), "
@@ -2397,10 +2527,9 @@ class AgentsRuntime:
                         tiktok_style=tiktok_style,
                         video_duration=video_duration,
                         message=item.message,
-                    )
+                )
                 hook_line = item.hook or f"{item.variant_id}: {product_name} for {primary_value}"
                 visual_proof_spec = visual_proof_specs.get(item.variant_id) or self._variant_visual_proof_spec(item)
-                proof_line = f"Visual proof: {json.dumps(visual_proof_spec, ensure_ascii=False)}"
                 emotions = director_plan.get("emotional_beats") or []
                 must_preserve = director_plan.get("must_preserve_visuals") or []
                 scene_hints = director_plan.get("scene_hints") or []
@@ -2422,10 +2551,23 @@ class AgentsRuntime:
                         f"From {scene_hints[0] if scene_hints else 'one real moment'} to the next",
                         cta,
                     ]
-                    shot_list.append(f"{intent}: {direction}; {proof_line}; emotion: {emotion}; overlay: {overlays[i]}; preserve: {preserve}")
+                    must_show_values = [
+                        str(value)
+                        for value in visual_proof_spec.get("must_show", [])
+                        if str(value).strip() and not str(value).startswith(f"{item.variant_id}:")
+                    ]
+                    must_show = ", ".join(must_show_values[:3]) or primary_value
+                    avoid_candidates = [str(value) for value in visual_proof_spec.get("must_not_show", []) if str(value).strip()]
+                    avoid_values = [next((value for value in avoid_candidates if "generic lifestyle" not in value.lower()), avoid_candidates[0])] if avoid_candidates else list(visual_proof_spec.get("semantic_fail_conditions", [])[:1])
+                    avoid = ", ".join(str(value) for value in avoid_values)
+                    avoid_part = f"; avoid: {avoid}" if avoid else ""
+                    shot_list.append(f"{intent}: {direction}; product proof: show {must_show}{avoid_part}; overlay: {overlays[i]}; preserve: {preserve}; emotion: {emotion}")
                 fallback_shot_plan: list[ShotPlanItem] = []
                 for i, shot_text in enumerate(shot_list):
                     intent = intents[i] if i < len(intents) else "product_demo"
+                    motion_description = shot_text
+                    if prompt_grammar.get("camera_style"):
+                        motion_description = f"{motion_description} Camera behavior: {prompt_grammar['camera_style']}."
                     fallback_shot_plan.append(ShotPlanItem(
                         shot_id=f"shot_{i+1}",
                         variant_id=item.variant_id,
@@ -2434,7 +2576,8 @@ class AgentsRuntime:
                             description=shot_text,
                             visible_product_elements=[product_name],
                         ),
-                        motion_description=shot_text,
+                        motion_description=motion_description,
+                        audio_description=str(prompt_grammar.get("audio_plan") or ""),
                         product_continuity_constraints=[
                             *[str(item) for item in visual_proof_spec.get("must_show", [])],
                             *[f"avoid: {item}" for item in visual_proof_spec.get("semantic_fail_conditions", [])],
@@ -2624,6 +2767,8 @@ class AgentsRuntime:
         product_name = str(product_context.get("product_name") or "the product")
         product_truth = product_context.get("product_truth_contract") or {}
         visual_proof_specs = product_context.get("visual_proof_specs") or {}
+        prompt_grammar = dict(product_context.get("prompt_grammar") or director_plan.get("prompt_grammar") or {})
+        prompt_grammar_line = self._prompt_grammar_text(prompt_grammar)
         prompt = self._compose_stage_prompt(
             runtime_config=runtime_config,
             agent_role="Storyboard Agent",
@@ -2632,8 +2777,9 @@ class AgentsRuntime:
                 f"reference_summary={reference_summary}. "
                 f"product_truth_contract={product_truth}. "
                 f"visual_proof_specs={visual_proof_specs}. "
+                f"prompt_grammar={prompt_grammar}. "
                 f"creative_director_plan={director_plan}. production_plan={production_plan}. quality_gates={quality_gates}. "
-                "Treat storyboard as the visual QA plan before video generation: continuity, object logic, product visibility, and visual proof mechanism."
+                "Treat storyboard as the visual QA plan before video generation: continuity, object logic, product visibility, prompt grammar, and visual proof mechanism."
             ),
         )
         estimated_cost = 0.0
@@ -2657,7 +2803,7 @@ class AgentsRuntime:
         for script in script_pack.scripts:
             visual_proof_spec = dict(visual_proof_specs.get(script.variant_id) or {})
             proof_block = (
-                f"Visual proof spec: {json.dumps(visual_proof_spec, ensure_ascii=False)}. "
+                f"Visual proof spec: {self._visual_proof_prompt_text(visual_proof_spec)} "
                 "Frame must support the proof_mechanism and avoid semantic_fail_conditions. "
                 if visual_proof_spec
                 else ""
@@ -2706,6 +2852,7 @@ class AgentsRuntime:
                         f"Preserve product facts: {must_preserve}. Quality gates: {gate_names}.{shot_contract} "
                         f"Historical reference summary: {reference_summary}. "
                         f"{style_line}"
+                        f"{prompt_grammar_line} "
                         "Use a clean previsualization style suitable for human review before video generation. "
                         "No text overlay. Product-forward composition. "
                         "Work across product categories: show real use context, hands, environment, scale, or buyer outcome as appropriate; "
