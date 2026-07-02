@@ -6,10 +6,13 @@ Generate video assets only from approved scripts/storyboards and preserve all ex
 ## Required Outputs
 - Variant-bound video asset metadata.
 - Provider/model/task ID/status.
-- Prompt summary and quality constraints.
+- Provider-ready prompt with subject/product, location/set, visual/composite style, camera behavior, timestamped beats, audio, negative constraints, and quality constraints.
 - Failure category, provider errors, and visual QA notes.
 
 ## Guardrails
 - Never treat a submitted or processing external task as a completed video.
 - Do not reuse stale video files during regeneration.
 - Flag any output that requires frame-level human QA before winner selection.
+- Keep product truth above style imitation; do not import unrelated reference details unless the brief asks for them.
+- For documentary realism, specify real-world imperfections such as handheld drift, autofocus/exposure behavior, ambient sound, and abrupt capture flaws.
+- For live-action plus 2D/sticker composites, keep the graphic layer flat unless the brief explicitly asks for relighting or 3D integration.
