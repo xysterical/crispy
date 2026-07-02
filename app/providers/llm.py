@@ -502,10 +502,10 @@ class OpenAICompatibleProvider(LlmProvider):
         roots: list[str] = []
         if "/images/generations" in base:
             roots.append(base.split("/images/generations")[0])
-        if "/videos/generations" in base:
+        elif "/videos/generations" in base:
             roots.append(base.split("/videos/generations")[0])
-        roots.append(base)
-        roots.append(base.split("/v1")[0] if "/v1" in base else base)
+        else:
+            roots.append(base)
         candidates: list[str] = []
         for root in roots:
             if not root:
@@ -682,7 +682,14 @@ class OpenAICompatibleProvider(LlmProvider):
                         response = client.get(url, headers=headers)
                     except httpx.HTTPError:
                         continue
-                    if response.status_code in {404, 405} and idx < len(candidates) - 1:
+                    if response.status_code in {404, 405}:
+                        last_payload = {
+                            "data": {
+                                "task_id": task_id,
+                                "status": "pending",
+                                "polling_error": f"{response.status_code} from {url}",
+                            }
+                        }
                         continue
                     response.raise_for_status()
                     try:
@@ -847,7 +854,7 @@ class OpenAICompatibleProvider(LlmProvider):
                     base_url=api_base_url,
                     task_id=task_id,
                     headers=self._headers(api_key),
-                    max_wait_seconds=int((extra or {}).get("image_poll_max_wait_seconds") or 45),
+                    max_wait_seconds=int((extra or {}).get("image_poll_max_wait_seconds") or 180),
                 )
                 if isinstance(polled, dict) and polled:
                     status = self._extract_task_status(polled) or status
@@ -880,6 +887,17 @@ class OpenAICompatibleProvider(LlmProvider):
                 )
             )
         if not images:
+            if task_id:
+                raise ProviderRequestError(
+                    f"provider image task {task_id} returned no image data (status={status or 'unknown'})",
+                    [
+                        {
+                            "task_id": task_id,
+                            "status": status,
+                            "response": json.dumps(data, ensure_ascii=False)[:1000],
+                        }
+                    ],
+                )
             images.append(GeneratedImage(b64_json=_PLACEHOLDER_PNG_B64, revised_prompt=request.prompt))
         return ImageGenResult(
             model_used=str(data.get("model") or request.model),
