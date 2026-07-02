@@ -241,6 +241,42 @@ def test_divergence_adds_visual_proof_spec_for_concept_variants():
     assert output.payload["experiment_matrix"][0]["visual_proof_spec"] == spec
 
 
+def test_video_scripting_carries_visual_proof_spec_into_shots():
+    runtime = AgentsRuntime()
+    captured_prompt: dict[str, str] = {}
+
+    def fake_chat_complete(provider, model, prompt, runtime_config, **kwargs):
+        captured_prompt["prompt"] = prompt
+        return "not json", "stub-model", 0.0
+
+    runtime._chat_complete = fake_chat_complete
+
+    output = runtime.run_video_scripting(
+        run_id="runtime-script-visual-proof",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="anti-pull control",
+                    hook="Show the front chest D-ring redirecting leash tension",
+                    message="Do not show a dog lunging forward as if pulling is uncontrolled.",
+                )
+            ]
+        ),
+        intake=ProductIntake(product_name="anti-pull dog harness"),
+        business_context={"target_audience": "dog owners"},
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"video_duration_seconds": 8},
+    )
+
+    spec = output.payload["product_context"]["visual_proof_specs"]["V1"]
+    first_shot = output.payload["scripts"][0]["shot_plan"][0]
+    assert "visual_proof_specs" in captured_prompt["prompt"]
+    assert "dog lunging forward as if pulling is still uncontrolled" in first_shot["first_frame"]["description"]
+    assert f"avoid: {spec['semantic_fail_conditions'][-1]}" in first_shot["product_continuity_constraints"]
+
+
 def test_video_scripting_splits_long_duration_into_segments():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
@@ -1336,6 +1372,61 @@ def test_storyboard_and_video_generation_do_not_inject_leash_defaults_and_use_st
     assert fake_provider.last_request.tools == [{"type": "web_search"}]
     assert fake_provider.last_request.image_urls == ["https://example.com/reference-image.png"]
     assert fake_provider.last_request.audio_urls == ["https://example.com/reference-audio.wav"]
+
+
+def test_storyboard_uses_video_visual_proof_spec():
+    runtime = AgentsRuntime()
+    captured_prompts: list[str] = []
+    runtime._chat_complete = lambda *args, **kwargs: ("not json", "stub-model", 0.0)
+    runtime._local_media_qa = lambda **kwargs: {"status": "pass", "score": 100, "flags": [], "checks": []}
+
+    def fake_generate_image(*, prompt, **kwargs):
+        captured_prompts.append(prompt)
+        return (
+            ImageGenResult(
+                model_used="image-model",
+                images=[
+                    GeneratedImage(
+                        b64_json="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+                    )
+                ],
+            ),
+            "stub-image-provider",
+            "stub-image-model",
+        )
+
+    runtime._generate_image = fake_generate_image
+
+    spec = {
+        "proof_mechanism": "front chest D-ring redirects leash tension",
+        "semantic_fail_conditions": ["image communicates active pulling instead of controlled anti-pull redirection"],
+        "must_show": ["controlled walking posture"],
+    }
+    output = runtime.run_storyboard_image_generation(
+        run_id="runtime-storyboard-visual-proof",
+        script_pack=VideoScriptPack(
+            scripts=[
+                VideoScriptItem(
+                    variant_id="V1",
+                    hook="Show the front chest D-ring redirecting leash tension",
+                    script="Show controlled walking.",
+                    shot_list=["Dog walks calmly with visible front chest D-ring."],
+                )
+            ],
+            product_context={"product_name": "anti-pull dog harness", "visual_proof_specs": {"V1": spec}},
+            generation_spec={"size": "1:1", "resolution": "720p", "duration": 8},
+        ),
+        creative_specs={"video_size": "1:1"},
+        provider="openai",
+        model="gpt-4.1",
+        runtime_config={"force_regenerate": True},
+    )
+
+    frame = output.payload["frames"][0]
+    assert "Visual proof spec" in captured_prompts[0]
+    assert "controlled anti-pull redirection" in captured_prompts[0]
+    assert frame["visual_proof_spec"] == spec
+    assert frame["candidate_frames"][0]["visual_proof_spec"] == spec
 
 
 def test_storyboard_prompt_uses_director_plan_without_category_lock():

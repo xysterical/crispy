@@ -1356,6 +1356,12 @@ class AgentsRuntime:
             "Make the image prove this specific visual mechanism, not just the broad product category. "
         )
 
+    def _variant_visual_proof_specs(self, variant_set: VariantSet) -> dict[str, dict]:
+        return {
+            variant.variant_id: self._variant_visual_proof_spec(variant)
+            for variant in variant_set.variants
+        }
+
     def _compose_stage_prompt(
         self,
         *,
@@ -2264,6 +2270,8 @@ class AgentsRuntime:
             business_context=business_context,
             creative_specs=creative_specs,
         )
+        visual_proof_specs = self._variant_visual_proof_specs(variant_set)
+        product_context["visual_proof_specs"] = visual_proof_specs
         if director_handoff:
             product_context["director_plan"] = director_handoff
         reference_summary = {
@@ -2285,12 +2293,14 @@ class AgentsRuntime:
                 f"product={product_name}, audience={audience}, value_props={value_props}, "
                 f"media_summary={media_summary}, variants={variant_set.model_dump()}. "
                 f"product_truth_contract={product_truth}. "
+                f"visual_proof_specs={visual_proof_specs}. "
                 f"reference_summary={reference_summary}. "
                 f"generation_spec={generation_spec}. "
                 f"creative_director_plan={director_plan}. production_plan={production_plan}. quality_gates={quality_gates}. "
                 "Make every shot filmable, product-specific, and constrained by realistic product handling. "
                 f"{self._human_motion_risk_instruction(' '.join([product_name, media_summary, audience, str(variant_set.model_dump()), str(director_plan)]))} "
-                "Carry the director scene arc, emotional beats, and product-truth gates into hooks, shot_plan, and segments. "
+                "Carry the director scene arc, emotional beats, product-truth gates, and visual_proof_specs into hooks, shot_plan, and segments. "
+                "Every shot_plan and segment must prove its proof_mechanism and avoid semantic_fail_conditions. "
                 "For each variant, also output a structured shot_plan array with 3-4 shot objects. "
                 "Each shot must have: shot_id, variant_id, intent (one of: thumb_stop, product_proof, usage_demo, cta_packshot), "
                 "first_frame with description and visible_product_elements, "
@@ -2334,6 +2344,8 @@ class AgentsRuntime:
                         message=item.message,
                     )
                 hook_line = item.hook or f"{item.variant_id}: {product_name} for {primary_value}"
+                visual_proof_spec = visual_proof_specs.get(item.variant_id) or self._variant_visual_proof_spec(item)
+                proof_line = f"Visual proof: {json.dumps(visual_proof_spec, ensure_ascii=False)}"
                 emotions = director_plan.get("emotional_beats") or []
                 must_preserve = director_plan.get("must_preserve_visuals") or []
                 scene_hints = director_plan.get("scene_hints") or []
@@ -2355,7 +2367,7 @@ class AgentsRuntime:
                         f"From {scene_hints[0] if scene_hints else 'one real moment'} to the next",
                         cta,
                     ]
-                    shot_list.append(f"{intent}: {direction}; emotion: {emotion}; overlay: {overlays[i]}; preserve: {preserve}")
+                    shot_list.append(f"{intent}: {direction}; {proof_line}; emotion: {emotion}; overlay: {overlays[i]}; preserve: {preserve}")
                 fallback_shot_plan: list[ShotPlanItem] = []
                 for i, shot_text in enumerate(shot_list):
                     intent = intents[i] if i < len(intents) else "product_demo"
@@ -2368,6 +2380,10 @@ class AgentsRuntime:
                             visible_product_elements=[product_name],
                         ),
                         motion_description=shot_text,
+                        product_continuity_constraints=[
+                            *[str(item) for item in visual_proof_spec.get("must_show", [])],
+                            *[f"avoid: {item}" for item in visual_proof_spec.get("semantic_fail_conditions", [])],
+                        ],
                     ))
                 segments = self._build_video_segments(
                     variant_id=item.variant_id,
@@ -2397,9 +2413,11 @@ class AgentsRuntime:
                 )
         else:
             for entry in parsed["scripts"]:
+                entry_variant_id = entry.get("variant_id", f"V{len(scripts)+1}")
+                visual_proof_spec = visual_proof_specs.get(entry_variant_id) or {}
                 tiktok_payload = None
                 if is_tiktok_shop:
-                    entry_vid = entry.get("variant_id", "")
+                    entry_vid = entry_variant_id
                     matching_variant = None
                     for v in variant_set.variants:
                         if v.variant_id == entry_vid:
@@ -2434,7 +2452,7 @@ class AgentsRuntime:
                         lf = sp.get("last_frame")
                         shot_plan.append(ShotPlanItem(
                             shot_id=sp.get("shot_id", f"shot_{len(shot_plan)+1}"),
-                            variant_id=sp.get("variant_id", entry.get("variant_id", "")),
+                            variant_id=sp.get("variant_id", entry_variant_id),
                             intent=sp.get("intent", "product_demo"),
                             duration_seconds=sp.get("duration_seconds"),
                             first_frame=ShotFramePlan(
@@ -2448,7 +2466,11 @@ class AgentsRuntime:
                             motion_description=sp.get("motion_description", ""),
                             audio_description=sp.get("audio_description", ""),
                             text_overlay=sp.get("text_overlay", ""),
-                            product_continuity_constraints=sp.get("product_continuity_constraints", []),
+                            product_continuity_constraints=[
+                                *[str(item) for item in (sp.get("product_continuity_constraints") or [])],
+                                *[str(item) for item in visual_proof_spec.get("must_show", [])],
+                                *[f"avoid: {item}" for item in visual_proof_spec.get("semantic_fail_conditions", [])],
+                            ],
                         ))
                     except Exception:
                         continue
@@ -2460,7 +2482,7 @@ class AgentsRuntime:
                         continue
                 if not segments:
                     segments = self._build_video_segments(
-                        variant_id=entry.get("variant_id", f"V{len(scripts)+1}"),
+                        variant_id=entry_variant_id,
                         shot_plan=shot_plan,
                         shot_list=entry.get("shot_list", []),
                         total_seconds=int(generation_spec.get("duration") or 8),
@@ -2477,7 +2499,7 @@ class AgentsRuntime:
                     )
                 scripts.append(
                     VideoScriptItem(
-                        variant_id=entry.get("variant_id", f"V{len(scripts)+1}"),
+                        variant_id=entry_variant_id,
                         hook=entry.get("hook", ""),
                         script=entry.get("script", ""),
                         shot_list=entry.get("shot_list", []), shot_plan=shot_plan,
@@ -2546,6 +2568,7 @@ class AgentsRuntime:
         product_context = script_pack.product_context or {}
         product_name = str(product_context.get("product_name") or "the product")
         product_truth = product_context.get("product_truth_contract") or {}
+        visual_proof_specs = product_context.get("visual_proof_specs") or {}
         prompt = self._compose_stage_prompt(
             runtime_config=runtime_config,
             agent_role="Storyboard Agent",
@@ -2553,8 +2576,9 @@ class AgentsRuntime:
                 f"Create storyboard frames from scripts: {script_pack.model_dump()}. "
                 f"reference_summary={reference_summary}. "
                 f"product_truth_contract={product_truth}. "
+                f"visual_proof_specs={visual_proof_specs}. "
                 f"creative_director_plan={director_plan}. production_plan={production_plan}. quality_gates={quality_gates}. "
-                "Treat storyboard as the visual QA plan before video generation: continuity, object logic, product visibility."
+                "Treat storyboard as the visual QA plan before video generation: continuity, object logic, product visibility, and visual proof mechanism."
             ),
         )
         estimated_cost = 0.0
@@ -2576,6 +2600,13 @@ class AgentsRuntime:
         frames: list[dict] = []
         artifacts: list[dict] = []
         for script in script_pack.scripts:
+            visual_proof_spec = dict(visual_proof_specs.get(script.variant_id) or {})
+            proof_block = (
+                f"Visual proof spec: {json.dumps(visual_proof_spec, ensure_ascii=False)}. "
+                "Frame must support the proof_mechanism and avoid semantic_fail_conditions. "
+                if visual_proof_spec
+                else ""
+            )
             for idx in range(3):
                 shot = script.shot_list[idx] if idx < len(script.shot_list) else script.hook
                 frame_id = f"{script.variant_id}_F{idx + 1}"
@@ -2602,7 +2633,7 @@ class AgentsRuntime:
                     if director_handoff:
                         frame_prompt = (
                             f"{frame_prompt} Director beat: {scene}. Emotional target: {emotion}. Preserve: {must_preserve}. "
-                            f"Quality gates: {gate_names}. No category assumptions."
+                            f"{proof_block}Quality gates: {gate_names}. No category assumptions."
                         )
                 else:
                     tiktok_details = script.tiktok.model_dump() if script.tiktok else {}
@@ -2616,6 +2647,7 @@ class AgentsRuntime:
                         f"Create a realistic storyboard frame for {product_name}. "
                         f"Variant {script.variant_id}. Shot: {shot}. Hook: {script.hook}. "
                         f"Director beat: {scene}. Emotional target: {emotion}. "
+                        f"{proof_block}"
                         f"Preserve product facts: {must_preserve}. Quality gates: {gate_names}.{shot_contract} "
                         f"Historical reference summary: {reference_summary}. "
                         f"{style_line}"
@@ -2704,6 +2736,7 @@ class AgentsRuntime:
                         "generation_status": status,
                         "raw_response": raw_response,
                         "product_truth_contract": product_truth,
+                        "visual_proof_spec": visual_proof_spec,
                     }
                     candidate_payload["visual_qa"] = self._local_media_qa(
                         asset_type="storyboard_frame",
@@ -2738,6 +2771,7 @@ class AgentsRuntime:
                     "raw_response": best_candidate.get("raw_response") or {},
                     "selected_candidate_index": int(best_candidate.get("candidate_index") or 0),
                     "candidate_frames": candidate_frames,
+                    "visual_proof_spec": visual_proof_spec,
                 }
                 frame["reference_source_count"] = len(historical_references or [])
                 frame["visual_qa"] = best_candidate.get("visual_qa") or self._local_media_qa(
