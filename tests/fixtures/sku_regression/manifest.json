@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "description": "Small SKU regression smoke fixtures for product-truth and asset QA coverage.",
+  "skus": [
+    {
+      "sku_id": "antipull_harness",
+      "product_name": "Anti-pull dog harness",
+      "category": "pet_wearable",
+      "pipeline_mode": "copy_image_only",
+      "reference_images": ["images/antipull_harness.png"],
+      "asset_media_summary": "White-background product image of an anti-pull dog harness with orange, teal-blue, and beige woven straps, black D-rings, dark blue buckle parts, and a yellow adjustment buckle.",
+      "product_truth_contract": {
+        "version": 1,
+        "product_name": "Anti-pull dog harness",
+        "sku_ids": ["antipull_harness"],
+        "must_preserve": [
+          "dog harness",
+          "orange woven strap",
+          "teal-blue vertical strap",
+          "beige horizontal strap",
+          "black metal D-rings",
+          "dark blue buckle hardware",
+          "yellow adjustment buckle"
+        ],
+        "colors": ["orange", "teal-blue", "beige", "black", "yellow"],
+        "materials": ["woven nylon webbing", "metal rings", "plastic buckle"],
+        "visible_text_logo": [],
+        "forbidden_changes": [
+          "do_not_turn_into_human_vest",
+          "do_not_remove_d_rings_or_buckle",
+          "do_not_change_strap_colors"
+        ]
+      },
+      "expected_checks": ["no_placeholder_asset", "product_truth_contract", "image_asset_contract", "qa_driven_repair_prompt"]
+    },
+    {
+      "sku_id": "pull_on_dog_raincoat",
+      "product_name": "Pull-on dog raincoat",
+      "category": "pet_apparel",
+      "pipeline_mode": "copy_image_only",
+      "reference_images": ["images/pull_on_dog_raincoat.png"],
+      "asset_media_summary": "Studio product image of a small dog wearing a fluorescent yellow pull-on raincoat with a hood, blue chest panel, and multicolor drawstrings while standing on a blue stool.",
+      "product_truth_contract": {
+        "version": 1,
+        "product_name": "Pull-on dog raincoat",
+        "sku_ids": ["pull_on_dog_raincoat"],
+        "must_preserve": [
+          "small dog wearing raincoat",
+          "fluorescent yellow raincoat body",
+          "blue chest panel",
+          "hood",
+          "multicolor drawstrings",
+          "dog remains visible and anatomically plausible"
+        ],
+        "colors": ["fluorescent yellow", "blue", "white", "brown", "black"],
+        "materials": ["shiny waterproof fabric", "drawstring cord"],
+        "visible_text_logo": [],
+        "forbidden_changes": [
+          "do_not_remove_dog",
+          "do_not_change_raincoat_color",
+          "do_not_turn_raincoat_into_regular_clothing"
+        ]
+      },
+      "expected_checks": ["no_placeholder_asset", "product_truth_contract", "image_asset_contract", "qa_driven_repair_prompt"]
+    },
+    {
+      "sku_id": "custom_print_paper_cup",
+      "product_name": "Custom print paper cup",
+      "category": "drinkware_packaging",
+      "pipeline_mode": "copy_image_only",
+      "reference_images": ["images/custom_print_paper_cup.png"],
+      "asset_media_summary": "White-background product image of two teal custom printed paper cups with white interiors, one upright and one lying down, with a front rectangular print panel and placeholder company text.",
+      "product_truth_contract": {
+        "version": 1,
+        "product_name": "Custom print paper cup",
+        "sku_ids": ["custom_print_paper_cup"],
+        "must_preserve": [
+          "two paper cups",
+          "teal exterior",
+          "white interior and rim",
+          "upright cup and lying cup",
+          "front rectangular print panel",
+          "custom company print area"
+        ],
+        "colors": ["teal", "white", "gray"],
+        "materials": ["coated paper"],
+        "visible_text_logo": ["COMPANY NAME", "BUSINESS TYPE", "web / other"],
+        "forbidden_changes": [
+          "do_not_turn_into_mug_or_glass",
+          "do_not_remove_print_panel",
+          "do_not_invent_new_brand_logo"
+        ]
+      },
+      "expected_checks": ["no_placeholder_asset", "product_truth_contract", "image_asset_contract", "qa_driven_repair_prompt"]
+    },
+    {
+      "sku_id": "brush_for_shoes",
+      "product_name": "Shoe brush",
+      "category": "shoe_care",
+      "pipeline_mode": "copy_image_only",
+      "reference_images": ["images/brush_for_shoes.png"],
+      "asset_media_summary": "White-background product image of a single shoe brush with a brown curved wooden handle, black horsehair bristles, and small white stamped text on the handle.",
+      "product_truth_contract": {
+        "version": 1,
+        "product_name": "Shoe brush",
+        "sku_ids": ["brush_for_shoes"],
+        "must_preserve": [
+          "single shoe brush",
+          "brown curved wooden handle",
+          "black bristles",
+          "white stamped handle text",
+          "long handle with rounded brush head"
+        ],
+        "colors": ["brown", "black", "white"],
+        "materials": ["wood", "horsehair bristles"],
+        "visible_text_logo": ["100% HORSEHAIR", "MADE IN GERMANY"],
+        "forbidden_changes": [
+          "do_not_turn_into_toothbrush_or_cleaning_sponge",
+          "do_not_remove_bristles",
+          "do_not_change_wood_handle_shape"
+        ]
+      },
+      "expected_checks": ["no_placeholder_asset", "product_truth_contract", "image_asset_contract", "qa_driven_repair_prompt"]
+    }
+  ]
+}
