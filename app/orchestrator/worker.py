@@ -242,6 +242,8 @@ class PipelineWorker:
                         auto_advance = True
                         if task.stage_name == "storyboard_image_generation" and self._has_pending_storyboard_assets(task):
                             auto_advance = False
+                        if task.stage_name == "copy_image_generation" and self._has_pending_copy_image_assets(task):
+                            auto_advance = False
                         if task.stage_name == "visual_quality_assessment" and run.approval_mode == "full_auto":
                             auto_advance = self._full_auto_visual_qa_regen(db, run, task)
                         if auto_advance:
@@ -292,11 +294,20 @@ class PipelineWorker:
                     return True
         return False
 
+    def _has_pending_copy_image_assets(self, task: StageTask) -> bool:
+        for item in (task.output_payload or {}).get("image_assets", []) or []:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("generation_status") or "").lower()
+            if item.get("external_task_id") and status in {"", "submitted", "queued", "pending", "processing", "running"}:
+                return True
+        return False
+
     def _poll_all_video_assets(self) -> None:
         db = SessionLocal()
         try:
             assets = db.scalars(
-                select(VariantAsset).where(VariantAsset.asset_type.in_(["video", "storyboard_frame"]))
+                select(VariantAsset).where(VariantAsset.asset_type.in_(["video", "storyboard_frame", "image"]))
             ).all()
 
             pending_run_ids: set[str] = set()

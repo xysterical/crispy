@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from app.data.models import VariantAsset
 from app.data.session import SessionLocal
-from app.providers.llm import GeneratedVideo, VideoGenResult
+from app.providers.llm import GeneratedImage, GeneratedVideo, ImageGenResult, VideoGenResult
 from app.orchestrator.state_machine import STAGE_ORDER, stage_plan_for
 from app.services.runs import _build_task_input, _qa_repair_context, _submit_next_video_segment, execute_next_queued_stage
 
@@ -31,6 +31,18 @@ def _patch_valid_generated_images(monkeypatch):
         return buffer.getvalue(), "b64_json"
 
     monkeypatch.setattr("app.services.runs.runtime._materialize_generated_image", fake_materialize_generated_image)
+
+
+def _valid_png_b64() -> str:
+    from PIL import Image
+
+    image = Image.new("RGB", (200, 200))
+    for x in range(200):
+        for y in range(200):
+            image.putpixel((x, y), ((x * 3) % 255, (y * 5) % 255, ((x + y) * 2) % 255))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
 def test_qa_repair_context_maps_visual_qa_flags_to_actions():
@@ -949,6 +961,109 @@ def test_assets_refresh_recovers_external_video_task(client, monkeypatch):
     v1 = next(item for item in variants["items"] if item["variant_id"] == "V1")
     video = next(asset for asset in v1["assets"] if asset["asset_type"] == "video")
     assert video["payload"]["generation_status"] == "completed"
+
+
+def test_assets_refresh_recovers_pending_copy_image_task(client, monkeypatch):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-copy-image-refresh",
+            "project_name": "p-copy-image-refresh",
+            "product_name": "paper cup",
+            "product_code": "COPY-IMAGE-REFRESH-001",
+            "industry_code": "packaging",
+            "campaign_name": "copy-image-refresh",
+            "pipeline_mode": "copy_image_only",
+            "approval_mode": "full_auto",
+            "creative_preset": "meta_square_5s",
+        },
+    )
+    assert create_resp.status_code == 200
+    run_id = create_resp.json()["id"]
+    image_uri = f"assets/{run_id}/copy_image_1.png"
+    Path(image_uri).parent.mkdir(parents=True, exist_ok=True)
+    Path(image_uri).write_bytes(b"")
+
+    with SessionLocal() as db:
+        from app.data.models import PipelineRun, RunStatus, RunVariant, StageTask, TaskStatus
+
+        run = db.get(PipelineRun, run_id)
+        run.current_stage = "copy_image_generation"
+        run.status = RunStatus.WAITING_REVIEW.value
+        run_variant = RunVariant(run_id=run_id, variant_id="V1", angle="Cup", hook="Hook", message="Message")
+        db.add(run_variant)
+        db.flush()
+        copy_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="copy_image_generation").one()
+        copy_task.status = TaskStatus.WAITING_REVIEW.value
+        copy_task.output_payload = {
+            "copy_variants": [{"variant_id": "V1", "headline": "Paper cup"}],
+            "image_assets": [
+                {
+                    "variant_id": "V1",
+                    "uri": image_uri,
+                    "aspect_ratio": "1:1",
+                    "prompt": "paper cup",
+                    "source": "external_task_pending",
+                    "external_task_id": "copy-image-task-1",
+                    "generation_status": "submitted",
+                }
+            ],
+        }
+        db.add(
+            VariantAsset(
+                run_variant_id=run_variant.id,
+                run_id=run_id,
+                stage_name="copy_image_generation",
+                asset_type="image",
+                uri=image_uri,
+                provider_name="stub",
+                model_name="stub-image",
+                prompt_summary="paper cup",
+                idempotency_key="test-refresh-copy-image-v1",
+                payload={
+                    "variant_id": "V1",
+                    "uri": image_uri,
+                    "aspect_ratio": "1:1",
+                    "prompt": "paper cup",
+                    "source": "external_task_pending",
+                    "external_task_id": "copy-image-task-1",
+                    "generation_status": "submitted",
+                },
+            )
+        )
+        db.commit()
+
+    class FakeProvider:
+        def poll_image_task(self, **kwargs):
+            return ImageGenResult(
+                model_used=kwargs["model"],
+                images=[GeneratedImage(b64_json=_valid_png_b64(), status="completed")],
+                task_id=kwargs["task_id"],
+                status="completed",
+                raw_response={"status": "completed"},
+            )
+
+    monkeypatch.setattr("app.services.runs.runtime.providers.get", lambda _name: FakeProvider())
+
+    resp = client.post(f"/runs/{run_id}/assets/refresh")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["copy_images"]["completed"] == 1
+
+    with SessionLocal() as db:
+        from app.data.models import PipelineRun, StageTask, TaskStatus
+
+        copy_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="copy_image_generation").one()
+        visual_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="visual_quality_assessment").one()
+        image_asset = db.query(VariantAsset).filter_by(run_id=run_id, asset_type="image").one()
+        image_payload = copy_task.output_payload["image_assets"][0]
+        assert copy_task.status == TaskStatus.APPROVED.value
+        assert visual_task.status == TaskStatus.QUEUED.value
+        assert db.get(PipelineRun, run_id).current_stage == "visual_quality_assessment"
+        assert image_payload["generation_status"] == "completed"
+        assert image_payload["source"] == "b64_json"
+        assert image_asset.failure_category is None
+        assert Path(image_asset.uri).stat().st_size > 1024
 
 
 def test_assets_refresh_recovers_materialized_storyboard_candidate(client, monkeypatch):

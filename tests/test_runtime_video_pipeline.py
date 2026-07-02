@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.agents.runtime import AgentsRuntime
-from app.providers.llm import GeneratedVideo, VideoGenResult
+from app.providers.llm import GeneratedImage, GeneratedVideo, ImageGenResult, VideoGenResult
 from app.schemas.contracts import PlanningBrief, ProductIntake, VariantCandidate, VariantSet, VideoScriptItem, VideoScriptPack, VideoSegmentPlan
 
 
@@ -457,6 +457,50 @@ def test_copy_image_generation_blocks_placeholder_assets():
             provider="deepseek",
             model="deepseek-v4-pro",
         )
+
+
+def test_copy_image_generation_exposes_pending_image_task():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("copy hint", "text-model", 0.0)
+    runtime._generate_image = lambda **kwargs: (
+        ImageGenResult(
+            model_used="image-model",
+            images=[GeneratedImage(task_id="image-task-1", status="submitted", raw_response={"status": "submitted"})],
+            task_id="image-task-1",
+            status="submitted",
+            raw_response={"status": "submitted"},
+        ),
+        "stub-image-provider",
+        "stub-image-model",
+    )
+
+    output = runtime.run_copy_image_generation(
+        run_id="copy-pending-image-task",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="secure fit",
+                    hook="Clip in confidence",
+                    message="Show the harness clearly.",
+                )
+            ]
+        ),
+        intake=ProductIntake(product_name="blue pet harness"),
+        business_context={"target_audience": "dog owners", "primary_cta": "Shop Now"},
+        creative_specs={},
+        market="US",
+        locale="en-US",
+        provider="deepseek",
+        model="deepseek-v4-pro",
+    )
+
+    image = output.payload["image_assets"][0]
+    assert image["source"] == "external_task_pending"
+    assert image["external_task_id"] == "image-task-1"
+    assert image["generation_status"] == "submitted"
+    assert image["image_asset_contract"]["blocking"] is False
+    assert "visual_qa_asset_processing" in image["image_asset_contract"]["flags"]
 
 
 def test_copy_image_generation_includes_qa_repair_prompt():

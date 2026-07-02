@@ -2315,6 +2315,10 @@ def _pending_storyboard_frame(frame: dict) -> bool:
     return False
 
 
+def _pending_copy_image_asset(asset: dict) -> bool:
+    return bool(asset.get("external_task_id") and _pending_status(asset.get("generation_status")))
+
+
 def _sync_storyboard_frame_payload(frame: dict, payload: dict) -> None:
     frame_updates = dict(payload)
     frame_updates.pop("candidate_frames", None)
@@ -2630,6 +2634,111 @@ def refresh_video_task_assets(db: Session, run_id: str) -> dict:
     return {"refreshed": refreshed, "completed": completed, "summary": _variant_summary(db, run_id)}
 
 
+def refresh_copy_image_task_assets(db: Session, run_id: str) -> dict:
+    run = get_run(db, run_id)
+    config = resolve_agent_config(
+        db,
+        agent_name="copy_image_agent",
+        run_provider=run.model_provider,
+        run_model=run.model_name,
+    )
+    runtime_config = resolve_agent_runtime(config)
+    image_runtime = runtime_config.get("image") or {}
+    provider_name = image_runtime.get("provider_name") or config.get("image_provider_name") or config.get("provider_name")
+    model_name = image_runtime.get("model_name") or config.get("image_model_name") or config.get("model_name")
+    provider = runtime.providers.get(provider_name)
+    refreshed = 0
+    completed = 0
+    task = db.scalar(
+        select(StageTask).where(
+            StageTask.run_id == run_id,
+            StageTask.stage_name == "copy_image_generation",
+        )
+    )
+    image_assets_by_variant: dict[str, dict] = {}
+    if task and task.output_payload:
+        for image_asset in task.output_payload.get("image_assets", []) or []:
+            if isinstance(image_asset, dict):
+                image_assets_by_variant[str(image_asset.get("variant_id") or "")] = deepcopy(image_asset)
+
+    assets = db.scalars(
+        select(VariantAsset).where(
+            VariantAsset.run_id == run_id,
+            VariantAsset.asset_type == "image",
+        )
+    ).all()
+    for asset in assets:
+        payload = dict(asset.payload or {})
+        task_id = payload.get("external_task_id")
+        status = str(payload.get("generation_status") or "").lower()
+        if not task_id:
+            continue
+        if status in {"completed", "succeeded", "success"} and _uri_has_payload(asset.uri or payload.get("uri")):
+            payload["generation_status"] = "completed"
+            completed += 1
+        elif _uri_has_payload(asset.uri or payload.get("uri")) and not payload.get("error"):
+            payload["generation_status"] = "completed"
+            completed += 1
+        else:
+            result = provider.poll_image_task(
+                task_id=task_id,
+                model=model_name,
+                api_base_url=image_runtime.get("api_base_url") or runtime_config.get("api_base_url"),
+                api_key=image_runtime.get("api_key") or runtime_config.get("api_key"),
+                extra=image_runtime.get("extra") or runtime_config.get("extra"),
+            )
+            selected = result.images[0] if result.images else None
+            refreshed += 1
+            payload["generation_status"] = result.status or (selected.status if selected else None) or payload.get("generation_status")
+            payload["raw_response"] = result.raw_response or (selected.raw_response if selected else {}) or payload.get("raw_response") or {}
+            if selected and (selected.url or selected.b64_json):
+                image_bytes, source = runtime._materialize_generated_image(selected)
+                if image_bytes:
+                    filename = Path(asset.uri or payload.get("uri") or f"{payload.get('variant_id') or asset.id}.png").name
+                    uri = runtime.media.write_binary_artifact(run_id, filename, image_bytes)
+                    payload["uri"] = uri
+                    payload["source"] = source
+                    payload["generation_status"] = "completed"
+                    payload["visual_qa"] = runtime._local_media_qa(
+                        asset_type="image",
+                        uri=uri,
+                        payload=payload,
+                        expected_ratio=payload.get("aspect_ratio"),
+                    )
+                    runtime._attach_image_asset_contract(payload)
+                    asset.uri = uri
+                    completed += 1
+        failure_category, error_message = _generated_asset_failure(payload, payload.get("uri"))
+        asset.payload = payload
+        asset.failure_category = failure_category
+        asset.error_message = error_message
+        variant_id = str(payload.get("variant_id") or "")
+        if variant_id in image_assets_by_variant:
+            image_assets_by_variant[variant_id].update(payload)
+        artifact = db.scalar(
+            select(Artifact).where(
+                Artifact.run_id == run_id,
+                Artifact.artifact_type == "generated_image",
+                Artifact.uri == (asset.uri or payload.get("uri")),
+            )
+        )
+        if artifact:
+            artifact.payload = payload
+            artifact.uri = payload.get("uri") or artifact.uri
+    if task and task.output_payload:
+        image_assets = list(image_assets_by_variant.values())
+        task.output_payload = {**task.output_payload, "image_assets": image_assets}
+        pending = [item for item in image_assets if isinstance(item, dict) and _pending_copy_image_asset(item)]
+        failed = [item for item in image_assets if isinstance(item, dict) and item.get("error")]
+        copy_auto = should_auto_approve(run.approval_mode, task.stage_name) or (
+            run.approval_mode == "semi_auto" and is_marketplace_main_image(run.creative_specs)
+        )
+        if copy_auto and task.status == TaskStatus.WAITING_REVIEW.value and not pending and not failed:
+            auto_approve_stage(db, run.id, task.stage_name)
+    db.flush()
+    return {"refreshed": refreshed, "completed": completed, "summary": _variant_summary(db, run_id)}
+
+
 def refresh_storyboard_image_task_assets(db: Session, run_id: str) -> dict:
     run = get_run(db, run_id)
     config = resolve_agent_config(
@@ -2742,14 +2851,16 @@ def refresh_storyboard_image_task_assets(db: Session, run_id: str) -> dict:
 
 
 def refresh_async_assets(db: Session, run_id: str) -> dict:
+    copy_images = refresh_copy_image_task_assets(db, run_id)
     images = refresh_storyboard_image_task_assets(db, run_id)
     videos = refresh_video_task_assets(db, run_id)
     return {
-        "refreshed": images["refreshed"] + videos["refreshed"],
-        "completed": images["completed"] + videos["completed"],
+        "refreshed": copy_images["refreshed"] + images["refreshed"] + videos["refreshed"],
+        "completed": copy_images["completed"] + images["completed"] + videos["completed"],
+        "copy_images": copy_images,
         "images": images,
         "videos": videos,
-        "summary": videos.get("summary") or images.get("summary"),
+        "summary": videos.get("summary") or images.get("summary") or copy_images.get("summary"),
     }
 
 

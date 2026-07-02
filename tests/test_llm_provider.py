@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import httpx
 
-from app.providers.llm import ImageGenRequest, MultimodalChatRequest, OpenAICompatibleProvider, ProviderRequestError, VideoGenRequest
+from app.providers.llm import ImageGenRequest, MultimodalChatRequest, OpenAICompatibleProvider, VideoGenRequest
 
 
 class _FakeResponse:
@@ -299,7 +299,7 @@ def test_image_task_status_candidates_use_generation_root():
     assert candidates == ["https://api.apimart.ai/v1/tasks/task_123?language=en"]
 
 
-def test_generate_image_pending_task_does_not_return_placeholder(monkeypatch):
+def test_generate_image_pending_task_returns_recoverable_task(monkeypatch):
     endpoint = "https://api.apimart.ai/v1/images/generations"
     task_id = "task_pending"
     status_url = f"https://api.apimart.ai/v1/tasks/{task_id}?language=en"
@@ -316,18 +316,19 @@ def test_generate_image_pending_task_does_not_return_placeholder(monkeypatch):
     monkeypatch.setattr("app.providers.llm.time.sleep", lambda _: None)
     provider = OpenAICompatibleProvider("apimart")
 
-    try:
-        provider.generate_image(
-            ImageGenRequest(model="gpt-image-2", prompt="raincoat", size="1:1"),
-            api_base_url=endpoint,
-            api_key="dummy",
-            extra={"image_poll_max_wait_seconds": -1},
-        )
-    except ProviderRequestError as exc:
-        assert f"provider image task {task_id} returned no image data" in str(exc)
-        assert exc.errors[0]["task_id"] == task_id
-    else:
-        raise AssertionError("expected pending task to fail with provider evidence")
+    result = provider.generate_image(
+        ImageGenRequest(model="gpt-image-2", prompt="raincoat", size="1:1"),
+        api_base_url=endpoint,
+        api_key="dummy",
+        extra={"image_poll_max_wait_seconds": -1},
+    )
+
+    assert result.task_id == task_id
+    assert result.status == "processing"
+    assert result.images[0].task_id == task_id
+    assert result.images[0].status == "processing"
+    assert result.images[0].url is None
+    assert result.images[0].b64_json is None
 
 
 def test_generate_image_submit_only_returns_task_without_polling(monkeypatch):

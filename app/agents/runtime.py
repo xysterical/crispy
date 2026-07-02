@@ -732,13 +732,15 @@ class AgentsRuntime:
             return None
 
     def _materialize_generated_image(self, generated_image) -> tuple[bytes, str]:
-        if generated_image.b64_json:
+        b64_json = getattr(generated_image, "b64_json", None)
+        if b64_json:
             try:
-                return base64.b64decode(generated_image.b64_json), "b64_json"
+                return base64.b64decode(b64_json), "b64_json"
             except Exception:
                 pass
-        if generated_image.url:
-            content = self._download_url_bytes(generated_image.url)
+        url = getattr(generated_image, "url", None)
+        if url:
+            content = self._download_url_bytes(url)
             if content:
                 return content, "url"
         return decode_placeholder_png(), "placeholder"
@@ -2018,6 +2020,9 @@ class AgentsRuntime:
             force_regenerate = bool((runtime_config or {}).get("force_regenerate"))
             image_filename = f"copy_image_{idx + 1}{asset_suffix}.png"
             existing_image_path = self.media.settings.assets_dir / run_id / image_filename
+            task_id = None
+            status = None
+            raw_response: dict = {}
             try:
                 if not force_regenerate and existing_image_path.exists() and existing_image_path.stat().st_size > 1024:
                     image_uri = str(existing_image_path)
@@ -2037,11 +2042,19 @@ class AgentsRuntime:
                     estimated_cost += image_result.estimated_cost
                     image_models_used.add(image_result.model_used or image_model)
                     selected = image_result.images[0] if image_result.images else None
-                    if selected:
+                    task_id = getattr(image_result, "task_id", None) or (getattr(selected, "task_id", None) if selected else None)
+                    status = getattr(image_result, "status", None) or (getattr(selected, "status", None) if selected else None)
+                    raw_response = getattr(image_result, "raw_response", None) or (getattr(selected, "raw_response", None) if selected else {}) or {}
+                    has_image_payload = bool(getattr(selected, "url", None) or getattr(selected, "b64_json", None))
+                    if selected and (has_image_payload or not task_id):
                         image_bytes, image_source = self._materialize_generated_image(selected)
+                        image_uri = self.media.write_binary_artifact(run_id, image_filename, image_bytes)
+                    elif task_id:
+                        image_source = "external_task_pending"
+                        image_uri = self.media.reserve_binary_artifact(run_id, image_filename)
                     else:
                         image_bytes, image_source = decode_placeholder_png(), "placeholder"
-                    image_uri = self.media.write_binary_artifact(run_id, image_filename, image_bytes)
+                        image_uri = self.media.write_binary_artifact(run_id, image_filename, image_bytes)
             except Exception as exc:
                 error_text = str(exc)
                 provider_errors = getattr(exc, "errors", []) or []
@@ -2061,6 +2074,9 @@ class AgentsRuntime:
                 "image_model": image_model,
                 "error": error_text,
                 "provider_errors": provider_errors,
+                "external_task_id": task_id,
+                "generation_status": status,
+                "raw_response": raw_response,
                 "product_truth_contract": product_truth,
             }
             image_payload["reference_source_count"] = len(historical_references or [])

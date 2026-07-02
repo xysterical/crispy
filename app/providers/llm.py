@@ -888,17 +888,15 @@ class OpenAICompatibleProvider(LlmProvider):
             )
         if not images:
             if task_id:
-                raise ProviderRequestError(
-                    f"provider image task {task_id} returned no image data (status={status or 'unknown'})",
-                    [
-                        {
-                            "task_id": task_id,
-                            "status": status,
-                            "response": json.dumps(data, ensure_ascii=False)[:1000],
-                        }
-                    ],
+                images.append(
+                    GeneratedImage(
+                        task_id=task_id,
+                        status=status,
+                        raw_response=data,
+                    )
                 )
-            images.append(GeneratedImage(b64_json=_PLACEHOLDER_PNG_B64, revised_prompt=request.prompt))
+            else:
+                images.append(GeneratedImage(b64_json=_PLACEHOLDER_PNG_B64, revised_prompt=request.prompt))
         return ImageGenResult(
             model_used=str(data.get("model") or request.model),
             images=images,

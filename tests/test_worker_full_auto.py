@@ -81,3 +81,16 @@ def test_storyboard_candidate_task_blocks_auto_approval():
     )
 
     assert worker._has_pending_storyboard_assets(task) is True
+
+
+def test_copy_image_task_blocks_auto_approval_while_pending():
+    worker = PipelineWorker()
+    task = SimpleNamespace(
+        output_payload={
+            "image_assets": [
+                {"external_task_id": "image-task-1", "generation_status": "processing"},
+            ]
+        }
+    )
+
+    assert worker._has_pending_copy_image_assets(task) is True
