@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import io
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -297,7 +298,20 @@ def test_variant_review_endpoints_update_variant_library(client):
     assert review.json()["review_status"] == "approved"
 
 
-def test_pipeline_mode_copy_image_only(client):
+def test_pipeline_mode_copy_image_only(client, monkeypatch):
+    def fake_materialize_generated_image(_selected):
+        from PIL import Image
+
+        image = Image.new("RGB", (200, 200))
+        for x in range(200):
+            for y in range(200):
+                image.putpixel((x, y), ((x * 3) % 255, (y * 5) % 255, ((x + y) * 2) % 255))
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue(), "b64_json"
+
+    monkeypatch.setattr("app.services.runs.runtime._materialize_generated_image", fake_materialize_generated_image)
+
     create_resp = client.post(
         "/runs",
         json={

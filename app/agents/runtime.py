@@ -744,8 +744,17 @@ class AgentsRuntime:
         return decode_placeholder_png(), "placeholder"
 
     def _require_generated_image_asset(self, image_payload: dict) -> None:
-        qa = image_payload.get("visual_qa") or {}
-        flags = [str(flag) for flag in qa.get("flags") or []]
+        contract = self._attach_image_asset_contract(image_payload)
+        flags = [str(flag) for flag in contract.get("flags") or []]
+        if contract.get("blocking"):
+            reason = ", ".join(flags) or str(image_payload.get("error") or "invalid_image")
+            raise RuntimeError(f"image generation failed local QA: {reason}")
+
+    def _attach_image_asset_contract(self, image_payload: dict) -> dict:
+        qa = image_payload.get("visual_qa") if isinstance(image_payload.get("visual_qa"), dict) else {}
+        marketplace_qa = image_payload.get("marketplace_qa") if isinstance(image_payload.get("marketplace_qa"), dict) else {}
+        qa_flags = [str(flag) for flag in qa.get("flags") or []]
+        marketplace_flags = [str(flag) for flag in marketplace_qa.get("flags") or []]
         source = str(image_payload.get("source") or "")
         blocking_flags = {
             "visual_qa_placeholder",
@@ -754,9 +763,24 @@ class AgentsRuntime:
             "visual_qa_missing_file",
             "visual_qa_missing_uri",
         }
-        if source in {"placeholder", "generation_error"} or qa.get("status") == "fail" or any(flag in blocking_flags for flag in flags):
-            reason = ", ".join(flags) or str(image_payload.get("error") or "invalid_image")
-            raise RuntimeError(f"image generation failed local QA: {reason}")
+        blocking = (
+            source in {"placeholder", "generation_error"}
+            or qa.get("status") == "fail"
+            or any(flag in blocking_flags for flag in qa_flags)
+            or marketplace_qa.get("status") == "fail"
+        )
+        warn = qa.get("status") == "warn" or marketplace_qa.get("status") == "warn"
+        contract = {
+            "version": 1,
+            "status": "fail" if blocking else "warn" if warn else "pass",
+            "blocking": blocking,
+            "recommended_action": "regenerate_image" if blocking else "manual_review" if warn else "pass_to_evaluation",
+            "flags": sorted(set([*qa_flags, *marketplace_flags])),
+            "qa_status": qa.get("status"),
+            "marketplace_qa_status": marketplace_qa.get("status"),
+        }
+        image_payload["image_asset_contract"] = contract
+        return contract
 
     def _materialize_generated_video(self, generated_video) -> tuple[bytes, str]:
         if generated_video.b64_data:
@@ -1801,6 +1825,7 @@ class AgentsRuntime:
                 payload=image_payload,
                 expected_ratio=image_size,
             )
+            self._attach_image_asset_contract(image_payload)
             self._require_generated_image_asset(image_payload)
             image_payload["marketplace_qa"] = inspect_marketplace_image(
                 uri=image_uri,
@@ -1808,6 +1833,8 @@ class AgentsRuntime:
                 creative_specs=creative_specs,
                 visual_identity=visual_identity,
             )
+            self._attach_image_asset_contract(image_payload)
+            self._require_generated_image_asset(image_payload)
             image_payload["platform_readiness"] = image_payload["marketplace_qa"].get("platform_readiness", {})
             image_payload["export_ready"] = bool(image_payload["marketplace_qa"].get("export_ready"))
             images.append(image_ref)
@@ -2033,6 +2060,7 @@ class AgentsRuntime:
                 payload=image_payload,
                 expected_ratio=image_size,
             )
+            self._attach_image_asset_contract(image_payload)
             self._require_generated_image_asset(image_payload)
             images.append(image_ref)
             artifacts.append(
@@ -3205,6 +3233,15 @@ class AgentsRuntime:
                     qa = self._merge_video_frame_review(qa=qa, frame_review=frame_review)
                 flags = qa.get("flags") or []
                 status = str(qa.get("status") or "warn")
+                image_asset_contract = asset.get("image_asset_contract") if isinstance(asset.get("image_asset_contract"), dict) else {}
+                if asset_type in {"image", "storyboard_frame"} and image_asset_contract:
+                    contract_flags = [str(flag) for flag in (image_asset_contract.get("flags") or [])]
+                    flags = sorted(set([*flags, *contract_flags]))
+                    if image_asset_contract.get("blocking") or image_asset_contract.get("status") == "fail":
+                        status = "fail"
+                        blocking_issues.extend(contract_flags or ["image_asset_contract_failed"])
+                    elif image_asset_contract.get("status") == "warn":
+                        warn = True
                 if isinstance(qa.get("score"), (int, float)):
                     score_values.append(float(qa["score"]))
                 if status == "fail":
@@ -3302,6 +3339,7 @@ class AgentsRuntime:
                         "flags": flags,
                         "checks": qa.get("checks") or [],
                         "stitch_preflight": stitch_preflight if asset_type == "video" else None,
+                        "image_asset_contract": image_asset_contract if asset_type in {"image", "storyboard_frame"} else None,
                         "marketplace_qa": marketplace_qa if marketplace_goal and asset_type == "image" else None,
                     }
                 )

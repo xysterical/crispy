@@ -1068,6 +1068,8 @@ def _upsert_variant_asset(
             payload=payload,
             expected_ratio=expected_ratio,
         )
+        if asset_type in {"image", "storyboard_frame"}:
+            runtime._attach_image_asset_contract(payload)
     row = db.scalar(
         select(VariantAsset).where(
             VariantAsset.run_variant_id == variant.id,

@@ -420,6 +420,8 @@ def test_copy_image_generation_reuses_intake_media_summary_for_reference_images(
     assert len(chat_calls) == 1
     assert not chat_calls[0].get("image_urls")
     assert output.payload["image_assets"][0]["prompt"].find("reference_analysis_failed") == -1
+    assert output.payload["image_assets"][0]["image_asset_contract"]["status"] == "pass"
+    assert output.payload["image_assets"][0]["image_asset_contract"]["blocking"] is False
 
 
 def test_copy_image_generation_blocks_placeholder_assets():
@@ -1529,6 +1531,48 @@ def test_visual_quality_assessment_surfaces_product_truth_flags():
     assert summary["recommended_action"] == "manual_review"
     assert summary["product_truth_flags"] == ["visual_qa_product_truth_structure_review"]
     assert "visual_qa_product_truth_structure_review" in summary["issues"]
+
+
+def test_visual_quality_assessment_blocks_image_asset_contract_failure():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("image contract review notes", "stub-model", 0.0)
+
+    output = runtime.run_visual_quality_assessment(
+        run_id="runtime-image-contract-fail",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="secure fit",
+                    hook="Clip in confidence",
+                    message="Show the harness clearly.",
+                )
+            ]
+        ),
+        copy_images={
+            "image_assets": [
+                {
+                    "variant_id": "V1",
+                    "uri": "assets/nonexistent.png",
+                    "visual_qa": {"status": "pass", "score": 98, "flags": [], "checks": []},
+                    "image_asset_contract": {
+                        "status": "fail",
+                        "blocking": True,
+                        "flags": ["visual_qa_placeholder"],
+                    },
+                }
+            ]
+        },
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    summary = output.payload["variant_summaries"][0]
+    report = output.payload["reports"][0]
+    assert summary["qa_status"] == "fail"
+    assert summary["recommended_action"] == "request_regeneration"
+    assert "visual_qa_placeholder" in summary["issues"]
+    assert report["asset_reports"][0]["image_asset_contract"]["blocking"] is True
 
 
 def test_visual_quality_assessment_flags_human_anatomy_review_for_model_videos(tmp_path):
