@@ -65,6 +65,25 @@ class _FakeRegistry:
         return self.provider
 
 
+def _patch_valid_segment_frame_sampling(monkeypatch):
+    def fake_sample_video_frames(*, video_path, output_dir, prefix, count=3):
+        from PIL import Image
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for idx in range(count):
+            path = output_dir / f"{prefix}_frame_{idx + 1:03d}.png"
+            image = Image.new("RGB", (200, 200))
+            for x in range(200):
+                for y in range(200):
+                    image.putpixel(xy=(x, y), value=((x * 3 + idx * 20) % 255, (y * 5) % 255, ((x + y) * 2) % 255))
+            image.save(path, format="PNG")
+            paths.append(str(path))
+        return paths
+
+    monkeypatch.setattr("app.agents.runtime.sample_video_frames", fake_sample_video_frames)
+
+
 def test_video_generation_traces_selected_provider_decision():
     runtime = AgentsRuntime()
     fake_provider = _FakeVideoProvider()
@@ -503,6 +522,7 @@ def test_video_generation_stitches_completed_segments(monkeypatch):
 
     monkeypatch.setattr("app.agents.runtime.extract_last_video_frame", fake_extract_last_frame)
     monkeypatch.setattr("app.agents.runtime.stitch_video_files", fake_stitch)
+    _patch_valid_segment_frame_sampling(monkeypatch)
 
     script_pack = VideoScriptPack(
         scripts=[
@@ -570,6 +590,8 @@ def test_video_generation_stitches_completed_segments(monkeypatch):
     assert video["segment_ledger"]["segments"][0]["segment_id"] == "V1_S1"
     assert video["segment_ledger"]["segments"][0]["tail_frame"]
     assert video["segment_ledger"]["segments"][0]["contract"]["must_preserve"] == ["olive satin dress"]
+    assert video["segments"][0]["segment_frame_qa"]["status"] == "pass"
+    assert video["segment_ledger"]["segments"][0]["segment_frame_qa_status"] == "pass"
     assert video["duration_seconds"] == 35.0
     assert len(video["segments"]) == 3
     assert video["video_uri"].endswith("V1_stitched.mp4")
@@ -594,6 +616,7 @@ def test_segmented_video_generation_resumes_from_failed_segment(monkeypatch, tmp
 
     monkeypatch.setattr("app.agents.runtime.extract_last_video_frame", fake_extract_last_frame)
     monkeypatch.setattr("app.agents.runtime.stitch_video_files", fake_stitch)
+    _patch_valid_segment_frame_sampling(monkeypatch)
 
     script_pack = VideoScriptPack(
         scripts=[
@@ -691,6 +714,47 @@ def test_stitch_preflight_blocks_missing_segment_contract():
     assert any(check["key"] == "V1_S1.segment_contract" for check in preflight["checks"])
 
 
+def test_stitch_preflight_blocks_segment_frame_qa_failure():
+    runtime = AgentsRuntime()
+
+    preflight = runtime._stitch_preflight(
+        segments=[VideoSegmentPlan(segment_id="V1_S1", variant_id="V1", duration_seconds=8)],
+        segment_payloads=[
+            {
+                "segment_id": "V1_S1",
+                "generation_status": "completed",
+                "segment_contract": {"must_preserve": ["blue harness"]},
+                "segment_frame_qa": {
+                    "status": "fail",
+                    "blocking": True,
+                    "flags": ["visual_qa_unusable_frame_sequence"],
+                },
+            }
+        ],
+    )
+    ledger = runtime._segment_ledger(
+        variant_id="V1",
+        segment_queue=[{"segment_id": "V1_S1"}],
+        segment_payloads=[
+            {
+                "segment_id": "V1_S1",
+                "generation_status": "completed",
+                "segment_frame_qa": {
+                    "status": "fail",
+                    "blocking": True,
+                    "flags": ["visual_qa_unusable_frame_sequence"],
+                },
+            }
+        ],
+        stitch_preflight=preflight,
+    )
+
+    assert preflight["status"] == "fail"
+    assert any(check["key"] == "V1_S1.segment_frame_qa" for check in preflight["checks"])
+    assert ledger["status"] == "needs_regeneration"
+    assert ledger["segments"][0]["segment_frame_qa_status"] == "fail"
+
+
 def test_segmented_video_generation_uses_local_tail_frame_with_identity_anchors(monkeypatch):
     runtime = AgentsRuntime()
     provider = _FakeCompletedVideoProviderWithoutLastFrameUrl()
@@ -707,6 +771,7 @@ def test_segmented_video_generation_uses_local_tail_frame_with_identity_anchors(
 
     monkeypatch.setattr("app.agents.runtime.extract_last_video_frame", fake_extract_last_frame)
     monkeypatch.setattr("app.agents.runtime.stitch_video_files", fake_stitch)
+    _patch_valid_segment_frame_sampling(monkeypatch)
 
     script_pack = VideoScriptPack(
         scripts=[
@@ -778,6 +843,7 @@ def test_apimart_segmented_video_skips_unhosted_local_tail_frame(monkeypatch):
 
     monkeypatch.setattr("app.agents.runtime.extract_last_video_frame", fake_extract_last_frame)
     monkeypatch.setattr("app.agents.runtime.stitch_video_files", fake_stitch)
+    _patch_valid_segment_frame_sampling(monkeypatch)
 
     script_pack = VideoScriptPack(
         scripts=[
@@ -851,6 +917,7 @@ def test_segmented_video_generation_truncates_refs_when_provider_accepts_one_ima
 
     monkeypatch.setattr("app.agents.runtime.extract_last_video_frame", fake_extract_last_frame)
     monkeypatch.setattr("app.agents.runtime.stitch_video_files", fake_stitch)
+    _patch_valid_segment_frame_sampling(monkeypatch)
 
     script_pack = VideoScriptPack(
         scripts=[
@@ -900,6 +967,7 @@ def test_segmented_video_generation_preserves_initial_role_references(monkeypatc
 
     monkeypatch.setattr("app.agents.runtime.extract_last_video_frame", fake_extract_last_frame)
     monkeypatch.setattr("app.agents.runtime.stitch_video_files", fake_stitch)
+    _patch_valid_segment_frame_sampling(monkeypatch)
 
     runtime.run_video_generation(
         run_id="runtime-video-role-refs",

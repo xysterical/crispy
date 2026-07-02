@@ -834,6 +834,33 @@ class AgentsRuntime:
         enriched["generated_video_frames"] = frames
         return enriched
 
+    def _attach_segment_frame_qa(self, *, run_id: str, segment_payload: dict) -> dict:
+        if not isinstance(segment_payload, dict) or segment_payload.get("segment_frame_qa"):
+            return segment_payload
+        status = str(segment_payload.get("generation_status") or "").lower()
+        if status not in {"completed", "succeeded", "success", "ready"} or not self._artifact_has_payload(segment_payload.get("video_uri")):
+            return segment_payload
+        segment_id = str(segment_payload.get("segment_id") or "segment")
+        frame_uris, frames = self._sample_generated_video_frames(
+            run_id=run_id,
+            variant_id=segment_id,
+            video_uri=segment_payload.get("video_uri"),
+            generation_status=segment_payload.get("generation_status"),
+        )
+        qa = inspect_extracted_video_frames(frame_uris=frame_uris, social_review_contract={}, shot_plan=[])
+        flags = {str(flag) for flag in qa.get("flags") or []}
+        blocking = str(qa.get("status") or "") == "fail" or bool(
+            flags & {"visual_qa_needs_frame_review", "visual_qa_unusable_frame_sequence"}
+        )
+        segment_payload["segment_frame_qa"] = {
+            **qa,
+            "status": "fail" if blocking else qa.get("status"),
+            "blocking": blocking,
+            "frame_uris": frame_uris,
+            "generated_video_frames": frames,
+        }
+        return segment_payload
+
     def _merge_video_frame_review(
         self,
         *,
@@ -1072,6 +1099,19 @@ class AgentsRuntime:
                 checks.append({"key": f"{segment.segment_id}.status", "status": "fail", "message": f"Segment is {status or 'missing'}."})
             if not payload.get("segment_contract") and not segment.segment_contract:
                 checks.append({"key": f"{segment.segment_id}.segment_contract", "status": "fail", "message": "Segment contract is missing."})
+            frame_qa = payload.get("segment_frame_qa") if isinstance(payload.get("segment_frame_qa"), dict) else {}
+            if status in {"completed", "succeeded", "success", "ready"}:
+                if not frame_qa:
+                    checks.append({"key": f"{segment.segment_id}.segment_frame_qa", "status": "fail", "message": "Segment frame QA has not run."})
+                elif frame_qa.get("blocking") or str(frame_qa.get("status") or "").lower() == "fail":
+                    checks.append(
+                        {
+                            "key": f"{segment.segment_id}.segment_frame_qa",
+                            "status": "fail",
+                            "message": "Segment frame QA blocked stitching.",
+                            "flags": frame_qa.get("flags") or [],
+                        }
+                    )
             if idx < len(segments) - 1 and not payload.get("last_frame_uri") and not payload.get("last_frame_url"):
                 if status in {"completed", "succeeded", "success", "ready"}:
                     checks.append({"key": f"{segment.segment_id}.tail_frame", "status": "fail", "message": "Bridge tail frame is missing."})
@@ -1127,6 +1167,8 @@ class AgentsRuntime:
                     "hosted_reference_ready": all(
                         bool(item.get("provider_usable")) for item in reference_manifest if isinstance(item, dict) and item.get("used")
                     ),
+                    "segment_frame_qa_status": (payload.get("segment_frame_qa") or {}).get("status") if isinstance(payload.get("segment_frame_qa"), dict) else None,
+                    "segment_frame_qa_flags": (payload.get("segment_frame_qa") or {}).get("flags", []) if isinstance(payload.get("segment_frame_qa"), dict) else [],
                     "video_uri": payload.get("video_uri"),
                     "tail_frame": payload.get("last_frame_url") or payload.get("last_frame_uri"),
                     "qa_status": (payload.get("visual_qa") or {}).get("status") if isinstance(payload.get("visual_qa"), dict) else None,
@@ -2917,11 +2959,14 @@ class AgentsRuntime:
                         segment_payload["last_frame_uri"] = bridge_frame_uri
                         if segment_payload.get("last_frame_url"):
                             bridge_frame_uri = str(segment_payload["last_frame_url"])
+                        self._attach_segment_frame_qa(run_id=run_id, segment_payload=segment_payload)
                     segment_payloads.append(segment_payload)
-                    if not bridge_frame_uri:
+                    if not bridge_frame_uri or (segment_payload.get("segment_frame_qa") or {}).get("blocking"):
                         break
 
                 stitched_uri = None
+                for segment_payload in segment_payloads:
+                    self._attach_segment_frame_qa(run_id=run_id, segment_payload=segment_payload)
                 stitch_preflight = self._stitch_preflight(segments=script.segments, segment_payloads=segment_payloads)
                 if len(completed_segment_paths) == len(script.segments) and stitch_preflight["status"] == "pass":
                     stitched_uri = stitch_video_files(

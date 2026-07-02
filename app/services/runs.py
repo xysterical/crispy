@@ -2464,11 +2464,15 @@ def _refresh_segmented_video_payload(
                     video_path=Path(uri),
                     output_path=runtime.media.settings.assets_dir / run.id / f"{segment.get('segment_id')}_last_frame.png",
                 )
+                runtime._attach_segment_frame_qa(run_id=run.id, segment_payload=segment)
                 completed += 1
         break
 
     payload["segments"] = segments
-    if completed:
+    for segment in segments:
+        runtime._attach_segment_frame_qa(run_id=run.id, segment_payload=segment)
+    has_blocking_segment_qa = any((segment.get("segment_frame_qa") or {}).get("blocking") for segment in segments)
+    if completed and not has_blocking_segment_qa:
         next_segment, _ = _submit_next_video_segment(
             run=run,
             payload=payload,

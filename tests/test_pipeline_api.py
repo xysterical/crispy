@@ -1102,6 +1102,23 @@ def test_assets_refresh_does_not_complete_empty_storyboard_placeholder(client, m
 
 
 def test_assets_refresh_advances_segmented_video_queue(client, monkeypatch):
+    def fake_sample_video_frames(*, video_path, output_dir, prefix, count=3):
+        from PIL import Image
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for idx in range(count):
+            path = output_dir / f"{prefix}_frame_{idx + 1:03d}.png"
+            image = Image.new("RGB", (200, 200))
+            for x in range(200):
+                for y in range(200):
+                    image.putpixel(xy=(x, y), value=((x * 3 + idx * 20) % 255, (y * 5) % 255, ((x + y) * 2) % 255))
+            image.save(path, format="PNG")
+            paths.append(str(path))
+        return paths
+
+    monkeypatch.setattr("app.agents.runtime.sample_video_frames", fake_sample_video_frames)
+
     create_resp = client.post(
         "/runs",
         json={
@@ -1214,6 +1231,7 @@ def test_assets_refresh_advances_segmented_video_queue(client, monkeypatch):
         segments = asset.payload["segments"]
         assert segments[0]["generation_status"] == "completed"
         assert segments[0]["last_frame_uri"].endswith("V1_S1_last_frame.png")
+        assert segments[0]["segment_frame_qa"]["status"] == "pass"
         assert segments[1]["segment_id"] == "V1_S2"
         assert segments[1]["external_task_id"] == "segment_task_2"
         assert segments[1]["reference_mode"] == "first_frame"
