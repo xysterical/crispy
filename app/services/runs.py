@@ -2918,6 +2918,7 @@ def _qa_repair_context(
         "visual_qa_low_information": "Increase visible product detail and visual information.",
         "visual_qa_unusable_frame_sequence": "Generate readable first, middle, and final video frames.",
         "visual_qa_needs_frame_review": "Make the sampled video frames clear enough for review.",
+        "visual_qa_visual_proof_failed": "Regenerate with the visual proof mechanism clearly shown and avoid the listed semantic failure condition.",
         "stitch_preflight_failed": "Repair the failed segment continuity before stitching.",
         "visual_qa_human_anatomy_review": "Keep any human pose physically plausible.",
         "marketplace_background_not_white": "Use a clean pure white marketplace background.",
@@ -2930,6 +2931,8 @@ def _qa_repair_context(
     for flag in flag_set:
         if flag.startswith("segment_blocked:"):
             actions.append(f"Resume from {flag.split(':', 1)[1]} and keep previous completed segments unchanged.")
+        if flag.startswith("visual_proof_failed:"):
+            actions.append(f"Avoid semantic failure: {flag.split(':', 1)[1]}.")
     if not actions and reason.strip():
         actions.append(f"Address operator request: {reason.strip()[:160]}.")
     actions = list(dict.fromkeys(actions))[:4]

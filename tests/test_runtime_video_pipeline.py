@@ -1827,6 +1827,60 @@ def test_visual_quality_assessment_surfaces_visual_proof_spec():
     assert "visual_proof_spec" in captured_prompt["prompt"]
 
 
+def test_visual_quality_assessment_blocks_failed_visual_proof_review():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: (
+        """
+        {
+          "model_summary": "The image shows uncontrolled pulling.",
+          "visual_proof_reviews": [
+            {
+              "variant_id": "V1",
+              "status": "fail",
+              "evidence": "Dog is lunging forward with taut leash.",
+              "failed_conditions": ["image communicates active pulling instead of controlled anti-pull redirection"]
+            }
+          ]
+        }
+        """,
+        "stub-model",
+        0.0,
+    )
+
+    output = runtime.run_visual_quality_assessment(
+        run_id="runtime-visual-proof-fail",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="anti-pull control",
+                    hook="Show the front chest D-ring redirecting leash tension",
+                    message="Do not show uncontrolled pulling.",
+                )
+            ]
+        ),
+        copy_images={
+            "image_assets": [
+                {
+                    "variant_id": "V1",
+                    "uri": "assets/nonexistent.png",
+                    "visual_qa": {"status": "pass", "score": 98, "flags": [], "checks": []},
+                }
+            ]
+        },
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    summary = output.payload["variant_summaries"][0]
+    report = output.payload["reports"][0]
+    assert output.payload["model_summary"] == "The image shows uncontrolled pulling."
+    assert summary["qa_status"] == "fail"
+    assert summary["recommended_action"] == "request_regeneration"
+    assert "visual_qa_visual_proof_failed" in summary["issues"]
+    assert report["visual_proof_qa"]["evidence"] == "Dog is lunging forward with taut leash."
+
+
 def test_visual_quality_assessment_blocks_image_asset_contract_failure():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("image contract review notes", "stub-model", 0.0)

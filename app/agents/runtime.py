@@ -1362,6 +1362,52 @@ class AgentsRuntime:
             for variant in variant_set.variants
         }
 
+    def _apply_visual_proof_reviews(self, *, reports: list[dict], summaries: list[dict], model_summary: str) -> str:
+        try:
+            parsed = self._parse_llm_json(model_summary, schema_key="visual_proof_reviews")
+        except ValueError:
+            return model_summary
+        reviews = parsed.get("visual_proof_reviews") or []
+        if not isinstance(reviews, list):
+            return str(parsed.get("model_summary") or model_summary)
+        by_variant = {
+            str(item.get("variant_id") or ""): item
+            for item in reviews
+            if isinstance(item, dict) and str(item.get("variant_id") or "").strip()
+        }
+        for report in reports:
+            review = by_variant.get(str(report.get("variant_id") or ""))
+            if not review:
+                continue
+            status = str(review.get("status") or review.get("visual_proof_status") or "").lower()
+            report["visual_proof_qa"] = review
+            if status == "fail":
+                issues = set(report.get("blocking_issues") or [])
+                issues.add("visual_qa_visual_proof_failed")
+                for condition in review.get("failed_conditions") or []:
+                    if str(condition).strip():
+                        issues.add(f"visual_proof_failed:{str(condition).strip()[:120]}")
+                report["blocking_issues"] = sorted(issues)
+                report["qa_status"] = "fail"
+                report["recommended_action"] = "request_regeneration"
+        for summary in summaries:
+            review = by_variant.get(str(summary.get("variant_id") or ""))
+            if not review:
+                continue
+            status = str(review.get("status") or review.get("visual_proof_status") or "").lower()
+            summary["visual_proof_qa"] = review
+            if status == "fail":
+                issues = set(summary.get("issues") or [])
+                issues.add("visual_qa_visual_proof_failed")
+                for condition in review.get("failed_conditions") or []:
+                    if str(condition).strip():
+                        issues.add(f"visual_proof_failed:{str(condition).strip()[:120]}")
+                summary["issues"] = sorted(issues)
+                summary["qa_status"] = "fail"
+                summary["recommended_action"] = "request_regeneration"
+                summary["blocking_issue_count"] = max(int(summary.get("blocking_issue_count") or 0), len(issues))
+        return str(parsed.get("model_summary") or model_summary)
+
     def _compose_stage_prompt(
         self,
         *,
@@ -3531,7 +3577,8 @@ class AgentsRuntime:
                 "Focus on product fidelity, physical plausibility, channel fit, and whether any candidate should be blocked before evaluation. "
                 "When product_truth_flags are present, compare attached media against the product_truth_contract before passing the candidate. "
                 "When visual_proof_spec is present, check whether the media proves the desired_scene/proof_mechanism and avoids semantic_fail_conditions. "
-                "Return concise operator notes; do not choose the final winner.\n"
+                "Return ONLY valid JSON shaped as {\"model_summary\":\"...\",\"visual_proof_reviews\":[{\"variant_id\":\"V1\",\"status\":\"pass|warn|fail\",\"evidence\":\"...\",\"failed_conditions\":[\"...\"]}]}. "
+                "Use status=fail when the media expresses a semantic_fail_condition. Do not choose the final winner.\n"
                 f"intake_facts={json.dumps(intake, ensure_ascii=False)[:3000]}\n"
                 f"product_truth_contract={json.dumps(product_truth, ensure_ascii=False)[:2000]}\n"
                 f"business_context={json.dumps(business_context, ensure_ascii=False)[:1800]}\n"
@@ -3558,6 +3605,12 @@ class AgentsRuntime:
             )
         except Exception as exc:
             model_summary = f"model_review_unavailable: {str(exc)[:240]}"
+        else:
+            model_summary = self._apply_visual_proof_reviews(
+                reports=reports,
+                summaries=summaries,
+                model_summary=model_summary,
+            )
 
         payload = {
             "reports": reports,

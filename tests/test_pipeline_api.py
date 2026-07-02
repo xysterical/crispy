@@ -84,6 +84,40 @@ def test_qa_repair_context_maps_visual_qa_flags_to_actions():
     assert "Regeneration repair instructions" in repair["prompt"]
 
 
+def test_qa_repair_context_maps_visual_proof_failure_to_action():
+    class EmptyRows:
+        def all(self):
+            return []
+
+    class FakeDb:
+        def scalars(self, *_args, **_kwargs):
+            return EmptyRows()
+
+    variant = SimpleNamespace(
+        id="variant-row",
+        metadata_json={
+            "visual_quality": {
+                "blocking_issues": [
+                    "visual_qa_visual_proof_failed",
+                    "visual_proof_failed:image communicates active pulling instead of controlled anti-pull redirection",
+                ],
+                "asset_reports": [],
+            }
+        },
+    )
+
+    repair = _qa_repair_context(
+        db=FakeDb(),
+        variant=variant,
+        reason="fix visual concept",
+        target_stage="copy_image_generation",
+    )
+
+    assert "Regenerate with the visual proof mechanism clearly shown" in repair["actions"][0]
+    assert any("Avoid semantic failure" in action for action in repair["actions"])
+    assert "visual_qa_visual_proof_failed" in repair["evidence_flags"]
+
+
 def test_channel_is_included_in_agent_task_input(client):
     create_resp = client.post(
         "/runs",
