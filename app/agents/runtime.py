@@ -230,6 +230,15 @@ class AgentsRuntime:
         image_runtime = runtime.get("image") or {}
         provider_name = image_runtime.get("provider_name") or fallback_provider
         model_name = image_runtime.get("model_name") or fallback_model
+        api_base_url = image_runtime.get("api_base_url") or runtime.get("api_base_url")
+        image_extra = dict(image_runtime.get("extra") or runtime.get("extra") or {})
+        if (
+            "apimart" in f"{provider_name} {api_base_url}".lower()
+            and model_name == "gpt-image-2"
+            and "submit_only" not in image_extra
+            and "image_poll_max_wait_seconds" not in image_extra
+        ):
+            image_extra["submit_only"] = True
         self._trace_provider_selection(
             runtime_config,
             capability="image_generation",
@@ -258,9 +267,9 @@ class AgentsRuntime:
                 input_fidelity=input_fidelity,
                 official_fallback=official_fallback,
             ),
-            api_base_url=image_runtime.get("api_base_url") or runtime.get("api_base_url"),
+            api_base_url=api_base_url,
             api_key=image_runtime.get("api_key") or runtime.get("api_key"),
-            extra=image_runtime.get("extra") or runtime.get("extra"),
+            extra=image_extra,
         )
         return result, provider_name, model_name
 

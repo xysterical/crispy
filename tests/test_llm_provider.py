@@ -360,6 +360,33 @@ def test_generate_image_submit_only_returns_task_without_polling(monkeypatch):
     assert client.got_urls == []
 
 
+def test_poll_image_task_preserves_completed_status(monkeypatch):
+    task_id = "task_image_done"
+    status_url = f"https://api.apimart.ai/v1/tasks/{task_id}?language=en"
+    client = _FakeClient(
+        post_map={},
+        get_map={
+            status_url: _FakeResponse(
+                200,
+                {"data": {"status": "completed", "result": {"image_url": "https://example.com/image.png"}}},
+            )
+        },
+    )
+    monkeypatch.setattr("app.providers.llm.httpx.Client", lambda timeout=90.0: client)
+    provider = OpenAICompatibleProvider("apimart")
+
+    result = provider.poll_image_task(
+        task_id=task_id,
+        model="gpt-image-2",
+        api_base_url="https://api.apimart.ai/v1",
+        api_key="dummy",
+    )
+
+    assert result.status == "completed"
+    assert result.images[0].status == "completed"
+    assert result.images[0].url == "https://example.com/image.png"
+
+
 def test_generate_image_apimart_payload_uses_documented_fields(monkeypatch):
     endpoint = "https://api.apimart.ai/v1/images/generations"
     client = _FakeClient(

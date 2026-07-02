@@ -27,6 +27,21 @@ class _FakeVideoProvider:
         )
 
 
+class _FakeImageProvider:
+    def __init__(self) -> None:
+        self.last_extra = None
+
+    def generate_image(self, request, *, api_base_url=None, api_key=None, extra=None):
+        self.last_extra = extra
+        return ImageGenResult(
+            model_used=request.model,
+            images=[GeneratedImage(task_id="task-image-001", status="submitted")],
+            task_id="task-image-001",
+            status="submitted",
+            raw_response={"status": "submitted"},
+        )
+
+
 class _FakeCompletedVideoProvider:
     def __init__(self) -> None:
         self.requests = []
@@ -82,6 +97,32 @@ def _patch_valid_segment_frame_sampling(monkeypatch):
         return paths
 
     monkeypatch.setattr("app.agents.runtime.sample_video_frames", fake_sample_video_frames)
+
+
+def test_apimart_gpt_image_defaults_to_submit_only():
+    runtime = AgentsRuntime()
+    fake_provider = _FakeImageProvider()
+    runtime.providers = _FakeRegistry(fake_provider)
+
+    result, provider_name, model_name = runtime._generate_image(
+        fallback_provider="apimart",
+        fallback_model="gpt-image-2",
+        prompt="social ad image",
+        size="1:1",
+        runtime_config={
+            "image": {
+                "provider_name": "apimart",
+                "model_name": "gpt-image-2",
+                "api_base_url": "https://api.apimart.ai/v1",
+                "api_key": "dummy",
+            }
+        },
+    )
+
+    assert provider_name == "apimart"
+    assert model_name == "gpt-image-2"
+    assert result.task_id == "task-image-001"
+    assert fake_provider.last_extra["submit_only"] is True
 
 
 def test_video_generation_traces_selected_provider_decision():

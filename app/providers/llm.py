@@ -706,7 +706,7 @@ class OpenAICompatibleProvider(LlmProvider):
                     if status in {"completed", "succeeded", "success"}:
                         result = data.get("result")
                         if isinstance(result, dict):
-                            return {"data": _normalize_task_result(result)}
+                            return {"data": _normalize_task_result(result), "status": status, "task_id": task_id}
                         return payload
                     if status in {"failed", "cancelled", "canceled"}:
                         return payload
