@@ -998,6 +998,32 @@ def _generated_asset_failure(payload: dict, uri: str | None) -> tuple[str | None
     return None, None
 
 
+def _refresh_completed_image_qa(
+    payload: dict,
+    *,
+    asset_type: str,
+    uri: str | None,
+    expected_ratio: str | None = None,
+) -> None:
+    if not _uri_has_payload(uri):
+        return
+    payload["generation_status"] = "completed"
+    if payload.get("source") == "external_task_pending":
+        payload["source"] = "local_file"
+    qa = payload.get("visual_qa") if isinstance(payload.get("visual_qa"), dict) else {}
+    flags = [str(flag) for flag in qa.get("flags") or []]
+    if qa and "visual_qa_asset_processing" not in flags:
+        return
+    payload["visual_qa"] = inspect_visual_asset(
+        asset_type=asset_type,
+        uri=uri,
+        payload=payload,
+        expected_ratio=expected_ratio,
+    )
+    if asset_type in {"image", "storyboard_frame"}:
+        runtime._attach_image_asset_contract(payload)
+
+
 def _upsert_run_variant(
     db: Session,
     *,
@@ -2674,10 +2700,20 @@ def refresh_copy_image_task_assets(db: Session, run_id: str) -> dict:
         if not task_id:
             continue
         if status in {"completed", "succeeded", "success"} and _uri_has_payload(asset.uri or payload.get("uri")):
-            payload["generation_status"] = "completed"
+            _refresh_completed_image_qa(
+                payload,
+                asset_type="image",
+                uri=asset.uri or payload.get("uri"),
+                expected_ratio=payload.get("aspect_ratio"),
+            )
             completed += 1
         elif _uri_has_payload(asset.uri or payload.get("uri")) and not payload.get("error"):
-            payload["generation_status"] = "completed"
+            _refresh_completed_image_qa(
+                payload,
+                asset_type="image",
+                uri=asset.uri or payload.get("uri"),
+                expected_ratio=payload.get("aspect_ratio"),
+            )
             completed += 1
         else:
             result = provider.poll_image_task(
@@ -2699,13 +2735,12 @@ def refresh_copy_image_task_assets(db: Session, run_id: str) -> dict:
                     payload["uri"] = uri
                     payload["source"] = source
                     payload["generation_status"] = "completed"
-                    payload["visual_qa"] = runtime._local_media_qa(
+                    _refresh_completed_image_qa(
+                        payload,
                         asset_type="image",
                         uri=uri,
-                        payload=payload,
                         expected_ratio=payload.get("aspect_ratio"),
                     )
-                    runtime._attach_image_asset_contract(payload)
                     asset.uri = uri
                     completed += 1
         failure_category, error_message = _generated_asset_failure(payload, payload.get("uri"))
@@ -2787,9 +2822,19 @@ def refresh_storyboard_image_task_assets(db: Session, run_id: str) -> dict:
         if not task_id:
             continue
         if status in {"completed", "succeeded", "success"}:
-            payload["generation_status"] = "completed"
+            _refresh_completed_image_qa(
+                payload,
+                asset_type="storyboard_frame",
+                uri=asset.uri or payload.get("image_uri"),
+                expected_ratio=payload.get("aspect_ratio"),
+            )
         elif payload.get("image_uri") and _uri_has_payload(payload.get("image_uri")) and not payload.get("error"):
-            payload["generation_status"] = "completed"
+            _refresh_completed_image_qa(
+                payload,
+                asset_type="storyboard_frame",
+                uri=asset.uri or payload.get("image_uri"),
+                expected_ratio=payload.get("aspect_ratio"),
+            )
             completed += 1
         else:
             result = provider.poll_image_task(
@@ -2811,10 +2856,10 @@ def refresh_storyboard_image_task_assets(db: Session, run_id: str) -> dict:
                     payload["image_uri"] = uri
                     payload["source"] = source
                     payload["generation_status"] = "completed"
-                    payload["visual_qa"] = runtime._local_media_qa(
+                    _refresh_completed_image_qa(
+                        payload,
                         asset_type="storyboard_frame",
                         uri=uri,
-                        payload=payload,
                     )
                     asset.uri = uri
                     completed += 1

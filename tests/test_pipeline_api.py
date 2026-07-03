@@ -1100,6 +1100,83 @@ def test_assets_refresh_recovers_pending_copy_image_task(client, monkeypatch):
         assert Path(image_asset.uri).stat().st_size > 1024
 
 
+def test_assets_refresh_rechecks_completed_copy_image_qa(client):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-copy-image-refresh-qa",
+            "project_name": "p-copy-image-refresh-qa",
+            "product_name": "paper cup",
+            "product_code": "COPY-IMAGE-REFRESH-QA-001",
+            "industry_code": "packaging",
+            "campaign_name": "copy-image-refresh-qa",
+            "pipeline_mode": "copy_image_only",
+            "approval_mode": "full_auto",
+            "creative_preset": "meta_square_5s",
+        },
+    )
+    assert create_resp.status_code == 200
+    run_id = create_resp.json()["id"]
+    image_uri = f"assets/{run_id}/copy_image_1.png"
+    Path(image_uri).parent.mkdir(parents=True, exist_ok=True)
+    Path(image_uri).write_bytes(base64.b64decode(_valid_png_b64()))
+
+    stale_payload = {
+        "variant_id": "V1",
+        "uri": image_uri,
+        "aspect_ratio": "1:1",
+        "prompt": "paper cup",
+        "source": "external_task_pending",
+        "external_task_id": "copy-image-task-1",
+        "generation_status": "submitted",
+        "visual_qa": {"status": "warn", "flags": ["visual_qa_asset_processing"]},
+        "image_asset_contract": {"status": "warn", "blocking": False, "flags": ["visual_qa_asset_processing"]},
+    }
+    with SessionLocal() as db:
+        from app.data.models import PipelineRun, RunStatus, RunVariant, StageTask, TaskStatus
+
+        run = db.get(PipelineRun, run_id)
+        run.current_stage = "copy_image_generation"
+        run.status = RunStatus.WAITING_REVIEW.value
+        run_variant = RunVariant(run_id=run_id, variant_id="V1", angle="Cup", hook="Hook", message="Message")
+        db.add(run_variant)
+        db.flush()
+        copy_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="copy_image_generation").one()
+        copy_task.status = TaskStatus.WAITING_REVIEW.value
+        copy_task.output_payload = {
+            "copy_variants": [{"variant_id": "V1", "headline": "Paper cup"}],
+            "image_assets": [dict(stale_payload)],
+        }
+        db.add(
+            VariantAsset(
+                run_variant_id=run_variant.id,
+                run_id=run_id,
+                stage_name="copy_image_generation",
+                asset_type="image",
+                uri=image_uri,
+                provider_name="stub",
+                model_name="stub-image",
+                prompt_summary="paper cup",
+                idempotency_key="test-refresh-copy-image-qa-v1",
+                payload=dict(stale_payload),
+            )
+        )
+        db.commit()
+
+    resp = client.post(f"/runs/{run_id}/assets/refresh")
+    assert resp.status_code == 200
+
+    with SessionLocal() as db:
+        copy_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="copy_image_generation").one()
+        image_asset = db.query(VariantAsset).filter_by(run_id=run_id, asset_type="image").one()
+        image_payload = copy_task.output_payload["image_assets"][0]
+        assert image_payload["generation_status"] == "completed"
+        assert image_payload["source"] == "local_file"
+        assert "visual_qa_asset_processing" not in image_payload["visual_qa"]["flags"]
+        assert image_payload["image_asset_contract"]["blocking"] is False
+        assert image_asset.payload["visual_qa"]["status"] == image_payload["visual_qa"]["status"]
+
+
 def test_assets_refresh_recovers_materialized_storyboard_candidate(client, monkeypatch):
     create_resp = client.post(
         "/runs",
