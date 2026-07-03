@@ -784,7 +784,9 @@ class AgentsRuntime:
         hook = str(creative_leap_spec.get("opening_hook") or "").strip()
         reveal = str(creative_leap_spec.get("reveal_structure") or "").strip()
         must_not = ", ".join(str(item) for item in (creative_leap_spec.get("must_not_break") or [])[:4])
-        return f"Creative leap: device {device}; metaphor {metaphor}; opening {hook}; reveal {reveal}; do not break {must_not}."
+        plan = " / ".join(str(item) for item in (creative_leap_spec.get("shot_device_plan") or [])[:3])
+        plan_part = f"; shot plan {plan}" if plan else ""
+        return f"Creative leap: device {device}; metaphor {metaphor}; opening {hook}; reveal {reveal}{plan_part}; do not break {must_not}."
 
     def _creative_leap_spec(self, variant: VariantCandidate, visual_proof_spec: dict, risk_level: str, *, is_wildcard_slot: bool = False) -> dict:
         if risk_level == "safe":
@@ -792,17 +794,41 @@ class AgentsRuntime:
         effective_level = "wildcard" if risk_level == "wildcard" and is_wildcard_slot else "bold" if risk_level == "wildcard" else risk_level
         proof = str(visual_proof_spec.get("proof_mechanism") or variant.message or variant.hook)
         scene = str(visual_proof_spec.get("scene_recipe") or visual_proof_spec.get("desired_scene") or variant.hook)
-        device_by_level = {
-            "social": "micro_story",
-            "bold": "visual_metaphor",
-            "wildcard": "impossible_physical_metaphor",
-        }
+        selling_type = str(visual_proof_spec.get("selling_point_type") or "")
+        if effective_level == "social":
+            device = "micro_story"
+            opening = scene
+            metaphor = f"a quick real-use story that makes `{variant.angle}` obvious"
+            shot_device_plan = [
+                f"open inside the real use context: {scene}",
+                f"show the product proof: {proof}",
+                "end with the buyer outcome and product still visible",
+            ]
+        elif effective_level == "wildcard":
+            device = "impossible_physical_metaphor"
+            opening = self._wildcard_opening(variant.angle, visual_proof_spec)
+            metaphor = self._wildcard_metaphor(variant.angle, visual_proof_spec)
+            shot_device_plan = [
+                opening,
+                f"snap back to a physically plausible proof moment: {proof}",
+                "hold a clear product-truth frame so the metaphor does not replace the SKU",
+            ]
+        else:
+            device = "bait_and_reveal" if selling_type in {"functional_proof", "risk_removal"} else "visual_rhyme"
+            opening = self._bold_opening(variant.angle, visual_proof_spec)
+            metaphor = self._bold_metaphor(variant.angle, visual_proof_spec)
+            shot_device_plan = [
+                opening,
+                f"reveal the product mechanism: {proof}",
+                "finish with the product benefit visible in-scene",
+            ]
         return {
             "creative_risk_level": effective_level,
-            "creative_device": device_by_level.get(effective_level, "micro_story"),
-            "concept_metaphor": f"make `{variant.angle}` feel instantly visible through a surprising but product-true scene",
-            "opening_hook": scene if effective_level == "social" else f"open with an unexpected visual setup that still reveals {variant.angle}",
+            "creative_device": device,
+            "concept_metaphor": metaphor,
+            "opening_hook": opening,
             "reveal_structure": "start with the visual device, then reveal the product proof clearly",
+            "shot_device_plan": shot_device_plan,
             "product_truth_anchor": (visual_proof_spec.get("must_show") or [])[:4],
             "must_not_break": [
                 "product_truth_contract",
@@ -813,6 +839,46 @@ class AgentsRuntime:
             "style_risk_level": effective_level,
             "proof_guardrail": proof,
         }
+
+    def _bold_opening(self, angle: str, visual_proof_spec: dict) -> str:
+        selling_type = str(visual_proof_spec.get("selling_point_type") or "")
+        if selling_type == "identity_expression":
+            return "open on people noticing the printed cup before the brand is revealed"
+        if selling_type == "risk_removal":
+            return "open on the problem weather or mess, then reveal the protected product in use"
+        return f"open on the tension/problem that `{angle}` resolves, before showing the product"
+
+    def _bold_metaphor(self, angle: str, visual_proof_spec: dict) -> str:
+        selling_type = str(visual_proof_spec.get("selling_point_type") or "")
+        if selling_type == "identity_expression":
+            return "the product becomes the brand's social calling card in the scene"
+        if selling_type == "risk_removal":
+            return "the product acts like a small shield against the problem"
+        return f"`{angle}` is shown as a cause-and-effect visual reveal, not a generic beauty shot"
+
+    def _wildcard_opening(self, angle: str, visual_proof_spec: dict) -> str:
+        text = " ".join([angle, str(visual_proof_spec)]).lower()
+        if "anti" in text or "leash" in text or "pull" in text or "d-ring" in text:
+            return "open with leash tension visualized like a redirected line of force before revealing the front chest D-ring"
+        if "cup" in text or "print" in text or "brand" in text:
+            return "open with the cup print briefly acting like a tiny billboard in a real event photo"
+        if "rain" in text or "water" in text:
+            return "open with rain behaving like it hits an invisible shield around the raincoat"
+        if "brush" in text or "shoe" in text:
+            return "open with dust lifting away in a visible trail as the brush passes over the shoe"
+        return f"open with an impossible-but-safe visual metaphor for `{angle}`"
+
+    def _wildcard_metaphor(self, angle: str, visual_proof_spec: dict) -> str:
+        text = " ".join([angle, str(visual_proof_spec)]).lower()
+        if "anti" in text or "leash" in text or "pull" in text or "d-ring" in text:
+            return "pulling force visibly changes direction, then resolves into a real controlled walk"
+        if "cup" in text or "print" in text or "brand" in text:
+            return "a small printed cup carries brand memory like a miniature out-of-home ad"
+        if "rain" in text or "water" in text:
+            return "rain slides off the coat like a protective dome without changing the garment"
+        if "brush" in text or "shoe" in text:
+            return "the brush reveals a clean path like wiping a fogged window, while staying physically plausible"
+        return f"`{angle}` becomes a surprising physical metaphor without changing product truth"
 
     def _planning_director_blocks(
         self,
@@ -1520,11 +1586,11 @@ class AgentsRuntime:
             prompt = str((runtime_config or {}).get("qa_repair_prompt") or "").strip()
         return f"\n\n{prompt}" if prompt else ""
 
-    def _variant_visual_proof_spec(self, variant: VariantCandidate, scene_direction: str = "") -> dict:
+    def _variant_visual_proof_spec(self, variant: VariantCandidate, scene_direction: str = "", context_text: str = "") -> dict:
         existing = dict(variant.visual_proof_spec or {})
         if existing:
             return existing
-        source_text = " ".join([variant.angle, variant.hook, variant.message, scene_direction]).strip()
+        source_text = " ".join([variant.angle, variant.hook, variant.message, scene_direction, context_text]).strip()
         recipe = self._visual_proof_recipe(source_text)
         spec = {
             "selling_point_type": recipe["selling_point_type"],
@@ -1972,6 +2038,11 @@ class AgentsRuntime:
         preferred_angles = (gm_policy.get("angle_priorities") or [])[: max(1, variant_count)]
         emotional_beats = director_plan.get("emotional_beats") or []
         must_preserve = director_plan.get("must_preserve_visuals") or []
+        recipe_context = " ".join([
+            str(director_plan.get("media_truth_summary") or ""),
+            json.dumps(director_plan.get("product_truth_contract") or {}, ensure_ascii=False),
+            " ".join(str(item) for item in must_preserve),
+        ])
         for i in range(variant_count):
             angle_pool = preferred_angles or planning.strategic_angles or ["product truth"]
             angle = angle_pool[i % max(1, len(angle_pool))]
@@ -1985,6 +2056,7 @@ class AgentsRuntime:
             visual_proof_spec = self._variant_visual_proof_spec(
                 seed_variant,
                 scene_direction,
+                recipe_context,
             )
             creative_leap_spec = self._creative_leap_spec(
                 seed_variant,
@@ -2664,6 +2736,8 @@ class AgentsRuntime:
                 )
                 hook_line = item.hook or f"{item.variant_id}: {product_name} for {primary_value}"
                 visual_proof_spec = visual_proof_specs.get(item.variant_id) or self._variant_visual_proof_spec(item)
+                creative_leap_spec = dict(item.creative_leap_spec or {})
+                leap_plan = [str(value) for value in (creative_leap_spec.get("shot_device_plan") or []) if str(value).strip()]
                 emotions = director_plan.get("emotional_beats") or []
                 must_preserve = director_plan.get("must_preserve_visuals") or []
                 scene_hints = director_plan.get("scene_hints") or []
@@ -2695,7 +2769,8 @@ class AgentsRuntime:
                     avoid_values = [next((value for value in avoid_candidates if "generic lifestyle" not in value.lower()), avoid_candidates[0])] if avoid_candidates else list(visual_proof_spec.get("semantic_fail_conditions", [])[:1])
                     avoid = ", ".join(str(value) for value in avoid_values)
                     avoid_part = f"; avoid: {avoid}" if avoid else ""
-                    shot_list.append(f"{intent}: {direction}; product proof: show {must_show}{avoid_part}; overlay: {overlays[i]}; preserve: {preserve}; emotion: {emotion}")
+                    leap_part = f"; creative leap: {leap_plan[min(i, len(leap_plan) - 1)]}" if leap_plan else ""
+                    shot_list.append(f"{intent}: {direction}; product proof: show {must_show}{avoid_part}{leap_part}; overlay: {overlays[i]}; preserve: {preserve}; emotion: {emotion}")
                 fallback_shot_plan: list[ShotPlanItem] = []
                 for i, shot_text in enumerate(shot_list):
                     intent = intents[i] if i < len(intents) else "product_demo"

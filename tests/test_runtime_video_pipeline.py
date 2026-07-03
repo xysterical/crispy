@@ -344,6 +344,75 @@ def test_divergence_creative_risk_adds_wildcard_leap_spec():
     assert output.payload["experiment_matrix"][-1]["creative_leap_spec"] == variants[-1]["creative_leap_spec"]
 
 
+def test_wildcard_keeps_product_specific_visual_proof_context():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    output = runtime.run_divergence(
+        run_id="runtime-divergence-wildcard-context",
+        planning=PlanningBrief(
+            strategic_angles=["more controlled walks"],
+            creative_director_plan={
+                "creative_risk_level": "wildcard",
+                "must_preserve_visuals": ["front chest D-ring", "orange strap"],
+                "media_truth_summary": "Anti-pull dog harness with front chest D-ring and leash redirection.",
+                "product_truth_contract": {"must_preserve": ["front chest D-ring"]},
+                "scene_arc": [{"scene_direction": "end on product-forward frame with a simple purchase cue"}],
+            },
+        ),
+        variant_count=1,
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    variant = output.payload["variants"][0]
+    assert variant["visual_proof_spec"]["selling_point_type"] == "functional_proof"
+    assert "front chest D-ring redirects leash tension" in variant["creative_leap_spec"]["proof_guardrail"]
+    assert "line of force" in variant["creative_leap_spec"]["opening_hook"]
+
+
+def test_video_scripting_writes_creative_leap_into_shots():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("not json", "stub-model", 0.0)
+
+    output = runtime.run_video_scripting(
+        run_id="runtime-script-creative-leap",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="custom brand print area",
+                    hook="Make the custom print panel visible at a cafe counter",
+                    message="The printed cup carries brand identity in real event photos.",
+                    visual_proof_spec={
+                        "selling_point_type": "identity_expression",
+                        "proof_mechanism": "the printed cup visibly carries brand identity",
+                        "must_show": ["custom print panel", "paper cup shape"],
+                        "must_not_show": ["plain blank cup"],
+                        "semantic_fail_conditions": ["visual hides customization"],
+                    },
+                    creative_leap_spec={
+                        "creative_device": "visual_rhyme",
+                        "shot_device_plan": [
+                            "open with the cup print briefly acting like a tiny billboard in a real event photo",
+                            "reveal the custom print panel on the paper cup",
+                        ],
+                    },
+                )
+            ]
+        ),
+        intake=ProductIntake(product_name="Custom print paper cup"),
+        business_context={"target_audience": "cafes"},
+        provider="openai",
+        model="gpt-4.1",
+        creative_specs={"video_duration_seconds": 8},
+    )
+
+    first_shot = output.payload["scripts"][0]["shot_list"][0]
+    assert "creative leap:" in first_shot
+    assert "tiny billboard" in first_shot
+
+
 def test_video_scripting_carries_visual_proof_spec_into_shots():
     runtime = AgentsRuntime()
     captured_prompt: dict[str, str] = {}
