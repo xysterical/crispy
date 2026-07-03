@@ -853,6 +853,9 @@ def test_copy_image_generation_exposes_pending_image_task():
     assert image["source"] == "external_task_pending"
     assert image["external_task_id"] == "image-task-1"
     assert image["generation_status"] == "submitted"
+    assert image["external_task_state"]["task_id"] == "image-task-1"
+    assert image["external_task_state"]["status"] == "submitted"
+    assert image["external_task_state"]["poll_count"] == 0
     assert image["image_asset_contract"]["blocking"] is False
     assert "visual_qa_asset_processing" in image["image_asset_contract"]["flags"]
 
@@ -3207,6 +3210,9 @@ def test_video_generation_continues_when_prompt_llm_fails():
     assert "text=deepseek-v4-pro:fallback_to_template" in output.model_used
     assert "video=doubao-seedance-2.0" in output.model_used
     assert output.payload["videos"][0]["generation_status"] == "submitted"
+    assert output.payload["videos"][0]["external_task_state"]["task_id"] == "task-video-001"
+    assert output.payload["videos"][0]["external_task_state"]["asset_type"] == "video"
+    assert output.payload["videos"][0]["external_task_state"]["poll_count"] == 0
 
 
 def test_video_generation_storyboard_frames_inject_image_urls():

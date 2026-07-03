@@ -5,6 +5,7 @@ import json
 import mimetypes
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -92,6 +93,46 @@ class AgentsRuntime:
     def __init__(self) -> None:
         self.providers = ProviderRegistry()
         self.media = LocalMediaProvider()
+
+    def _utc_now_iso(self) -> str:
+        return datetime.now(UTC).isoformat()
+
+    def _external_task_state(
+        self,
+        *,
+        asset_type: str,
+        task_id: str | None,
+        status: str | None,
+        provider_name: str,
+        model_name: str,
+        event: str,
+    ) -> dict | None:
+        if not task_id:
+            return None
+        now = self._utc_now_iso()
+        return {
+            "asset_type": asset_type,
+            "task_id": task_id,
+            "status": status or "submitted",
+            "provider_name": provider_name,
+            "model_name": model_name,
+            "submitted_at": now,
+            "last_seen_at": now,
+            "last_event": event,
+            "poll_count": 0,
+        }
+
+    def _trace_external_task(
+        self,
+        runtime_config: dict | None,
+        *,
+        event_type: str,
+        message: str,
+        payload: dict,
+    ) -> None:
+        trace_callback = (runtime_config or {}).get("trace_callback")
+        if trace_callback:
+            trace_callback(event_type, message, payload)
 
     def _director_handoff(self, planning: PlanningBrief | dict | None) -> dict:
         if not planning:
@@ -2287,6 +2328,18 @@ class AgentsRuntime:
                     image_uri = str(existing_image_path)
                     image_source = "reused_existing"
                 else:
+                    self._trace_external_task(
+                        runtime_config,
+                        event_type="external_task_submit_started",
+                        message="Submitting image generation task to provider.",
+                        payload={
+                            "asset_type": "image",
+                            "variant_id": item.variant_id,
+                            "selected_provider_name": (((runtime_config or {}).get("image") or {}).get("provider_name")) or provider,
+                            "selected_model_name": (((runtime_config or {}).get("image") or {}).get("model_name")) or model,
+                            "operation": "edit" if reference_inputs else "generate",
+                        },
+                    )
                     image_result, image_provider, image_model = self._generate_image(
                         fallback_provider=provider,
                         fallback_model=model,
@@ -2557,6 +2610,19 @@ class AgentsRuntime:
                     elif task_id:
                         image_source = "external_task_pending"
                         image_uri = self.media.reserve_binary_artifact(run_id, image_filename)
+                        self._trace_external_task(
+                            runtime_config,
+                            event_type="external_task_submitted",
+                            message=f"Image generation task submitted: {task_id}.",
+                            payload={
+                                "asset_type": "image",
+                                "variant_id": item.variant_id,
+                                "external_task_id": task_id,
+                                "generation_status": status,
+                                "selected_provider_name": image_provider,
+                                "selected_model_name": image_model,
+                            },
+                        )
                     else:
                         image_bytes, image_source = decode_placeholder_png(), "placeholder"
                         image_uri = self.media.write_binary_artifact(run_id, image_filename, image_bytes)
@@ -2581,6 +2647,14 @@ class AgentsRuntime:
                 "provider_errors": provider_errors,
                 "external_task_id": task_id,
                 "generation_status": status,
+                "external_task_state": self._external_task_state(
+                    asset_type="image",
+                    task_id=task_id,
+                    status=status,
+                    provider_name=image_provider,
+                    model_name=image_model,
+                    event="submitted",
+                ),
                 "raw_response": raw_response,
                 "product_truth_contract": product_truth,
                 "visual_proof_spec": self._variant_visual_proof_spec(item),
@@ -3334,6 +3408,20 @@ class AgentsRuntime:
                 source = "reused_existing"
                 generation_status = "completed"
             else:
+                self._trace_external_task(
+                    runtime_config,
+                    event_type="external_task_submit_started",
+                    message="Submitting video generation task to provider.",
+                    payload={
+                        "asset_type": "video",
+                        "variant_id": variant_id,
+                        "selected_provider_name": ((runtime_config or {}).get("video") or {}).get("provider_name") or provider,
+                        "selected_model_name": ((runtime_config or {}).get("video") or {}).get("model_name") or model,
+                        "duration_seconds": duration_seconds,
+                        "size": video_size,
+                        "resolution": resolution,
+                    },
+                )
                 video_result, provider_used, model_used = self._generate_video_submit_only(
                     fallback_provider=provider,
                     fallback_model=model,
@@ -3361,6 +3449,20 @@ class AgentsRuntime:
                 elif external_task_id:
                     source = "external_task_pending"
                     video_uri = self.media.reserve_binary_artifact(run_id, video_filename)
+                    self._trace_external_task(
+                        runtime_config,
+                        event_type="external_task_submitted",
+                        message=f"Video generation task submitted: {external_task_id}.",
+                        payload={
+                            "asset_type": "video",
+                            "variant_id": variant_id,
+                            "external_task_id": external_task_id,
+                            "generation_status": generation_status,
+                            "selected_provider_name": provider_used,
+                            "selected_model_name": model_used,
+                            "duration_seconds": duration_seconds,
+                        },
+                    )
                 else:
                     error_text = "Video generation returned no data, no URL, and no external task ID."
                     video_uri = self._generation_error_artifact(run_id, variant_id, error_text)
@@ -3388,6 +3490,14 @@ class AgentsRuntime:
                 "require_physical_plausibility": True,
             },
             "generation_spec": generation_spec,
+            "external_task_state": self._external_task_state(
+                asset_type="video",
+                task_id=external_task_id,
+                status=generation_status,
+                provider_name=provider_used,
+                model_name=model_used,
+                event="submitted",
+            ),
         }
         return payload, estimated_cost, model_used
 

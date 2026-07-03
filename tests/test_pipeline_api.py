@@ -995,6 +995,14 @@ def test_assets_refresh_recovers_external_video_task(client, monkeypatch):
     v1 = next(item for item in variants["items"] if item["variant_id"] == "V1")
     video = next(asset for asset in v1["assets"] if asset["asset_type"] == "video")
     assert video["payload"]["generation_status"] == "completed"
+    assert video["payload"]["external_task_state"]["poll_count"] == 1
+    assert video["payload"]["provider_status"] == "completed"
+    assert video["payload"]["last_polled_at"]
+
+    with SessionLocal() as db:
+        from app.data.models import AgentTraceEvent
+
+        assert db.query(AgentTraceEvent).filter_by(run_id=run_id, event_type="external_task_polled").count() == 1
 
 
 def test_assets_refresh_recovers_pending_copy_image_task(client, monkeypatch):
@@ -1085,7 +1093,7 @@ def test_assets_refresh_recovers_pending_copy_image_task(client, monkeypatch):
     assert payload["copy_images"]["completed"] == 1
 
     with SessionLocal() as db:
-        from app.data.models import PipelineRun, StageTask, TaskStatus
+        from app.data.models import AgentTraceEvent, PipelineRun, StageTask, TaskStatus
 
         copy_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="copy_image_generation").one()
         visual_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="visual_quality_assessment").one()
@@ -1096,6 +1104,10 @@ def test_assets_refresh_recovers_pending_copy_image_task(client, monkeypatch):
         assert db.get(PipelineRun, run_id).current_stage == "visual_quality_assessment"
         assert image_payload["generation_status"] == "completed"
         assert image_payload["source"] == "b64_json"
+        assert image_payload["external_task_state"]["poll_count"] == 1
+        assert image_payload["provider_status"] == "completed"
+        assert image_payload["last_polled_at"]
+        assert db.query(AgentTraceEvent).filter_by(run_id=run_id, event_type="external_task_polled").count() == 1
         assert image_asset.failure_category is None
         assert Path(image_asset.uri).stat().st_size > 1024
 

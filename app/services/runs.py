@@ -2335,6 +2335,77 @@ def _pending_status(value: object) -> bool:
     return str(value or "").lower() in {"", "submitted", "queued", "pending", "processing", "running"}
 
 
+def _external_task_elapsed_seconds(submitted_at: object, now: datetime) -> float | None:
+    if not submitted_at:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(submitted_at))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return round(max(0.0, (now - parsed).total_seconds()), 3)
+
+
+def _mark_external_task_polled(payload: dict, *, asset_type: str, status: str | None) -> dict:
+    now = datetime.now(UTC)
+    now_iso = now.isoformat()
+    state = dict(payload.get("external_task_state") or {})
+    task_id = payload.get("external_task_id") or state.get("task_id")
+    if not task_id:
+        return state
+    state.setdefault("asset_type", asset_type)
+    state["task_id"] = task_id
+    state["status"] = status or payload.get("generation_status") or state.get("status") or "pending"
+    state.setdefault("submitted_at", now_iso)
+    state["last_seen_at"] = now_iso
+    state["last_polled_at"] = now_iso
+    state["last_event"] = "polled"
+    state["poll_count"] = int(state.get("poll_count") or 0) + 1
+    elapsed = _external_task_elapsed_seconds(state.get("submitted_at"), now)
+    if elapsed is not None:
+        state["elapsed_seconds"] = elapsed
+        payload["external_task_elapsed_seconds"] = elapsed
+    payload["external_task_state"] = state
+    payload["last_polled_at"] = now_iso
+    payload["provider_status"] = state["status"]
+    return state
+
+
+def _trace_external_task_poll(
+    db: Session,
+    *,
+    run_id: str,
+    stage_name: str,
+    agent_name: str,
+    provider_name: str | None,
+    model_name: str | None,
+    payload: dict,
+) -> None:
+    state = payload.get("external_task_state") if isinstance(payload.get("external_task_state"), dict) else {}
+    task_id = payload.get("external_task_id") or state.get("task_id")
+    if not task_id:
+        return
+    stage_task = db.scalar(select(StageTask).where(StageTask.run_id == run_id, StageTask.stage_name == stage_name))
+    add_agent_trace_event(
+        db,
+        run_id=run_id,
+        stage_task_id=stage_task.id if stage_task else None,
+        stage_name=stage_name,
+        agent_name=agent_name,
+        event_type="external_task_polled",
+        message=f"External {state.get('asset_type') or 'media'} task {task_id} status: {state.get('status') or payload.get('generation_status')}.",
+        provider_name=provider_name,
+        model_name=model_name,
+        payload={
+            "external_task_id": task_id,
+            "generation_status": payload.get("generation_status"),
+            "provider_status": payload.get("provider_status"),
+            "external_task_state": state,
+        },
+    )
+
+
 def _pending_storyboard_frame(frame: dict) -> bool:
     for item in [frame, *((frame.get("candidate_frames") or []) if isinstance(frame.get("candidate_frames"), list) else [])]:
         if isinstance(item, dict) and item.get("external_task_id") and _pending_status(item.get("generation_status")):
@@ -2454,6 +2525,7 @@ def _submit_next_video_segment(
 
 def _refresh_segmented_video_payload(
     *,
+    db: Session,
     run: PipelineRun,
     payload: dict,
     provider,
@@ -2480,6 +2552,16 @@ def _refresh_segmented_video_payload(
         refreshed += 1
         segment["generation_status"] = result.status or (selected.status if selected else None) or segment.get("generation_status")
         segment["raw_response"] = result.raw_response or (selected.raw_response if selected else {}) or segment.get("raw_response") or {}
+        _mark_external_task_polled(segment, asset_type="video_segment", status=segment.get("generation_status"))
+        _trace_external_task_poll(
+            db=db,
+            run_id=run.id,
+            stage_name="video_generation",
+            agent_name="video_generation_agent",
+            provider_name=provider_name,
+            model_name=model_name,
+            payload=segment,
+        )
         if selected and selected.url:
             segment["result_url"] = selected.url
         last_frame_url = runtime._last_frame_url_from_raw(getattr(selected, "raw_response", None), result.raw_response)
@@ -2597,6 +2679,7 @@ def refresh_video_task_assets(db: Session, run_id: str) -> dict:
         payload = dict(asset.payload or {})
         if payload.get("segment_queue"):
             payload, segment_refreshed, segment_completed = _refresh_segmented_video_payload(
+                db=db,
                 run=run,
                 payload=payload,
                 provider=provider,
@@ -2630,6 +2713,16 @@ def refresh_video_task_assets(db: Session, run_id: str) -> dict:
         refreshed += 1
         payload["generation_status"] = result.status or (selected.status if selected else None) or payload.get("generation_status")
         payload["raw_response"] = result.raw_response or (selected.raw_response if selected else {}) or payload.get("raw_response") or {}
+        _mark_external_task_polled(payload, asset_type="video", status=payload.get("generation_status"))
+        _trace_external_task_poll(
+            db=db,
+            run_id=run_id,
+            stage_name="video_generation",
+            agent_name="video_generation_agent",
+            provider_name=provider_name,
+            model_name=model_name,
+            payload=payload,
+        )
         if selected and selected.url:
             payload["result_url"] = selected.url
         if selected and (selected.url or selected.b64_data):
@@ -2728,6 +2821,16 @@ def refresh_copy_image_task_assets(db: Session, run_id: str) -> dict:
             refreshed += 1
             payload["generation_status"] = result.status or (selected.status if selected else None) or payload.get("generation_status")
             payload["raw_response"] = result.raw_response or (selected.raw_response if selected else {}) or payload.get("raw_response") or {}
+            _mark_external_task_polled(payload, asset_type="image", status=payload.get("generation_status"))
+            _trace_external_task_poll(
+                db=db,
+                run_id=run_id,
+                stage_name="copy_image_generation",
+                agent_name="copy_image_agent",
+                provider_name=provider_name,
+                model_name=model_name,
+                payload=payload,
+            )
             if selected and (selected.url or selected.b64_json):
                 image_bytes, source = runtime._materialize_generated_image(selected)
                 if image_bytes:
@@ -2849,6 +2952,16 @@ def refresh_storyboard_image_task_assets(db: Session, run_id: str) -> dict:
             refreshed += 1
             payload["generation_status"] = result.status or (selected.status if selected else None) or payload.get("generation_status")
             payload["raw_response"] = result.raw_response or (selected.raw_response if selected else {}) or payload.get("raw_response") or {}
+            _mark_external_task_polled(payload, asset_type="storyboard_frame", status=payload.get("generation_status"))
+            _trace_external_task_poll(
+                db=db,
+                run_id=run_id,
+                stage_name="storyboard_image_generation",
+                agent_name="storyboard_agent",
+                provider_name=provider_name,
+                model_name=model_name,
+                payload=payload,
+            )
             if selected and (selected.url or selected.b64_json):
                 image_bytes, source = runtime._materialize_generated_image(selected)
                 if image_bytes:
