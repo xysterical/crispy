@@ -278,11 +278,11 @@ def test_divergence_adds_visual_proof_spec_for_concept_variants():
     variant = output.payload["variants"][0]
     spec = variant["visual_proof_spec"]
     assert spec["desired_scene"] == "controlled dog walk with front chest leash redirection"
-    assert "dog lunging forward as if pulling is still uncontrolled" in spec["must_not_show"]
+    assert "the problem continuing unchanged" in spec["must_not_show"]
     assert output.payload["experiment_matrix"][0]["visual_proof_spec"] == spec
 
 
-def test_visual_proof_spec_uses_product_specific_recipes():
+def test_visual_proof_spec_uses_product_agnostic_recipes():
     runtime = AgentsRuntime()
 
     raincoat = runtime._variant_visual_proof_spec(
@@ -312,13 +312,13 @@ def test_visual_proof_spec_uses_product_specific_recipes():
 
     assert raincoat["selling_point_type"] == "risk_removal"
     assert raincoat["creative_mode"] == "proof_demo"
-    assert "visual suggests the raincoat failed to keep the dog dry" in raincoat["semantic_fail_conditions"]
+    assert "visual implies the product failed to reduce the stated risk or problem" in raincoat["semantic_fail_conditions"]
     assert cup["selling_point_type"] == "identity_expression"
     assert cup["creative_mode"] == "creative_scene"
-    assert "custom print panel" in cup["must_show"]
+    assert "the identity-bearing detail" in cup["must_show"]
     assert brush["selling_point_type"] == "functional_proof"
     assert brush["creative_mode"] == "proof_demo"
-    assert "shoe surface contact" in brush["must_show"]
+    assert "the product causing the change" in brush["must_show"]
 
 
 def test_divergence_creative_risk_adds_wildcard_leap_spec():
@@ -344,7 +344,7 @@ def test_divergence_creative_risk_adds_wildcard_leap_spec():
     assert output.payload["experiment_matrix"][-1]["creative_leap_spec"] == variants[-1]["creative_leap_spec"]
 
 
-def test_wildcard_keeps_product_specific_visual_proof_context():
+def test_wildcard_uses_product_agnostic_visual_proof_context():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
 
@@ -366,13 +366,13 @@ def test_wildcard_keeps_product_specific_visual_proof_context():
     )
 
     variant = output.payload["variants"][0]
-    assert variant["visual_proof_spec"]["selling_point_type"] == "functional_proof"
-    assert "front chest D-ring redirects leash tension" in variant["creative_leap_spec"]["proof_guardrail"]
-    assert "line of force" in variant["creative_leap_spec"]["opening_hook"]
+    assert variant["visual_proof_spec"]["selling_point_type"] == "risk_removal"
+    assert "front chest D-ring" not in variant["creative_leap_spec"]["opening_hook"]
+    assert "line of force" not in variant["creative_leap_spec"]["opening_hook"]
     reasoning = variant["creative_leap_spec"]["conceptual_leap_reasoning"]
-    assert reasoning["abstract_concept"] == "force redirection and regained control"
-    assert reasoning["why_it_maps"]["front chest D-ring"] == "redirect point"
-    assert any("tug-of-war" in item for item in reasoning["rejected_metaphors"])
+    assert reasoning["source_domains"] == ["physical analogy", "micro-story", "visual contrast"]
+    assert reasoning["why_it_maps"]["product"] == "truth anchor"
+    assert any("pure spectacle" in item for item in reasoning["rejected_metaphors"])
 
 
 def test_video_scripting_writes_creative_leap_into_shots():
@@ -460,7 +460,7 @@ def test_video_scripting_carries_visual_proof_spec_into_shots():
     spec = output.payload["product_context"]["visual_proof_specs"]["V1"]
     first_shot = output.payload["scripts"][0]["shot_plan"][0]
     assert "visual_proof_specs" in captured_prompt["prompt"]
-    assert "dog lunging forward as if pulling is still uncontrolled" in first_shot["first_frame"]["description"]
+    assert "the problem continuing unchanged" in first_shot["first_frame"]["description"]
     assert f"avoid: {spec['semantic_fail_conditions'][-1]}" in first_shot["product_continuity_constraints"]
 
 
@@ -630,8 +630,8 @@ def test_prompt_grammar_flows_from_planning_to_video_script_and_storyboard():
     prompt_grammar = planning_output.payload["creative_director_plan"]["prompt_grammar"]
 
     assert "autofocus hunting" in prompt_grammar["camera_style"]
-    assert "leash jingles" in prompt_grammar["audio_plan"]
-    assert "front chest D-ring" in planning.creative_director_plan["scene_arc"][0]["scene_direction"]
+    assert "leash jingles" not in prompt_grammar["audio_plan"]
+    assert "front chest D-ring" not in planning.creative_director_plan["scene_arc"][0]["scene_direction"]
     scene_directions = [item["scene_direction"] for item in planning.creative_director_plan["scene_arc"]]
     assert len(scene_directions) == len(set(scene_directions))
 
@@ -663,7 +663,7 @@ def test_prompt_grammar_flows_from_planning_to_video_script_and_storyboard():
     assert "product proof: show" in first_shot_text
     assert len(first_shot_text) < 500
     assert "autofocus hunting" in first_shot["motion_description"]
-    assert "leash jingles" in first_shot["audio_description"]
+    assert "natural ambient sound only" in first_shot["audio_description"]
 
     storyboard_output = runtime.run_storyboard_image_generation(
         run_id="prompt-grammar-flow",
@@ -676,7 +676,7 @@ def test_prompt_grammar_flows_from_planning_to_video_script_and_storyboard():
     first_frame_prompt = storyboard_output.payload["frames"][0]["prompt"]
 
     assert "autofocus hunting" in first_frame_prompt
-    assert "leash jingles" in first_frame_prompt
+    assert "natural ambient sound only" in first_frame_prompt
     assert "Visual proof spec: Visual proof:" in first_frame_prompt
     assert "mode proof_demo" in first_frame_prompt
 
@@ -912,7 +912,7 @@ def test_copy_image_generation_uses_variant_visual_proof_spec():
 
     assert "Variant visual proof spec" in captured_prompts[0]
     assert "Creative leap: device bait_and_reveal" in captured_prompts[0]
-    assert "dog lunging forward as if pulling is still uncontrolled" in captured_prompts[0]
+    assert "the problem continuing unchanged" in captured_prompts[0]
     assert output.payload["image_assets"][0]["visual_proof_spec"]["semantic_fail_conditions"]
     assert output.payload["image_assets"][0]["creative_leap_spec"]["creative_device"] == "bait_and_reveal"
     assert "mapping" in captured_prompts[0]

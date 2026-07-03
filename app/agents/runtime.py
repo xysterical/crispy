@@ -745,9 +745,7 @@ class AgentsRuntime:
 
         duration = int(creative_specs.get("video_duration_seconds") or creative_specs.get("duration") or 8)
         audio_plan = "natural on-set audio: footsteps, product handling, room tone, and light ambient environment"
-        if any(term in source for term in ("dog", "leash", "harness", "pet", "犬", "狗", "牵引")):
-            audio_plan = "natural dog-walk ambience: leash jingles, paws/footsteps, light street sound, handler movement, no music"
-        elif is_documentary:
+        if is_documentary:
             audio_plan = "natural ambient sound only; no music, no narration unless the brief explicitly asks for it"
 
         negative_constraints = list(dict.fromkeys(
@@ -893,79 +891,30 @@ class AgentsRuntime:
         return spec
 
     def _conceptual_leap_reasoning(self, *, variant: VariantCandidate, visual_proof_spec: dict, creative_leap_spec: dict) -> dict:
-        text = " ".join([variant.angle, str(visual_proof_spec), str(creative_leap_spec)]).lower()
-        if "anti" in text or "leash" in text or "pull" in text or "d-ring" in text:
-            return {
-                "abstract_concept": "force redirection and regained control",
-                "source_domains": ["line of force", "traffic redirect", "martial arts redirection"],
-                "selected_metaphor": "a visible leash-tension line bends through the front chest D-ring",
-                "why_it_maps": {
-                    "leash tension": "visible force line",
-                    "front chest D-ring": "redirect point",
-                    "controlled dog posture": "resolved force",
-                },
-                "rejected_metaphors": [
-                    "tug-of-war because it makes the dog look uncontrolled",
-                    "magnetism because it feels too sci-fi for everyday pet use",
-                ],
-            }
-        if "cup" in text or "print" in text or "brand" in text:
-            return {
-                "abstract_concept": "small object carrying public brand memory",
-                "source_domains": ["billboard", "event photo", "souvenir"],
-                "selected_metaphor": "the printed cup works like a tiny billboard inside a real social photo",
-                "why_it_maps": {
-                    "print panel": "billboard face",
-                    "paper cup": "portable media surface",
-                    "event/cafe scene": "audience context",
-                },
-                "rejected_metaphors": [
-                    "giant cup because it breaks product scale",
-                    "invented logo takeover because it violates print-area truth",
-                ],
-            }
-        if "rain" in text or "water" in text:
-            return {
-                "abstract_concept": "portable protection from weather",
-                "source_domains": ["shield", "umbrella", "dry bubble"],
-                "selected_metaphor": "rain slides around the coat like a small protective shield",
-                "why_it_maps": {
-                    "raincoat body": "protective surface",
-                    "hood": "coverage cue",
-                    "dry dog": "protection outcome",
-                },
-                "rejected_metaphors": [
-                    "force field because it can look too artificial",
-                    "soaked dog because it implies product failure",
-                ],
-            }
-        if "brush" in text or "shoe" in text:
-            return {
-                "abstract_concept": "revealing cleanliness through contact",
-                "source_domains": ["wipe reveal", "dust trail", "surface restoration"],
-                "selected_metaphor": "the brush leaves a visible clean path as bristles pass over the shoe",
-                "why_it_maps": {
-                    "bristles": "contact tool",
-                    "shoe surface": "before/after canvas",
-                    "clean path": "proof of effect",
-                },
-                "rejected_metaphors": [
-                    "magic sparkle because it hides the bristle mechanism",
-                    "sponge wipe because it changes the product category",
-                ],
-            }
+        proof = str(visual_proof_spec.get("proof_mechanism") or variant.message or variant.hook or variant.angle)
+        must_show = [str(item) for item in (visual_proof_spec.get("must_show") or []) if str(item).strip()]
+        fail_conditions = [str(item) for item in (visual_proof_spec.get("semantic_fail_conditions") or []) if str(item).strip()]
         return {
-            "abstract_concept": str(variant.angle or visual_proof_spec.get("proof_mechanism") or "product benefit"),
-            "source_domains": ["visual analogy", "micro-story"],
-            "selected_metaphor": creative_leap_spec.get("concept_metaphor") or variant.angle,
-            "why_it_maps": {"product": "truth anchor", "benefit": "visual outcome"},
-            "rejected_metaphors": ["generic lifestyle because it does not prove the benefit"],
+            "abstract_concept": str(variant.angle or proof or "product benefit"),
+            "source_domains": ["physical analogy", "micro-story", "visual contrast"],
+            "selected_metaphor": creative_leap_spec.get("concept_metaphor") or f"an unexpected but product-safe metaphor for {variant.angle}",
+            "why_it_maps": {
+                "product": "truth anchor",
+                "proof mechanism": proof,
+                "buyer outcome": "visual resolution",
+            },
+            "required_evidence": must_show[:4],
+            "rejected_metaphors": [
+                "generic lifestyle because it does not prove the benefit",
+                "pure spectacle because it can replace the product truth",
+                *[f"avoid semantic failure: {item}" for item in fail_conditions[:2]],
+            ],
         }
 
     def _bold_opening(self, angle: str, visual_proof_spec: dict) -> str:
         selling_type = str(visual_proof_spec.get("selling_point_type") or "")
         if selling_type == "identity_expression":
-            return "open on people noticing the printed cup before the brand is revealed"
+            return "open on the identity-bearing detail being noticed before the full product context is revealed"
         if selling_type == "risk_removal":
             return "open on the problem weather or mess, then reveal the protected product in use"
         return f"open on the tension/problem that `{angle}` resolves, before showing the product"
@@ -975,32 +924,16 @@ class AgentsRuntime:
         if selling_type == "identity_expression":
             return "the product becomes the brand's social calling card in the scene"
         if selling_type == "risk_removal":
-            return "the product acts like a small shield against the problem"
+            return "the product turns a visible problem into a visibly safer or easier outcome"
         return f"`{angle}` is shown as a cause-and-effect visual reveal, not a generic beauty shot"
 
     def _wildcard_opening(self, angle: str, visual_proof_spec: dict) -> str:
-        text = " ".join([angle, str(visual_proof_spec)]).lower()
-        if "anti" in text or "leash" in text or "pull" in text or "d-ring" in text:
-            return "open with leash tension visualized like a redirected line of force before revealing the front chest D-ring"
-        if "cup" in text or "print" in text or "brand" in text:
-            return "open with the cup print briefly acting like a tiny billboard in a real event photo"
-        if "rain" in text or "water" in text:
-            return "open with rain behaving like it hits an invisible shield around the raincoat"
-        if "brush" in text or "shoe" in text:
-            return "open with dust lifting away in a visible trail as the brush passes over the shoe"
-        return f"open with an impossible-but-safe visual metaphor for `{angle}`"
+        proof = str(visual_proof_spec.get("proof_mechanism") or angle)
+        return f"open with an impossible-but-safe visual contradiction that makes `{proof}` immediately legible"
 
     def _wildcard_metaphor(self, angle: str, visual_proof_spec: dict) -> str:
-        text = " ".join([angle, str(visual_proof_spec)]).lower()
-        if "anti" in text or "leash" in text or "pull" in text or "d-ring" in text:
-            return "pulling force visibly changes direction, then resolves into a real controlled walk"
-        if "cup" in text or "print" in text or "brand" in text:
-            return "a small printed cup carries brand memory like a miniature out-of-home ad"
-        if "rain" in text or "water" in text:
-            return "rain slides off the coat like a protective dome without changing the garment"
-        if "brush" in text or "shoe" in text:
-            return "the brush reveals a clean path like wiping a fogged window, while staying physically plausible"
-        return f"`{angle}` becomes a surprising physical metaphor without changing product truth"
+        proof = str(visual_proof_spec.get("proof_mechanism") or angle)
+        return f"`{proof}` becomes a surprising physical metaphor without changing product truth"
 
     def _planning_director_blocks(
         self,
@@ -1031,15 +964,6 @@ class AgentsRuntime:
             if 8 <= len(item.strip(" -*")) <= 90
             and any(word in item.lower() for word in ("scene", "setting", "bedroom", "cafe", "dinner", "office", "gallery", "wedding", "evening", "morning", "street", "sidewalk", "walk", "kitchen", "counter", "terrace", "residential"))
         ][:4]
-        source_text = " ".join([product_name, brief, media_truth]).lower()
-        if re.search(r"\banti[- ]?pull|leash|harness|dog walk|牵引|防拉|狗\b", source_text):
-            dog_walk_hints = [
-                "sidewalk dog-walk start with dog wearing the harness and leash clipped to the front chest D-ring",
-                "close handheld view of the front chest D-ring redirecting leash tension",
-                "quiet residential walk shifts from mild pull to controlled posture",
-            ]
-            if not any("front chest" in item.lower() for item in scene_hints):
-                scene_hints = dog_walk_hints + scene_hints
         duration = int(creative_specs.get("video_duration_seconds") or 8)
         max_segment = self._max_video_segment_seconds(creative_specs)
         segment_count = max(1, (duration + max_segment - 1) // max_segment)
@@ -1728,45 +1652,35 @@ class AgentsRuntime:
 
     def _visual_proof_recipe(self, source_text: str) -> dict[str, list[str] | str]:
         text = source_text.lower()
-        if re.search(r"\banti[- ]?pull|no[- ]?pull|pulling|leash|front chest|d[- ]?ring\b|防拉|防暴冲|牵引", text):
-            return {
-                "selling_point_type": "functional_proof",
-                "creative_mode": "proof_demo",
-                "scene_recipe": "side-angle dog walk demo where leash tension is redirected through the front chest ring and the dog is stabilized",
-                "proof_mechanism": "front chest D-ring redirects leash tension so the dog slows or turns instead of lunging",
-                "must_show": ["dog wearing the harness", "leash connected at the front chest D-ring", "controlled walking posture"],
-                "must_not_show": ["dog lunging forward as if pulling is still uncontrolled", "leash attached only like a regular collar"],
-                "semantic_fail_conditions": ["image communicates active pulling instead of controlled anti-pull redirection"],
-            }
-        if re.search(r"\brain|raincoat|waterproof|weather|dry|hood\b|雨衣|防水|下雨", text):
+        if re.search(r"\b(protect|prevent|avoid|safe|secure|risk|weather|waterproof|dry|control|controlled|redirect|stabilize|reduce)\b|防|保护|避免|稳定|控制", text):
             return {
                 "selling_point_type": "risk_removal",
                 "creative_mode": "proof_demo",
-                "scene_recipe": "rainy outdoor moment where the dog stays visibly dry under the hooded raincoat",
-                "proof_mechanism": "rain beads off the coat while the dog remains comfortable and covered",
-                "must_show": ["dog wearing the raincoat", "hood and chest panel visible", "rain or wet-ground context", "dry protected dog body"],
-                "must_not_show": ["dog soaked through the coat", "raincoat color or hood removed"],
-                "semantic_fail_conditions": ["visual suggests the raincoat failed to keep the dog dry"],
+                "scene_recipe": "",
+                "proof_mechanism": "",
+                "must_show": ["the risk or problem", "the product visibly addressing it", "the safer or more controlled outcome"],
+                "must_not_show": ["the problem continuing unchanged", "the product hidden during the proof"],
+                "semantic_fail_conditions": ["visual implies the product failed to reduce the stated risk or problem"],
             }
-        if re.search(r"\bcustom|print|brand|logo|company|cup|packaging\b|定制|印刷|纸杯", text):
+        if re.search(r"\b(custom|brand|identity|logo|personal|personalized|print|design|signature)\b|定制|品牌|个性|印刷", text):
             return {
                 "selling_point_type": "identity_expression",
                 "creative_mode": "creative_scene",
-                "scene_recipe": "social-ready cafe or event scene where the custom print area is readable and central",
-                "proof_mechanism": "the printed cup visibly carries brand identity in a real use occasion",
-                "must_show": ["custom print panel", "paper cup shape", "white cup interior or rim", "brand/event use context"],
-                "must_not_show": ["plain blank cup", "mug or glass replacement", "invented dominant logo that overrides the print area"],
-                "semantic_fail_conditions": ["visual hides the customization benefit or turns the product into generic drinkware"],
+                "scene_recipe": "",
+                "proof_mechanism": "",
+                "must_show": ["the identity-bearing detail", "the product clearly carrying that identity", "a context where the identity matters"],
+                "must_not_show": ["generic product with no identity cue", "invented branding that overrides the submitted product truth"],
+                "semantic_fail_conditions": ["visual hides the stated identity or customization benefit"],
             }
-        if re.search(r"\bbrush|shoe|clean|polish|bristle|horsehair\b|鞋刷|清洁|刷毛", text):
+        if re.search(r"\b(clean|before|after|transform|restore|improve|remove|reveal|repair|upgrade)\b|清洁|前后|改善|修复|去除", text):
             return {
                 "selling_point_type": "functional_proof",
                 "creative_mode": "proof_demo",
-                "scene_recipe": "close product demo with bristles contacting a shoe and a clear cleaned area or before-after contrast",
-                "proof_mechanism": "dense bristles lift dust and restore shoe surface texture",
-                "must_show": ["wood handle", "black bristles", "shoe surface contact", "visible cleaning result"],
-                "must_not_show": ["toothbrush or sponge shape", "bristles hidden", "no visible cleaning action"],
-                "semantic_fail_conditions": ["visual shows a brush but no evidence that it cleans shoes"],
+                "scene_recipe": "",
+                "proof_mechanism": "",
+                "must_show": ["the starting state", "the product causing the change", "the visible result"],
+                "must_not_show": ["result appears without product action", "product category changes during the proof"],
+                "semantic_fail_conditions": ["visual shows the product but no evidence of the stated transformation"],
             }
         return {
             "selling_point_type": "general_product_benefit",
