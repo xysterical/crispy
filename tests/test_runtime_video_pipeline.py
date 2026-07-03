@@ -321,6 +321,29 @@ def test_visual_proof_spec_uses_product_specific_recipes():
     assert "shoe surface contact" in brush["must_show"]
 
 
+def test_divergence_creative_risk_adds_wildcard_leap_spec():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    output = runtime.run_divergence(
+        run_id="runtime-divergence-creative-risk",
+        planning=PlanningBrief(
+            strategic_angles=["thin and light", "premium feel", "daily carry"],
+            creative_director_plan={"scene_arc": [{"scene_direction": "product spins like a coin before reveal"}]},
+        ),
+        variant_count=3,
+        creative_specs={"creative_risk_level": "wildcard"},
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    variants = output.payload["variants"]
+    assert variants[0]["creative_leap_spec"]["style_risk_level"] == "bold"
+    assert variants[-1]["creative_leap_spec"]["style_risk_level"] == "wildcard"
+    assert variants[-1]["creative_leap_spec"]["creative_device"] == "impossible_physical_metaphor"
+    assert output.payload["experiment_matrix"][-1]["creative_leap_spec"] == variants[-1]["creative_leap_spec"]
+
+
 def test_video_scripting_carries_visual_proof_spec_into_shots():
     runtime = AgentsRuntime()
     captured_prompt: dict[str, str] = {}
@@ -340,6 +363,13 @@ def test_video_scripting_carries_visual_proof_spec_into_shots():
                     angle="anti-pull control",
                     hook="Show the front chest D-ring redirecting leash tension",
                     message="Do not show a dog lunging forward as if pulling is uncontrolled.",
+                    creative_leap_spec={
+                        "creative_device": "bait_and_reveal",
+                        "concept_metaphor": "a dog-walk scene first reads as chaos, then reveals controlled redirection",
+                        "opening_hook": "start with leash tension close-up",
+                        "reveal_structure": "reveal front D-ring control",
+                        "must_not_break": ["product_truth_contract"],
+                    },
                 )
             ]
         ),
@@ -776,6 +806,13 @@ def test_copy_image_generation_uses_variant_visual_proof_spec():
                     angle="anti-pull control",
                     hook="Show the front chest D-ring redirecting leash tension",
                     message="Do not show a dog lunging forward as if pulling is uncontrolled.",
+                    creative_leap_spec={
+                        "creative_device": "bait_and_reveal",
+                        "concept_metaphor": "a dog-walk scene first reads as chaos, then reveals controlled redirection",
+                        "opening_hook": "start with leash tension close-up",
+                        "reveal_structure": "reveal front D-ring control",
+                        "must_not_break": ["product_truth_contract"],
+                    },
                 )
             ]
         ),
@@ -790,8 +827,10 @@ def test_copy_image_generation_uses_variant_visual_proof_spec():
     )
 
     assert "Variant visual proof spec" in captured_prompts[0]
+    assert "Creative leap: device bait_and_reveal" in captured_prompts[0]
     assert "dog lunging forward as if pulling is still uncontrolled" in captured_prompts[0]
     assert output.payload["image_assets"][0]["visual_proof_spec"]["semantic_fail_conditions"]
+    assert output.payload["image_assets"][0]["creative_leap_spec"]["creative_device"] == "bait_and_reveal"
 
 
 def test_copy_image_generation_includes_qa_repair_prompt():

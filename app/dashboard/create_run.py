@@ -176,6 +176,16 @@ CREATE_RUN_HTML = """
                             <option value="shop_account_content">Shop Account Content</option>
                           </select>
                         </div>
+                        <div class="spec-field">
+                          <label>Creative Risk</label>
+                          <select id="creative_risk_level">
+                            <option value="safe" selected>Safe Proof</option>
+                            <option value="social">Social Creative</option>
+                            <option value="bold">Bold Metaphor</option>
+                            <option value="wildcard">Wildcard</option>
+                          </select>
+                          <div class="hint muted">Controls how much dramatic or artistic leap variants may use.</div>
+                        </div>
                       </div>
                       <div class="spec-row">
                         <div class="spec-field" id="field-image-reference-urls">
@@ -509,7 +519,7 @@ CREATE_RUN_JS = """
           const group = createOptgroup('My Presets', data.user.map(p => ({
             value: 'user_' + p.id,
             label: p.name + ' \u00b7 ' + (p.image_size || '?') + ' / ' + (p.video_size || '?') + ' / ' + (p.resolution || '?') + ' / ' + (p.video_duration_seconds || '?') + 's',
-            spec: { image_size: p.image_size, video_size: p.video_size, resolution: p.resolution, video_duration_seconds: p.video_duration_seconds, storyboard_candidate_count: p.storyboard_candidate_count, tiktok_video_style: p.tiktok_video_style, site_surface: p.site_surface, platform_targets: p.platform_targets },
+            spec: { image_size: p.image_size, video_size: p.video_size, resolution: p.resolution, video_duration_seconds: p.video_duration_seconds, storyboard_candidate_count: p.storyboard_candidate_count, tiktok_video_style: p.tiktok_video_style, site_surface: p.site_surface, creative_risk_level: p.creative_risk_level, platform_targets: p.platform_targets },
           })));
           sel.appendChild(group);
         }
@@ -557,10 +567,11 @@ CREATE_RUN_JS = """
     document.getElementById('video_size').value = s.video_size || '';
     document.getElementById('resolution').value = s.resolution || '';
     document.getElementById('video_duration_seconds').value = s.video_duration_seconds || '';
-    document.getElementById('storyboard_candidate_count').value = s.storyboard_candidate_count || 1;
-    document.getElementById('tiktok_video_style').value = s.tiktok_video_style || 'ugc_demo';
-    document.getElementById('dtc_site_surface').value = s.site_surface || 'pdp_primary';
-    document.getElementById('marketplace-fields').style.display = s.marketplace ? 'block' : 'none';
+      document.getElementById('storyboard_candidate_count').value = s.storyboard_candidate_count || 1;
+      document.getElementById('tiktok_video_style').value = s.tiktok_video_style || 'ugc_demo';
+      document.getElementById('dtc_site_surface').value = s.site_surface || 'pdp_primary';
+      document.getElementById('creative_risk_level').value = s.creative_risk_level || 'safe';
+      document.getElementById('marketplace-fields').style.display = s.marketplace ? 'block' : 'none';
   }
 
   function saveCurrentAsCreativePreset() {
@@ -576,6 +587,7 @@ CREATE_RUN_JS = """
       storyboard_candidate_count: parseInt(document.getElementById('storyboard_candidate_count').value, 10) || 1,
       tiktok_video_style: document.getElementById('tiktok_video_style').value || 'ugc_demo',
       site_surface: document.getElementById('dtc_site_surface').value || 'pdp_primary',
+      creative_risk_level: document.getElementById('creative_risk_level').value || 'safe',
     };
     fetch('/creative-presets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       .then(r => { if (!r.ok) return r.text().then(d => { throw new Error(d); }); return r.json(); })
@@ -619,6 +631,7 @@ CREATE_RUN_JS = """
       document.getElementById('video_duration_seconds').value = lastProductConfig.creative_specs.video_duration_seconds || '';
       document.getElementById('storyboard_candidate_count').value = lastProductConfig.creative_specs.storyboard_candidate_count || 1;
       document.getElementById('dtc_site_surface').value = lastProductConfig.creative_specs.site_surface || 'pdp_primary';
+      document.getElementById('creative_risk_level').value = lastProductConfig.creative_specs.creative_risk_level || 'safe';
       if (lastProductConfig.creative_specs.tiktok_video_style) {
         document.getElementById('tiktok_video_style').value = lastProductConfig.creative_specs.tiktok_video_style;
       }
@@ -724,6 +737,7 @@ CREATE_RUN_JS = """
       'workspace_name', 'project_name', 'product_name', 'product_code', 'industry_code',
       'campaign_name', 'channel', 'objective', 'pipeline_mode', 'approval_mode',
       'variant_count', 'image_size', 'video_size', 'resolution', 'video_duration_seconds', 'storyboard_candidate_count', 'tiktok_video_style', 'dtc_site_surface',
+      'creative_risk_level',
       'image_reference_urls', 'image_official_fallback', 'generate_audio', 'return_last_frame', 'seed',
       'video_image_reference_urls', 'video_first_frame_url', 'video_last_frame_url', 'video_reference_urls', 'audio_reference_urls',
       'target_audience', 'price_range', 'key_value_props', 'primary_cta', 'campaign_goal',
@@ -812,6 +826,7 @@ CREATE_RUN_JS = """
     const resolution = document.getElementById('resolution').value.trim();
     const duration = parseInt(document.getElementById('video_duration_seconds').value) || 5;
     const spec = { image_size: imageSize, video_size: videoSize, resolution, video_duration_seconds: duration };
+    spec.creative_risk_level = document.getElementById('creative_risk_level').value || 'safe';
     const imageRefs = parseLineSeparatedUrls(document.getElementById('image_reference_urls').value);
     const videoImageRefs = parseLineSeparatedUrls(document.getElementById('video_image_reference_urls').value);
     const imageWithRoles = buildImageWithRoles();

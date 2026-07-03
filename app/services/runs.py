@@ -1570,6 +1570,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 planning,
                 variant_count=run.variant_count,
                 gm_policy=task.input_payload.get("gm_policy", {}),
+                creative_specs=task.input_payload.get("creative_specs", {}),
                 provider=provider_name,
                 model=model_name,
                 runtime_config=runtime_config,

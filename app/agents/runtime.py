@@ -761,6 +761,59 @@ class AgentsRuntime:
         setup = f"mode {mode}; scene {scene}; " if mode or scene else ""
         return f"Visual proof: {setup}show {must_show}; prove {mechanism}; avoid {avoid}."
 
+    def _creative_risk_level(self, creative_specs: dict | None = None, planning: PlanningBrief | None = None) -> str:
+        raw = str((creative_specs or {}).get("creative_risk_level") or "").strip().lower()
+        if not raw and planning:
+            raw = str((planning.creative_director_plan or {}).get("creative_risk_level") or "").strip().lower()
+        aliases = {
+            "low": "safe",
+            "proof": "safe",
+            "safe_proof": "safe",
+            "medium": "social",
+            "high": "bold",
+            "crazy": "wildcard",
+            "mad": "wildcard",
+        }
+        return aliases.get(raw, raw) if aliases.get(raw, raw) in {"safe", "social", "bold", "wildcard"} else "safe"
+
+    def _creative_leap_prompt_text(self, creative_leap_spec: dict | None) -> str:
+        if not creative_leap_spec:
+            return ""
+        device = str(creative_leap_spec.get("creative_device") or "").strip()
+        metaphor = str(creative_leap_spec.get("concept_metaphor") or "").strip()
+        hook = str(creative_leap_spec.get("opening_hook") or "").strip()
+        reveal = str(creative_leap_spec.get("reveal_structure") or "").strip()
+        must_not = ", ".join(str(item) for item in (creative_leap_spec.get("must_not_break") or [])[:4])
+        return f"Creative leap: device {device}; metaphor {metaphor}; opening {hook}; reveal {reveal}; do not break {must_not}."
+
+    def _creative_leap_spec(self, variant: VariantCandidate, visual_proof_spec: dict, risk_level: str, *, is_wildcard_slot: bool = False) -> dict:
+        if risk_level == "safe":
+            return {}
+        effective_level = "wildcard" if risk_level == "wildcard" and is_wildcard_slot else "bold" if risk_level == "wildcard" else risk_level
+        proof = str(visual_proof_spec.get("proof_mechanism") or variant.message or variant.hook)
+        scene = str(visual_proof_spec.get("scene_recipe") or visual_proof_spec.get("desired_scene") or variant.hook)
+        device_by_level = {
+            "social": "micro_story",
+            "bold": "visual_metaphor",
+            "wildcard": "impossible_physical_metaphor",
+        }
+        return {
+            "creative_risk_level": effective_level,
+            "creative_device": device_by_level.get(effective_level, "micro_story"),
+            "concept_metaphor": f"make `{variant.angle}` feel instantly visible through a surprising but product-true scene",
+            "opening_hook": scene if effective_level == "social" else f"open with an unexpected visual setup that still reveals {variant.angle}",
+            "reveal_structure": "start with the visual device, then reveal the product proof clearly",
+            "product_truth_anchor": (visual_proof_spec.get("must_show") or [])[:4],
+            "must_not_break": [
+                "product_truth_contract",
+                "visual_proof_spec",
+                "physical plausibility of the product",
+                "platform/compliance constraints",
+            ],
+            "style_risk_level": effective_level,
+            "proof_guardrail": proof,
+        }
+
     def _planning_director_blocks(
         self,
         *,
@@ -822,6 +875,7 @@ class AgentsRuntime:
         ]
         creative_director_plan = {
             "hero_insight": f"{product_name} should be sold through a concrete lifestyle moment, not generic product beauty.",
+            "creative_risk_level": self._creative_risk_level(creative_specs),
             "target_audience": audience,
             "emotional_beats": ["curiosity", "recognition", "desire", "confidence"],
             "scene_arc": scene_arc,
@@ -1540,15 +1594,24 @@ class AgentsRuntime:
         spec = self._variant_visual_proof_spec(variant)
         if not spec:
             return ""
+        leap = self._creative_leap_prompt_text(variant.creative_leap_spec)
         return (
             f"Variant visual proof spec: {json.dumps(spec, ensure_ascii=False)}. "
-            "Make the image prove this specific visual mechanism, not just the broad product category. "
+            + (f"{leap} " if leap else "")
+            + "Make the image prove this specific visual mechanism, not just the broad product category. "
         )
 
     def _variant_visual_proof_specs(self, variant_set: VariantSet) -> dict[str, dict]:
         return {
             variant.variant_id: self._variant_visual_proof_spec(variant)
             for variant in variant_set.variants
+        }
+
+    def _variant_creative_leap_specs(self, variant_set: VariantSet) -> dict[str, dict]:
+        return {
+            variant.variant_id: dict(variant.creative_leap_spec or {})
+            for variant in variant_set.variants
+            if variant.creative_leap_spec
         }
 
     def _apply_visual_proof_reviews(self, *, reports: list[dict], summaries: list[dict], model_summary: str) -> str:
@@ -1881,6 +1944,7 @@ class AgentsRuntime:
         *,
         variant_count: int,
         gm_policy: dict | None = None,
+        creative_specs: dict | None = None,
         provider: str,
         model: str,
         runtime_config: dict | None = None,
@@ -1891,12 +1955,14 @@ class AgentsRuntime:
         director_plan = director_handoff.get("creative_director_plan") or {}
         production_plan = director_handoff.get("production_plan") or {}
         quality_gates = director_handoff.get("quality_gates") or []
+        creative_risk_level = self._creative_risk_level(creative_specs, planning)
         prompt = self._compose_stage_prompt(
             runtime_config=runtime_config,
             agent_role="Variant Strategy Agent",
             task_instruction=(
                 f"Generate diverse variants from planning: {planning.model_dump()}. "
                 f"creative_director_plan={director_plan}. production_plan={production_plan}. quality_gates={quality_gates}. "
+                f"creative_risk_level={creative_risk_level}. "
                 f"gm_policy={policy_excerpt}. "
                 "Each variant must test a distinct commercial hypothesis with non-overlapping hook logic."
             ),
@@ -1920,6 +1986,12 @@ class AgentsRuntime:
                 seed_variant,
                 scene_direction,
             )
+            creative_leap_spec = self._creative_leap_spec(
+                seed_variant,
+                visual_proof_spec,
+                creative_risk_level,
+                is_wildcard_slot=i == variant_count - 1,
+            )
             variants.append(
                 VariantCandidate(
                     variant_id=variant_id,
@@ -1931,6 +2003,7 @@ class AgentsRuntime:
                         f"{', '.join(must_preserve[:3]) or 'core product truth'}."
                     ),
                     visual_proof_spec=visual_proof_spec,
+                    creative_leap_spec=creative_leap_spec,
                 )
             )
         variant_set = VariantSet(variants=variants)
@@ -1940,6 +2013,7 @@ class AgentsRuntime:
                 "test_axis": item.angle,
                 "hypothesis": item.message,
                 "visual_proof_spec": item.visual_proof_spec,
+                "creative_leap_spec": item.creative_leap_spec,
                 "director_beat": self._scene_arc_item(director_handoff, idx),
                 "success_signal": "Higher qualified click-through or stronger reviewer preference than adjacent variants.",
                 "kill_condition": "Weak product relevance, unsupported claim, or visual concept cannot show the product truthfully.",
@@ -2357,6 +2431,7 @@ class AgentsRuntime:
                 "raw_response": raw_response,
                 "product_truth_contract": product_truth,
                 "visual_proof_spec": self._variant_visual_proof_spec(item),
+                "creative_leap_spec": dict(item.creative_leap_spec or {}),
             }
             image_payload["reference_source_count"] = len(historical_references or [])
             image_payload["visual_qa"] = self._local_media_qa(
@@ -2506,7 +2581,10 @@ class AgentsRuntime:
             creative_specs=creative_specs,
         )
         visual_proof_specs = self._variant_visual_proof_specs(variant_set)
+        creative_leap_specs = self._variant_creative_leap_specs(variant_set)
         product_context["visual_proof_specs"] = visual_proof_specs
+        if creative_leap_specs:
+            product_context["creative_leap_specs"] = creative_leap_specs
         if director_handoff:
             product_context["director_plan"] = director_handoff
         prompt_grammar = dict(director_plan.get("prompt_grammar") or {})
@@ -2533,13 +2611,14 @@ class AgentsRuntime:
                 f"media_summary={media_summary}, variants={variant_set.model_dump()}. "
                 f"product_truth_contract={product_truth}. "
                 f"visual_proof_specs={visual_proof_specs}. "
+                f"creative_leap_specs={creative_leap_specs}. "
                 f"reference_summary={reference_summary}. "
                 f"generation_spec={generation_spec}. "
                 f"creative_director_plan={director_plan}. production_plan={production_plan}. quality_gates={quality_gates}. "
                 f"prompt_grammar={prompt_grammar}. "
                 "Make every shot filmable, product-specific, and constrained by realistic product handling. "
                 f"{self._human_motion_risk_instruction(' '.join([product_name, media_summary, audience, str(variant_set.model_dump()), str(director_plan)]))} "
-                "Carry the director scene arc, emotional beats, product-truth gates, visual_proof_specs, and prompt_grammar into hooks, shot_plan, and segments. "
+                "Carry the director scene arc, emotional beats, product-truth gates, visual_proof_specs, creative_leap_specs, and prompt_grammar into hooks, shot_plan, and segments. "
                 "Every shot_plan and segment must prove its proof_mechanism and avoid semantic_fail_conditions. "
                 "For each variant, also output a structured shot_plan array with 3-4 shot objects. "
                 "Each shot must have: shot_id, variant_id, intent (one of: thumb_stop, product_proof, usage_demo, cta_packshot), "
@@ -2822,6 +2901,7 @@ class AgentsRuntime:
         product_name = str(product_context.get("product_name") or "the product")
         product_truth = product_context.get("product_truth_contract") or {}
         visual_proof_specs = product_context.get("visual_proof_specs") or {}
+        creative_leap_specs = product_context.get("creative_leap_specs") or {}
         prompt_grammar = dict(product_context.get("prompt_grammar") or director_plan.get("prompt_grammar") or {})
         prompt_grammar_line = self._prompt_grammar_text(prompt_grammar)
         prompt = self._compose_stage_prompt(
@@ -2832,6 +2912,7 @@ class AgentsRuntime:
                 f"reference_summary={reference_summary}. "
                 f"product_truth_contract={product_truth}. "
                 f"visual_proof_specs={visual_proof_specs}. "
+                f"creative_leap_specs={creative_leap_specs}. "
                 f"prompt_grammar={prompt_grammar}. "
                 f"creative_director_plan={director_plan}. production_plan={production_plan}. quality_gates={quality_gates}. "
                 "Treat storyboard as the visual QA plan before video generation: continuity, object logic, product visibility, prompt grammar, and visual proof mechanism."
@@ -2857,12 +2938,14 @@ class AgentsRuntime:
         artifacts: list[dict] = []
         for script in script_pack.scripts:
             visual_proof_spec = dict(visual_proof_specs.get(script.variant_id) or {})
+            creative_leap_spec = dict(creative_leap_specs.get(script.variant_id) or {})
             proof_block = (
                 f"Visual proof spec: {self._visual_proof_prompt_text(visual_proof_spec)} "
                 "Frame must support the proof_mechanism and avoid semantic_fail_conditions. "
                 if visual_proof_spec
                 else ""
             )
+            leap_block = f"{self._creative_leap_prompt_text(creative_leap_spec)} " if creative_leap_spec else ""
             for idx in range(3):
                 shot = script.shot_list[idx] if idx < len(script.shot_list) else script.hook
                 frame_id = f"{script.variant_id}_F{idx + 1}"
@@ -2889,7 +2972,7 @@ class AgentsRuntime:
                     if director_handoff:
                         frame_prompt = (
                             f"{frame_prompt} Director beat: {scene}. Emotional target: {emotion}. Preserve: {must_preserve}. "
-                            f"{proof_block}Quality gates: {gate_names}. No category assumptions."
+                            f"{proof_block}{leap_block}Quality gates: {gate_names}. No category assumptions."
                         )
                 else:
                     tiktok_details = script.tiktok.model_dump() if script.tiktok else {}
@@ -2903,7 +2986,7 @@ class AgentsRuntime:
                         f"Create a realistic storyboard frame for {product_name}. "
                         f"Variant {script.variant_id}. Shot: {shot}. Hook: {script.hook}. "
                         f"Director beat: {scene}. Emotional target: {emotion}. "
-                        f"{proof_block}"
+                        f"{proof_block}{leap_block}"
                         f"Preserve product facts: {must_preserve}. Quality gates: {gate_names}.{shot_contract} "
                         f"Historical reference summary: {reference_summary}. "
                         f"{style_line}"
@@ -2994,6 +3077,7 @@ class AgentsRuntime:
                         "raw_response": raw_response,
                         "product_truth_contract": product_truth,
                         "visual_proof_spec": visual_proof_spec,
+                        "creative_leap_spec": creative_leap_spec,
                     }
                     candidate_payload["visual_qa"] = self._local_media_qa(
                         asset_type="storyboard_frame",
@@ -3029,6 +3113,7 @@ class AgentsRuntime:
                     "selected_candidate_index": int(best_candidate.get("candidate_index") or 0),
                     "candidate_frames": candidate_frames,
                     "visual_proof_spec": visual_proof_spec,
+                    "creative_leap_spec": creative_leap_spec,
                 }
                 frame["reference_source_count"] = len(historical_references or [])
                 frame["visual_qa"] = best_candidate.get("visual_qa") or self._local_media_qa(

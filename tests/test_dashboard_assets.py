@@ -163,6 +163,19 @@ def test_create_run_dashboard_has_tiktok_video_style_control(client):
     assert "spec.tiktok_video_style" in html
 
 
+def test_create_run_dashboard_has_creative_risk_control(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    html = resp.text
+    assert 'id="creative_risk_level"' in html
+    assert "Creative Risk" in html
+    assert "Bold Metaphor" in html
+    assert "Wildcard" in html
+    assert "spec.creative_risk_level = document.getElementById('creative_risk_level').value || 'safe';" in html
+    assert "document.getElementById('creative_risk_level').value = lastProductConfig.creative_specs.creative_risk_level || 'safe';" in html
+    assert "'creative_risk_level'" in html
+
+
 def test_dashboard_storyboard_candidate_control_is_advanced_and_persisted(client):
     resp = client.get("/dashboard")
     assert resp.status_code == 200
