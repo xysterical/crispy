@@ -369,6 +369,10 @@ def test_wildcard_keeps_product_specific_visual_proof_context():
     assert variant["visual_proof_spec"]["selling_point_type"] == "functional_proof"
     assert "front chest D-ring redirects leash tension" in variant["creative_leap_spec"]["proof_guardrail"]
     assert "line of force" in variant["creative_leap_spec"]["opening_hook"]
+    reasoning = variant["creative_leap_spec"]["conceptual_leap_reasoning"]
+    assert reasoning["abstract_concept"] == "force redirection and regained control"
+    assert reasoning["why_it_maps"]["front chest D-ring"] == "redirect point"
+    assert any("tug-of-war" in item for item in reasoning["rejected_metaphors"])
 
 
 def test_video_scripting_writes_creative_leap_into_shots():
@@ -438,6 +442,10 @@ def test_video_scripting_carries_visual_proof_spec_into_shots():
                         "opening_hook": "start with leash tension close-up",
                         "reveal_structure": "reveal front D-ring control",
                         "must_not_break": ["product_truth_contract"],
+                        "conceptual_leap_reasoning": {
+                            "why_it_maps": {"front chest D-ring": "redirect point"},
+                            "rejected_metaphors": ["tug-of-war because it makes the dog look uncontrolled"],
+                        },
                     },
                 )
             ]
@@ -881,6 +889,10 @@ def test_copy_image_generation_uses_variant_visual_proof_spec():
                         "opening_hook": "start with leash tension close-up",
                         "reveal_structure": "reveal front D-ring control",
                         "must_not_break": ["product_truth_contract"],
+                        "conceptual_leap_reasoning": {
+                            "why_it_maps": {"front chest D-ring": "redirect point"},
+                            "rejected_metaphors": ["tug-of-war because it makes the dog look uncontrolled"],
+                        },
                     },
                 )
             ]
@@ -900,6 +912,7 @@ def test_copy_image_generation_uses_variant_visual_proof_spec():
     assert "dog lunging forward as if pulling is still uncontrolled" in captured_prompts[0]
     assert output.payload["image_assets"][0]["visual_proof_spec"]["semantic_fail_conditions"]
     assert output.payload["image_assets"][0]["creative_leap_spec"]["creative_device"] == "bait_and_reveal"
+    assert "mapping" in captured_prompts[0]
 
 
 def test_copy_image_generation_includes_qa_repair_prompt():

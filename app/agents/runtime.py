@@ -786,7 +786,12 @@ class AgentsRuntime:
         must_not = ", ".join(str(item) for item in (creative_leap_spec.get("must_not_break") or [])[:4])
         plan = " / ".join(str(item) for item in (creative_leap_spec.get("shot_device_plan") or [])[:3])
         plan_part = f"; shot plan {plan}" if plan else ""
-        return f"Creative leap: device {device}; metaphor {metaphor}; opening {hook}; reveal {reveal}{plan_part}; do not break {must_not}."
+        reasoning = creative_leap_spec.get("conceptual_leap_reasoning") if isinstance(creative_leap_spec.get("conceptual_leap_reasoning"), dict) else {}
+        maps = reasoning.get("why_it_maps") or {}
+        map_part = f"; mapping {json.dumps(maps, ensure_ascii=False)}" if maps else ""
+        rejected = reasoning.get("rejected_metaphors") or []
+        reject_part = f"; rejected {', '.join(str(item) for item in rejected[:2])}" if rejected else ""
+        return f"Creative leap: device {device}; metaphor {metaphor}; opening {hook}; reveal {reveal}{plan_part}{map_part}{reject_part}; do not break {must_not}."
 
     def _creative_leap_spec(self, variant: VariantCandidate, visual_proof_spec: dict, risk_level: str, *, is_wildcard_slot: bool = False) -> dict:
         if risk_level == "safe":
@@ -822,7 +827,7 @@ class AgentsRuntime:
                 f"reveal the product mechanism: {proof}",
                 "finish with the product benefit visible in-scene",
             ]
-        return {
+        spec = {
             "creative_risk_level": effective_level,
             "creative_device": device,
             "concept_metaphor": metaphor,
@@ -838,6 +843,82 @@ class AgentsRuntime:
             ],
             "style_risk_level": effective_level,
             "proof_guardrail": proof,
+        }
+        spec["conceptual_leap_reasoning"] = self._conceptual_leap_reasoning(
+            variant=variant,
+            visual_proof_spec=visual_proof_spec,
+            creative_leap_spec=spec,
+        )
+        return spec
+
+    def _conceptual_leap_reasoning(self, *, variant: VariantCandidate, visual_proof_spec: dict, creative_leap_spec: dict) -> dict:
+        text = " ".join([variant.angle, str(visual_proof_spec), str(creative_leap_spec)]).lower()
+        if "anti" in text or "leash" in text or "pull" in text or "d-ring" in text:
+            return {
+                "abstract_concept": "force redirection and regained control",
+                "source_domains": ["line of force", "traffic redirect", "martial arts redirection"],
+                "selected_metaphor": "a visible leash-tension line bends through the front chest D-ring",
+                "why_it_maps": {
+                    "leash tension": "visible force line",
+                    "front chest D-ring": "redirect point",
+                    "controlled dog posture": "resolved force",
+                },
+                "rejected_metaphors": [
+                    "tug-of-war because it makes the dog look uncontrolled",
+                    "magnetism because it feels too sci-fi for everyday pet use",
+                ],
+            }
+        if "cup" in text or "print" in text or "brand" in text:
+            return {
+                "abstract_concept": "small object carrying public brand memory",
+                "source_domains": ["billboard", "event photo", "souvenir"],
+                "selected_metaphor": "the printed cup works like a tiny billboard inside a real social photo",
+                "why_it_maps": {
+                    "print panel": "billboard face",
+                    "paper cup": "portable media surface",
+                    "event/cafe scene": "audience context",
+                },
+                "rejected_metaphors": [
+                    "giant cup because it breaks product scale",
+                    "invented logo takeover because it violates print-area truth",
+                ],
+            }
+        if "rain" in text or "water" in text:
+            return {
+                "abstract_concept": "portable protection from weather",
+                "source_domains": ["shield", "umbrella", "dry bubble"],
+                "selected_metaphor": "rain slides around the coat like a small protective shield",
+                "why_it_maps": {
+                    "raincoat body": "protective surface",
+                    "hood": "coverage cue",
+                    "dry dog": "protection outcome",
+                },
+                "rejected_metaphors": [
+                    "force field because it can look too artificial",
+                    "soaked dog because it implies product failure",
+                ],
+            }
+        if "brush" in text or "shoe" in text:
+            return {
+                "abstract_concept": "revealing cleanliness through contact",
+                "source_domains": ["wipe reveal", "dust trail", "surface restoration"],
+                "selected_metaphor": "the brush leaves a visible clean path as bristles pass over the shoe",
+                "why_it_maps": {
+                    "bristles": "contact tool",
+                    "shoe surface": "before/after canvas",
+                    "clean path": "proof of effect",
+                },
+                "rejected_metaphors": [
+                    "magic sparkle because it hides the bristle mechanism",
+                    "sponge wipe because it changes the product category",
+                ],
+            }
+        return {
+            "abstract_concept": str(variant.angle or visual_proof_spec.get("proof_mechanism") or "product benefit"),
+            "source_domains": ["visual analogy", "micro-story"],
+            "selected_metaphor": creative_leap_spec.get("concept_metaphor") or variant.angle,
+            "why_it_maps": {"product": "truth anchor", "benefit": "visual outcome"},
+            "rejected_metaphors": ["generic lifestyle because it does not prove the benefit"],
         }
 
     def _bold_opening(self, angle: str, visual_proof_spec: dict) -> str:
