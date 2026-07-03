@@ -756,7 +756,10 @@ class AgentsRuntime:
         avoid_items.extend(visual_proof_spec.get("semantic_fail_conditions") or [])
         avoid = ", ".join(str(item) for item in avoid_items[:4])
         mechanism = str(visual_proof_spec.get("proof_mechanism") or "the stated product benefit")
-        return f"Visual proof: show {must_show}; prove {mechanism}; avoid {avoid}."
+        mode = str(visual_proof_spec.get("creative_mode") or "").strip()
+        scene = str(visual_proof_spec.get("scene_recipe") or visual_proof_spec.get("desired_scene") or "").strip()
+        setup = f"mode {mode}; scene {scene}; " if mode or scene else ""
+        return f"Visual proof: {setup}show {must_show}; prove {mechanism}; avoid {avoid}."
 
     def _planning_director_blocks(
         self,
@@ -1468,18 +1471,70 @@ class AgentsRuntime:
         if existing:
             return existing
         source_text = " ".join([variant.angle, variant.hook, variant.message, scene_direction]).strip()
+        recipe = self._visual_proof_recipe(source_text)
         spec = {
-            "desired_scene": scene_direction or variant.hook or variant.angle,
-            "proof_mechanism": variant.message or variant.hook,
-            "must_show": [item for item in [variant.angle, variant.hook] if item],
-            "must_not_show": ["generic lifestyle scene without visible product proof"],
-            "semantic_fail_conditions": ["visual does not prove the stated product benefit"],
+            "selling_point_type": recipe["selling_point_type"],
+            "creative_mode": recipe["creative_mode"],
+            "desired_scene": scene_direction or recipe["scene_recipe"] or variant.hook or variant.angle,
+            "scene_recipe": recipe["scene_recipe"],
+            "proof_mechanism": recipe["proof_mechanism"] or variant.message or variant.hook,
+            "must_show": list(dict.fromkeys([*[item for item in [variant.angle, variant.hook] if item], *recipe["must_show"]])),
+            "must_not_show": list(dict.fromkeys(["generic lifestyle scene without visible product proof", *recipe["must_not_show"]])),
+            "semantic_fail_conditions": list(dict.fromkeys(["visual does not prove the stated product benefit", *recipe["semantic_fail_conditions"]])),
         }
-        if re.search(r"\banti[- ]?pull|no[- ]?pull|pulling|leash|front chest|d[- ]?ring\b|防拉|防暴冲|牵引", source_text, re.IGNORECASE):
-            spec["must_show"].extend(["dog wearing the harness", "leash connected at the front chest D-ring", "controlled walking posture"])
-            spec["must_not_show"].extend(["dog lunging forward as if pulling is still uncontrolled", "leash attached only like a regular collar"])
-            spec["semantic_fail_conditions"].extend(["image communicates active pulling instead of controlled anti-pull redirection"])
         return spec
+
+    def _visual_proof_recipe(self, source_text: str) -> dict[str, list[str] | str]:
+        text = source_text.lower()
+        if re.search(r"\banti[- ]?pull|no[- ]?pull|pulling|leash|front chest|d[- ]?ring\b|防拉|防暴冲|牵引", text):
+            return {
+                "selling_point_type": "functional_proof",
+                "creative_mode": "proof_demo",
+                "scene_recipe": "side-angle dog walk demo where leash tension is redirected through the front chest ring and the dog is stabilized",
+                "proof_mechanism": "front chest D-ring redirects leash tension so the dog slows or turns instead of lunging",
+                "must_show": ["dog wearing the harness", "leash connected at the front chest D-ring", "controlled walking posture"],
+                "must_not_show": ["dog lunging forward as if pulling is still uncontrolled", "leash attached only like a regular collar"],
+                "semantic_fail_conditions": ["image communicates active pulling instead of controlled anti-pull redirection"],
+            }
+        if re.search(r"\brain|raincoat|waterproof|weather|dry|hood\b|雨衣|防水|下雨", text):
+            return {
+                "selling_point_type": "risk_removal",
+                "creative_mode": "proof_demo",
+                "scene_recipe": "rainy outdoor moment where the dog stays visibly dry under the hooded raincoat",
+                "proof_mechanism": "rain beads off the coat while the dog remains comfortable and covered",
+                "must_show": ["dog wearing the raincoat", "hood and chest panel visible", "rain or wet-ground context", "dry protected dog body"],
+                "must_not_show": ["dog soaked through the coat", "raincoat color or hood removed"],
+                "semantic_fail_conditions": ["visual suggests the raincoat failed to keep the dog dry"],
+            }
+        if re.search(r"\bcustom|print|brand|logo|company|cup|packaging\b|定制|印刷|纸杯", text):
+            return {
+                "selling_point_type": "identity_expression",
+                "creative_mode": "creative_scene",
+                "scene_recipe": "social-ready cafe or event scene where the custom print area is readable and central",
+                "proof_mechanism": "the printed cup visibly carries brand identity in a real use occasion",
+                "must_show": ["custom print panel", "paper cup shape", "white cup interior or rim", "brand/event use context"],
+                "must_not_show": ["plain blank cup", "mug or glass replacement", "invented dominant logo that overrides the print area"],
+                "semantic_fail_conditions": ["visual hides the customization benefit or turns the product into generic drinkware"],
+            }
+        if re.search(r"\bbrush|shoe|clean|polish|bristle|horsehair\b|鞋刷|清洁|刷毛", text):
+            return {
+                "selling_point_type": "functional_proof",
+                "creative_mode": "proof_demo",
+                "scene_recipe": "close product demo with bristles contacting a shoe and a clear cleaned area or before-after contrast",
+                "proof_mechanism": "dense bristles lift dust and restore shoe surface texture",
+                "must_show": ["wood handle", "black bristles", "shoe surface contact", "visible cleaning result"],
+                "must_not_show": ["toothbrush or sponge shape", "bristles hidden", "no visible cleaning action"],
+                "semantic_fail_conditions": ["visual shows a brush but no evidence that it cleans shoes"],
+            }
+        return {
+            "selling_point_type": "general_product_benefit",
+            "creative_mode": "creative_scene",
+            "scene_recipe": "",
+            "proof_mechanism": "",
+            "must_show": [],
+            "must_not_show": [],
+            "semantic_fail_conditions": [],
+        }
 
     def _variant_visual_proof_prompt_block(self, variant: VariantCandidate) -> str:
         spec = self._variant_visual_proof_spec(variant)

@@ -282,6 +282,45 @@ def test_divergence_adds_visual_proof_spec_for_concept_variants():
     assert output.payload["experiment_matrix"][0]["visual_proof_spec"] == spec
 
 
+def test_visual_proof_spec_uses_product_specific_recipes():
+    runtime = AgentsRuntime()
+
+    raincoat = runtime._variant_visual_proof_spec(
+        VariantCandidate(
+            variant_id="V1",
+            angle="raincoat weather protection",
+            hook="Show rain beading off the hooded dog raincoat",
+            message="Keep the dog dry in rainy walks.",
+        )
+    )
+    cup = runtime._variant_visual_proof_spec(
+        VariantCandidate(
+            variant_id="V2",
+            angle="custom print paper cup branding",
+            hook="Make the custom print panel visible at a cafe counter",
+            message="Help events and shops show their brand in every drink photo.",
+        )
+    )
+    brush = runtime._variant_visual_proof_spec(
+        VariantCandidate(
+            variant_id="V3",
+            angle="shoe brush cleaning proof",
+            hook="Show black bristles lifting dust from a shoe",
+            message="Reveal a cleaner shoe surface after brushing.",
+        )
+    )
+
+    assert raincoat["selling_point_type"] == "risk_removal"
+    assert raincoat["creative_mode"] == "proof_demo"
+    assert "visual suggests the raincoat failed to keep the dog dry" in raincoat["semantic_fail_conditions"]
+    assert cup["selling_point_type"] == "identity_expression"
+    assert cup["creative_mode"] == "creative_scene"
+    assert "custom print panel" in cup["must_show"]
+    assert brush["selling_point_type"] == "functional_proof"
+    assert brush["creative_mode"] == "proof_demo"
+    assert "shoe surface contact" in brush["must_show"]
+
+
 def test_video_scripting_carries_visual_proof_spec_into_shots():
     runtime = AgentsRuntime()
     captured_prompt: dict[str, str] = {}
@@ -531,7 +570,8 @@ def test_prompt_grammar_flows_from_planning_to_video_script_and_storyboard():
 
     assert "autofocus hunting" in first_frame_prompt
     assert "leash jingles" in first_frame_prompt
-    assert "Visual proof spec: Visual proof: show" in first_frame_prompt
+    assert "Visual proof spec: Visual proof:" in first_frame_prompt
+    assert "mode proof_demo" in first_frame_prompt
 
 
 def test_video_scripting_carries_product_truth_contract():
