@@ -295,14 +295,30 @@ def normalize_storyboard_candidate_count(value: object | None) -> int:
     return candidate_count
 
 
-def resolve_creative_specs(creative_preset: str, creative_specs: dict | None = None) -> dict:
+IMAGE_ONLY_PIPELINE_MODES = {"copy_image_only", "dtc_site_image", "marketplace_main_image"}
+
+
+def resolve_creative_specs(
+    creative_preset: str,
+    creative_specs: dict | None = None,
+    *,
+    pipeline_mode: str | None = None,
+) -> dict:
     preset = (creative_preset or "").strip()
     custom = dict(creative_specs or {})
     if preset == "custom":
-        required = ("image_size", "video_size", "resolution", "video_duration_seconds")
+        image_only = pipeline_mode in IMAGE_ONLY_PIPELINE_MODES
+        required = (
+            ("image_size", "resolution")
+            if image_only
+            else ("image_size", "video_size", "resolution", "video_duration_seconds")
+        )
         for key in required:
             if key not in custom or custom[key] in (None, ""):
                 raise ValueError(f"creative_specs.{key} is required when creative_preset=custom")
+        if image_only:
+            custom.setdefault("video_size", "9:16")
+            custom.setdefault("video_duration_seconds", 5)
         resolved = custom
     else:
         if preset not in CREATIVE_PRESETS:

@@ -512,6 +512,61 @@ def test_product_code_conflict_returns_409(client):
     assert "product_code conflict" in second.text
 
 
+def test_product_name_conflict_returns_409(client):
+    first = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-name",
+            "project_name": "p-name",
+            "product_name": "dog leash",
+            "product_code": "DL-NAME-001",
+            "industry_code": "pet_accessories",
+            "campaign_name": "meta-name-1",
+            "creative_preset": "meta_square_5s",
+        },
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-name",
+            "project_name": "p-name",
+            "product_name": "dog leash",
+            "product_code": "DL-NAME-002",
+            "industry_code": "pet_accessories",
+            "campaign_name": "meta-name-2",
+            "creative_preset": "meta_square_5s",
+        },
+    )
+    assert second.status_code == 409
+    assert "product name conflict" in second.text
+    assert "DL-NAME-001" in second.text
+
+
+def test_custom_copy_image_only_does_not_require_video_specs(client):
+    resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-custom-image",
+            "project_name": "p-custom-image",
+            "product_name": "dog leash",
+            "product_code": "DL-CUSTOM-IMAGE-001",
+            "industry_code": "pet_accessories",
+            "campaign_name": "meta-custom-image-1",
+            "creative_preset": "custom",
+            "creative_specs": {"image_size": "1:1", "resolution": "720p"},
+            "pipeline_mode": "copy_image_only",
+        },
+    )
+    assert resp.status_code == 200
+    creative_specs = resp.json()["creative_specs"]
+    assert creative_specs["image_size"] == "1:1"
+    assert creative_specs["resolution"] == "720p"
+    assert creative_specs["video_size"] == "9:16"
+    assert creative_specs["video_duration_seconds"] == 5
+
+
 def test_creative_preset_is_materialized_into_run(client):
     resp = client.post(
         "/runs",

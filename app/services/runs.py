@@ -238,6 +238,11 @@ def _get_or_create_product(db: Session, project_id: str, name: str, product_code
         if product.project_id != project_id:
             raise ValueError(f"product_code conflict: {normalized_code} belongs to another project")
         return product
+    name_conflict = db.scalar(select(Product).where(Product.project_id == project_id, Product.name == name))
+    if name_conflict:
+        raise ValueError(
+            f"product name conflict: {name} is already bound to product_code={name_conflict.product_code}"
+        )
     product = Product(project_id=project_id, name=name, product_code=normalized_code)
     db.add(product)
     db.flush()
@@ -319,7 +324,7 @@ def create_run(db: Session, payload: RunCreateRequest) -> PipelineRun:
     creative_preset = payload.creative_preset
     if payload.pipeline_mode == "dtc_site_image":
         creative_preset = DTC_SITE_IMAGE_PRESET
-    creative_specs = resolve_creative_specs(creative_preset, payload.creative_specs)
+    creative_specs = resolve_creative_specs(creative_preset, payload.creative_specs, pipeline_mode=payload.pipeline_mode)
     if payload.pipeline_mode == "dtc_site_image":
         defaults = resolve_creative_specs(DTC_SITE_IMAGE_PRESET)
         defaults.update(creative_specs)
