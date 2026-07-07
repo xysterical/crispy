@@ -2277,6 +2277,49 @@ def test_visual_quality_assessment_blocks_failed_visual_proof_review():
     assert report["visual_proof_qa"]["evidence"] == "Dog is lunging forward with taut leash."
 
 
+def test_visual_quality_assessment_marks_unavailable_model_review_for_manual_review():
+    runtime = AgentsRuntime()
+
+    def fail_chat(*args, **kwargs):
+        raise RuntimeError("provider timeout")
+
+    runtime._chat_complete = fail_chat
+
+    output = runtime.run_visual_quality_assessment(
+        run_id="runtime-visual-model-unavailable",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="secure fit",
+                    hook="Clip in confidence",
+                    message="Show a clear product image.",
+                )
+            ]
+        ),
+        copy_images={
+            "image_assets": [
+                {
+                    "variant_id": "V1",
+                    "uri": "assets/nonexistent.png",
+                    "visual_qa": {"status": "pass", "score": 98, "flags": [], "checks": []},
+                }
+            ]
+        },
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    summary = output.payload["variant_summaries"][0]
+    report = output.payload["reports"][0]
+    assert output.payload["model_review_status"] == "unavailable"
+    assert output.payload["model_summary"].startswith("model_review_unavailable:")
+    assert summary["qa_status"] == "warn"
+    assert summary["recommended_action"] == "manual_review"
+    assert "visual_qa_model_review_unavailable" in summary["issues"]
+    assert report["model_review_status"] == "unavailable"
+
+
 def test_visual_quality_assessment_blocks_image_asset_contract_failure():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("image contract review notes", "stub-model", 0.0)

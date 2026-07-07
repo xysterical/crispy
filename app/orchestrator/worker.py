@@ -356,6 +356,22 @@ class PipelineWorker:
                 run.id,
             )
             return False
+        review_blockers = [
+            s for s in summaries
+            if isinstance(s, dict)
+            and "visual_qa_model_review_unavailable" in {str(issue) for issue in (s.get("issues") or [])}
+        ]
+        if review_blockers:
+            metadata = dict(task.metadata_json or {})
+            task.metadata_json = {
+                **metadata,
+                "full_auto_visual_qa_model_review_unavailable": True,
+            }
+            logger.info(
+                "Full-auto visual_qa: model review unavailable for run %s; holding for manual review",
+                run.id,
+            )
+            return False
         regen_variants = [
             s for s in summaries
             if isinstance(s, dict) and s.get("recommended_action") == "request_regeneration"

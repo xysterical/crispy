@@ -4130,6 +4130,20 @@ class AgentsRuntime:
             )
         except Exception as exc:
             model_summary = f"model_review_unavailable: {str(exc)[:240]}"
+            for report in reports:
+                if report.get("qa_status") == "pass":
+                    report["qa_status"] = "warn"
+                    report["recommended_action"] = "manual_review"
+                    report["review_notes"] = f"{report.get('variant_id')} visual QA warn; model review unavailable."
+                report["model_review_status"] = "unavailable"
+            for summary in summaries:
+                if summary.get("qa_status") == "pass":
+                    summary["qa_status"] = "warn"
+                    summary["recommended_action"] = "manual_review"
+                issues = list(summary.get("issues") or [])
+                if "visual_qa_model_review_unavailable" not in issues:
+                    issues.append("visual_qa_model_review_unavailable")
+                summary["issues"] = sorted(set(issues))
         else:
             model_summary = self._apply_visual_proof_reviews(
                 reports=reports,
@@ -4141,6 +4155,7 @@ class AgentsRuntime:
             "reports": reports,
             "variant_summaries": summaries,
             "model_summary": model_summary,
+            "model_review_status": "unavailable" if model_summary.startswith("model_review_unavailable:") else "completed",
             "model_media_inputs": {
                 "image_count": len(model_image_inputs),
                 "video_count": len(model_video_inputs),
