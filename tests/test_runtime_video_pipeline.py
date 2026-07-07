@@ -954,6 +954,58 @@ def test_copy_image_generation_uses_variant_visual_proof_spec():
     assert "mapping" in captured_prompts[0]
 
 
+def test_copy_image_generation_diversifies_visual_proof_styles():
+    runtime = AgentsRuntime()
+    captured_prompts: list[str] = []
+    runtime._chat_complete = lambda *args, **kwargs: ("copy hint", "text-model", 0.0)
+    runtime._local_media_qa = lambda **kwargs: {"status": "pass", "score": 100, "flags": [], "checks": []}
+    runtime._materialize_generated_image = lambda selected: (b"image-bytes" * 256, "b64_json")
+
+    def fake_generate_image(*, prompt, **kwargs):
+        captured_prompts.append(prompt)
+        return (
+            type("ImageResult", (), {"estimated_cost": 0.0, "images": [object()], "model_used": "image-model"})(),
+            "stub-image-provider",
+            "stub-image-model",
+        )
+
+    runtime._generate_image = fake_generate_image
+
+    output = runtime.run_copy_image_generation(
+        run_id="copy-diverse-proof-styles",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(variant_id="V1", angle="front clip redirects pulling", hook="Calmer walks", message="Show control."),
+                VariantCandidate(variant_id="V2", angle="padded breathable panels", hook="Comfort close-up", message="Show padding."),
+                VariantCandidate(variant_id="V3", angle="reflective trim for evening walks", hook="Evening confidence", message="Show visibility."),
+                VariantCandidate(variant_id="V4", angle="anti-pull comparison", hook="Before and after", message="Show the difference."),
+            ]
+        ),
+        intake=ProductIntake(product_name="anti-pull dog harness"),
+        business_context={"target_audience": "dog owners", "primary_cta": "Shop Now"},
+        creative_specs={},
+        market="US",
+        locale="en-US",
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        runtime_config={"force_regenerate": True},
+    )
+
+    styles = [
+        image["visual_proof_spec"]["proof_style"]["name"]
+        for image in output.payload["image_assets"]
+    ]
+    assert styles == [
+        "single in-use moment",
+        "product detail close-up",
+        "lifestyle outcome",
+        "comparison or callout",
+    ]
+    assert "no split panels or symbolic icons" in captured_prompts[0]
+    assert "before/after, callout, arrow, checkmark, or infographic treatment is allowed" in captured_prompts[3]
+    assert "infographic treatment is allowed" not in "\n".join(captured_prompts[:3])
+
+
 def test_copy_image_generation_includes_qa_repair_prompt():
     runtime = AgentsRuntime()
     captured_prompts: list[str] = []

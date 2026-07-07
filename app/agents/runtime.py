@@ -800,6 +800,35 @@ class AgentsRuntime:
         setup = f"mode {mode}; scene {scene}; " if mode or scene else ""
         return f"Visual proof: {setup}show {must_show}; prove {mechanism}; avoid {avoid}."
 
+    def _variant_proof_style(self, variant: VariantCandidate) -> dict:
+        try:
+            slot = max(0, int(str(variant.variant_id).lstrip("Vv")) - 1)
+        except ValueError:
+            slot = 0
+        styles = [
+            {
+                "name": "single in-use moment",
+                "composition": "one realistic scene, no split panels or symbolic icons",
+                "proof_language": "product benefit is shown through body posture, placement, and natural interaction",
+            },
+            {
+                "name": "product detail close-up",
+                "composition": "macro or near-product composition with surrounding use context",
+                "proof_language": "material, component, or attachment detail carries the proof",
+            },
+            {
+                "name": "lifestyle outcome",
+                "composition": "aspirational but plausible scene after the product is already in use",
+                "proof_language": "buyer outcome is legible from the calmer/easier scene, not from labels",
+            },
+            {
+                "name": "comparison or callout",
+                "composition": "before/after, callout, arrow, checkmark, or infographic treatment is allowed",
+                "proof_language": "visual annotations may clarify the mechanism if product truth stays visible",
+            },
+        ]
+        return styles[slot % len(styles)]
+
     def _creative_risk_level(self, creative_specs: dict | None = None, planning: PlanningBrief | None = None) -> str:
         raw = str((creative_specs or {}).get("creative_risk_level") or "").strip().lower()
         if not raw and planning:
@@ -1656,6 +1685,7 @@ class AgentsRuntime:
         spec = {
             "selling_point_type": recipe["selling_point_type"],
             "creative_mode": recipe["creative_mode"],
+            "proof_style": self._variant_proof_style(variant),
             "desired_scene": scene_direction or recipe["scene_recipe"] or variant.hook or variant.angle,
             "scene_recipe": recipe["scene_recipe"],
             "proof_mechanism": recipe["proof_mechanism"] or variant.message or variant.hook,
@@ -1712,9 +1742,13 @@ class AgentsRuntime:
         if not spec:
             return ""
         leap = self._creative_leap_prompt_text(variant.creative_leap_spec)
+        proof_style = spec.get("proof_style") if isinstance(spec.get("proof_style"), dict) else {}
         return (
             f"Variant visual proof spec: {json.dumps(spec, ensure_ascii=False)}. "
             + (f"{leap} " if leap else "")
+            + f"Use proof style `{proof_style.get('name', 'variant-specific composition')}`: "
+            + f"{proof_style.get('composition', 'make the composition distinct from sibling variants')}. "
+            + f"Proof language: {proof_style.get('proof_language', 'show the benefit through the scene')}. "
             + "Make the image prove this specific visual mechanism, not just the broad product category. "
         )
 
