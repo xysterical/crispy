@@ -188,6 +188,11 @@
 
     /* ── FAB ── */
     .fab-group { position: fixed; bottom: 28px; right: 28px; z-index: 998; display: flex; align-items: center; gap: 10px; }
+    .fab-retry-progress { width: 220px; padding: 8px 10px; border: 1px solid var(--warning); border-radius: 14px; background: #fff; box-shadow: var(--shadow-lg); opacity: 0; transform: translateY(6px) scale(0.96); pointer-events: none; transition: transform var(--badge-pop-close-dur) var(--badge-close-ease), opacity var(--badge-fade-close-dur) var(--badge-close-ease); }
+    .fab-retry-progress.visible { opacity: 1; transform: translateY(0) scale(1); }
+    .fab-retry-progress-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; color: var(--warning); font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .fab-retry-progress-track { height: 5px; overflow: hidden; border-radius: 999px; background: var(--warning-light); }
+    .fab-retry-progress-fill { height: 100%; width: 0%; border-radius: inherit; background: var(--warning); transition: width 0.4s ease; }
     .fab-pill { padding: 10px 18px; border-radius: 28px; border: none; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: var(--shadow-lg); opacity: 0; filter: blur(var(--badge-blur)); transform: translateY(6px) scale(0.9); pointer-events: none; transition: transform var(--badge-pop-close-dur) var(--badge-close-ease), opacity var(--badge-fade-close-dur) var(--badge-close-ease), filter var(--badge-pop-close-dur) var(--badge-close-ease); will-change: transform, opacity, filter; }
     .fab-pill.visible { opacity: 1; filter: blur(0); transform: translateY(0) scale(1); pointer-events: auto; transition: transform var(--badge-pop-dur) var(--badge-pop-ease), opacity var(--badge-fade-dur) var(--badge-pop-ease), filter var(--badge-pop-dur) var(--badge-pop-ease); }
     .fab-pill:hover { transform: translateY(-2px) scale(1.02); box-shadow: var(--shadow-xl); }

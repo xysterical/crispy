@@ -62,6 +62,13 @@
     <div id="create-msg" class="status-msg muted"></div>
   </div>
   <div class="fab-group">
+    <div class="fab-retry-progress" id="fab-retry-progress" aria-live="polite">
+      <div class="fab-retry-progress-head">
+        <span id="fab-retry-label">Retry waiting</span>
+        <span id="fab-retry-time">--:--</span>
+      </div>
+      <div class="fab-retry-progress-track"><div class="fab-retry-progress-fill" id="fab-retry-fill"></div></div>
+    </div>
     <button class="fab-pill advance" id="fab-advance" onclick="advanceRun()" title="Advance to next stage">&#9654; Advance</button>
     <button class="fab-pill reject" id="fab-reject" onclick="rejectRun()" title="Reject current stage">&#10005; Reject</button>
     <button class="fab-create" id="fab-create" onclick="toggleFabCreate()" title="Create Run">

@@ -687,6 +687,8 @@ def _dashboard_shared_js() -> str:
           let currentTraceEvents = [];
           let runDetailTimer = null;
           let runDetailLastUpdated = null;
+          let retryProgressTimer = null;
+          let retryProgressState = null;
           let runListInterval = null;
           const variantBoardCollapsedStorageKey = "variant_board_collapsed";
           let variantBoardCollapsed = false;
@@ -727,6 +729,69 @@ def _dashboard_shared_js() -> str:
             const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
             if (!res.ok) { throw new Error(await res.text()); }
             return res.headers.get("content-type")?.includes("application/json") ? res.json() : res.text();
+          }
+
+          function retryWaitingTask(run) {
+            const tasks = run?.stage_tasks || [];
+            return tasks.find((task) => {
+              const waiting = task.metadata_json?.waiting_state || {};
+              return task.status === "queued" && waiting.status === "waiting_retry" && waiting.retry_at;
+            }) || null;
+          }
+
+          function formatRetryRemaining(ms) {
+            const total = Math.max(0, Math.ceil(ms / 1000));
+            const minutes = String(Math.floor(total / 60)).padStart(2, "0");
+            const seconds = String(total % 60).padStart(2, "0");
+            return `${minutes}:${seconds}`;
+          }
+
+          function renderRetryProgress() {
+            const box = document.getElementById("fab-retry-progress");
+            if (!box || !retryProgressState) return;
+            const fill = document.getElementById("fab-retry-fill");
+            const label = document.getElementById("fab-retry-label");
+            const time = document.getElementById("fab-retry-time");
+            const remainingMs = retryProgressState.retryAt - Date.now();
+            const totalMs = Math.max(1000, retryProgressState.delaySeconds * 1000);
+            const pct = Math.max(0, Math.min(100, ((totalMs - Math.max(0, remainingMs)) / totalMs) * 100));
+            box.classList.add("visible");
+            if (fill) fill.style.width = `${pct}%`;
+            if (label) label.textContent = `${retryProgressState.stageName} retry ${retryProgressState.nextAttempt}/${retryProgressState.maxAttempts}`;
+            if (time) time.textContent = formatRetryRemaining(remainingMs);
+            if (remainingMs <= 0) {
+              if (time) time.textContent = "queued";
+              if (fill) fill.style.width = "100%";
+            }
+          }
+
+          function setRetryProgressFromRun(run) {
+            const task = retryWaitingTask(run);
+            const box = document.getElementById("fab-retry-progress");
+            if (!task) {
+              retryProgressState = null;
+              if (retryProgressTimer) {
+                clearInterval(retryProgressTimer);
+                retryProgressTimer = null;
+              }
+              if (box) box.classList.remove("visible");
+              return;
+            }
+            const waiting = task.metadata_json.waiting_state || {};
+            retryProgressState = {
+              stageName: task.stage_name || "stage",
+              retryAt: new Date(waiting.retry_at).getTime(),
+              delaySeconds: Number(waiting.retry_delay_seconds || 1),
+              nextAttempt: waiting.next_attempt || Number(task.attempt || 0) + 1,
+              maxAttempts: waiting.max_attempts || task.max_retries || 4,
+            };
+            if (!Number.isFinite(retryProgressState.retryAt)) {
+              retryProgressState = null;
+              if (box) box.classList.remove("visible");
+              return;
+            }
+            renderRetryProgress();
+            if (!retryProgressTimer) retryProgressTimer = setInterval(renderRetryProgress, 1000);
           }
 
           async function loadDataSources() {
@@ -1508,6 +1573,7 @@ def _dashboard_shared_js() -> str:
 
             expandedVariantId = wasExpandedVariantId;
             document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables, variants, executionMemory);
+            setRetryProgressFromRun(run);
 
             if (wasCollapsed) {
               const body = document.getElementById("variant-board-body");
@@ -1566,6 +1632,7 @@ def _dashboard_shared_js() -> str:
             currentTraceEvents = run.trace_events || [];
             runDetailLastUpdated = run.updated_at;
             document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables, variants, executionMemory);
+            setRetryProgressFromRun(run);
             bindTracePayloadToggles();
             requestAnimationFrame(() => scrollTraceToLeft("auto"));
             connectRunEvents(runId);
