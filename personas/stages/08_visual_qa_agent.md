@@ -8,7 +8,7 @@ Serve as the independent visual quality gate between generation and final evalua
 - Variant hypothesis, angle, hook, and intended scene.
 - Generated copy, image, storyboard frame, and video asset metadata.
 - Local file QA signals: file existence, size, aspect ratio, placeholder detection, async status, and provider errors.
-- Business constraints and prohibited claims.
+- Product-truth constraints that affect visible product structure, materials, color, scale, and scene plausibility.
 
 ## Required Output
 For each variant, output:
@@ -29,6 +29,7 @@ For each variant, output:
 
 ## Boundaries
 - Do not select the final winner. Hand visual constraints and recommendations to Evaluation Agent.
+- Do not make claim-safety, legal, policy, or platform-compliance decisions. Only flag visible product-truth mismatches and visual ambiguity.
 - Do not invent unsupported product facts to justify an asset.
 - Do not hide uncertainty. Use `manual_review` when file-level checks cannot confirm visual correctness.
 

@@ -2233,6 +2233,8 @@ def test_visual_quality_assessment_surfaces_visual_proof_spec():
     assert "semantic_fail_conditions" in spec
     assert report["asset_reports"][0]["visual_proof_spec"] == spec
     assert "visual_proof_spec" in captured_prompt["prompt"]
+    assert "only for visual quality and product truth" in captured_prompt["prompt"]
+    assert "Do not make claim-safety, policy, legal, or platform-compliance decisions" in captured_prompt["prompt"]
 
 
 def test_visual_quality_assessment_compresses_local_images_for_model_review(tmp_path):
@@ -2735,7 +2737,8 @@ def test_evaluation_selection_sends_compressed_images_to_kimi(tmp_path):
             '{"variants":[{"variant_id":"V1","hook_appeal":80,"copy_clarity":79,'
             '"brand_alignment":78,"visual_execution":77,"compliance_safety":90,'
             '"total_score":81,"compliance_level":"low","recommended_action":"approve_variant",'
-            '"compliance_risks":[],"compliance_reasons":["safe"],"brief_reason":"Best image."}]}',
+            '"compliance_block":{"level":"low","score":90,"risks":[],"reasons":["No prohibited claim."],"recommendation":"approve_variant"},'
+            '"brief_reason":"Best image."}]}',
             "kimi-k2.6",
             0.0,
         )
@@ -2776,8 +2779,13 @@ def test_evaluation_selection_sends_compressed_images_to_kimi(tmp_path):
     assert captured["runtime_config"]["extra"]["thinking_mode"] == "disabled"
     assert captured["runtime_config"]["extra"]["max_output_tokens"] == 2400
     assert "Attached images map to variants" in captured["prompt"]
+    assert "Include a compliance_block object per variant" in captured["prompt"]
     assert output.payload["model_media_inputs"]["image_count"] == 1
     assert output.payload["model_media_inputs"]["manifest"][0]["review_transport"] == "compressed_data_url"
+    ranked = output.payload["evaluation_result"]["ranked_variants"][0]
+    assert ranked["sub_scores"]["compliance_safety"] == 90
+    assert ranked["compliance_block"]["reasons"] == ["No prohibited claim."]
+    assert output.payload["compliance_block"]["V1"]["score"] == 90
     assert runtime_config == {"extra": {}}
 
 

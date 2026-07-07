@@ -1410,6 +1410,7 @@ def _variant_library_sync(
                 reasons=ranked_payload.get("compliance_reasons") or [],
                 forecast={},
                 payload={
+                    "block": ranked_payload.get("compliance_block") or {},
                     "risks": ranked_payload.get("compliance_risks") or [],
                     "reasons": ranked_payload.get("compliance_reasons") or [],
                 },

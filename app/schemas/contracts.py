@@ -312,6 +312,7 @@ class RankedVariant(BaseModel):
     total_score: float = Field(ge=0, le=100)
     sub_scores: dict[str, float] = Field(default_factory=dict)
     compliance_level: ComplianceLevel = ComplianceLevel.LOW
+    compliance_block: dict = Field(default_factory=dict)
     reasons: list[str] = Field(default_factory=list)
     compliance_risks: list[str] = Field(default_factory=list)
     compliance_reasons: list[str] = Field(default_factory=list)

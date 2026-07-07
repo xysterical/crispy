@@ -336,6 +336,8 @@ def test_run_deliverables_and_variants_endpoints(client):
     assert any(score["score_type"] == "visual_quality" for score in variants_payload["items"][0]["scores"])
     ranked_first = evaluation_task["output_payload"]["evaluation_result"]["ranked_variants"][0]
     assert "visual_qa" in ranked_first["sub_scores"]
+    assert "compliance_block" in ranked_first
+    assert "compliance_block" in evaluation_task["output_payload"]
     assert any(reason.startswith("visual_qa_agent_status=") for reason in ranked_first["reasons"])
 
 

@@ -4129,8 +4129,9 @@ class AgentsRuntime:
             runtime_config=runtime_config,
             agent_role="Visual QA Agent",
             task_instruction=(
-                "Review these structured visual QA records for ad-candidate risk. "
-                "Focus on product fidelity, physical plausibility, channel fit, and whether any candidate should be blocked before evaluation. "
+                "Review these structured visual QA records only for visual quality and product truth. "
+                "Focus on product fidelity, physical plausibility, channel fit, and whether any candidate is visually unsafe to evaluate. "
+                "Do not make claim-safety, policy, legal, or platform-compliance decisions; leave those to Evaluation. "
                 "When product_truth_flags are present, compare attached media against the product_truth_contract before passing the candidate. "
                 "When visual_proof_spec is present, check whether the media proves the desired_scene/proof_mechanism and avoids semantic_fail_conditions. "
                 "Return ONLY valid JSON shaped as {\"model_summary\":\"...\",\"visual_proof_reviews\":[{\"variant_id\":\"V1\",\"status\":\"pass|warn|fail\",\"evidence\":\"...\",\"failed_conditions\":[\"...\"]}]}. "
@@ -4199,8 +4200,8 @@ class AgentsRuntime:
             "active_gm_policy": gm_policy,
             "strategy_handoff": self._business_strategy_handoff(
                 stage="visual_quality_assessment",
-                decisions=[f"checked visual quality for {len(summaries)} variants", "blocked or downgraded incomplete and visually risky assets before evaluation"],
-                risks=["Large videos may be skipped from model media input and require async refresh or frame sampling."],
+                decisions=[f"checked visual/product-truth quality for {len(summaries)} variants", "blocked or downgraded incomplete and visually risky assets before evaluation"],
+                risks=["Large videos may be skipped from model media input and require async refresh or frame sampling.", "Claim-safety and policy risk are deferred to Evaluation compliance_block."],
                 review_questions=["Which variants need human frame review?", "Should failed assets be regenerated before ranking?"],
             ),
         }
@@ -4320,6 +4321,20 @@ class AgentsRuntime:
 
         return total, action, risks, reasons
 
+    def _evaluation_compliance_block(self, llm_scores: dict) -> dict:
+        block = llm_scores.get("compliance_block")
+        if not isinstance(block, dict):
+            block = {}
+        risks = block.get("risks")
+        reasons = block.get("reasons")
+        return {
+            "level": str(block.get("level") or llm_scores.get("compliance_level") or "low").lower(),
+            "score": block.get("score", llm_scores.get("compliance_safety", llm_scores.get("claim_safety"))),
+            "risks": risks if isinstance(risks, list) else list(llm_scores.get("compliance_risks") or []),
+            "reasons": reasons if isinstance(reasons, list) else list(llm_scores.get("compliance_reasons") or []),
+            "recommendation": str(block.get("recommendation") or llm_scores.get("recommended_action") or "manual_review"),
+        }
+
     def run_evaluation_selection(
         self,
         run_id: str,
@@ -4397,8 +4412,9 @@ class AgentsRuntime:
                 f"GM policy: {json.dumps(gm_policy.get('stage_guidance') or {}, ensure_ascii=False)}.{tiktok_note}\n\n"
                 f"For each variant, score these dimensions 0-100: {dimensions}. "
                 "Also provide: total_score (0-100), compliance_level ('low'/'medium'/'high'), "
-                "recommended_action ('approve_variant'/'manual_review'/'request_regeneration'), "
-                "compliance_risks (list), compliance_reasons (list), and brief_reason (1 sentence). "
+                "recommended_action ('approve_variant'/'manual_review'/'request_regeneration'), and brief_reason (1 sentence). "
+                "Include a compliance_block object per variant with level, score, risks, reasons, and recommendation. "
+                "Use compliance_block only for claim-safety, visible text/implied claim, prohibited-claim, and policy risk; visual defects belong in visual_execution/visual_qa. "
                 "Score based on creative quality, not string length. "
                 "A variant with missing or placeholder media should score low on execution. "
                 "Return ONLY valid JSON, no markdown wrapping."
@@ -4437,8 +4453,9 @@ class AgentsRuntime:
                 sub_scores[k] = round(float(val), 2) if isinstance(val, (int, float)) else 50.0
             vq_score = ctx.get("visual_qa_score")
             sub_scores["visual_qa"] = round(float(vq_score), 2) if isinstance(vq_score, (int, float)) else 100.0
+            compliance_block = self._evaluation_compliance_block(llm)
 
-            level_raw = str(llm.get("compliance_level") or "low").lower()
+            level_raw = str(compliance_block.get("level") or "low").lower()
             level = ComplianceLevel.LOW if level_raw == "low" else ComplianceLevel.MEDIUM if level_raw == "medium" else ComplianceLevel.HIGH
 
             llm_reason = str(llm.get("brief_reason") or "")
@@ -4456,9 +4473,10 @@ class AgentsRuntime:
                 total_score=total,
                 sub_scores=sub_scores,
                 compliance_level=level,
+                compliance_block=compliance_block,
                 reasons=all_reasons,
-                compliance_risks=list(risks),
-                compliance_reasons=list(reasons) or ["No major compliance issues detected."],
+                compliance_risks=list(compliance_block.get("risks") or risks),
+                compliance_reasons=list(compliance_block.get("reasons") or reasons) or ["No major compliance issues detected."],
                 recommended_action=action,
             ))
 
@@ -4513,6 +4531,10 @@ class AgentsRuntime:
             "model_media_inputs": {
                 "image_count": len(model_image_inputs),
                 "manifest": model_media_manifest,
+            },
+            "compliance_block": {
+                item.variant_id: item.compliance_block
+                for item in ranked
             },
             "active_gm_policy": gm_policy,
         }
