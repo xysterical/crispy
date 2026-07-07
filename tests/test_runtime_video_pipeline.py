@@ -282,6 +282,42 @@ def test_divergence_adds_visual_proof_spec_for_concept_variants():
     assert output.payload["experiment_matrix"][0]["visual_proof_spec"] == spec
 
 
+def test_divergence_outputs_customer_facing_hooks_without_variant_labels():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("ok", "stub-model", 0.0)
+
+    output = runtime.run_divergence(
+        run_id="runtime-divergence-customer-hooks",
+        planning=PlanningBrief(
+            strategic_angles=[
+                "front clip redirects pulling during everyday walks with clear product proof",
+                "padded breathable panels",
+            ],
+            creative_director_plan={
+                "emotional_beats": ["relief", "confidence"],
+                "scene_arc": [
+                    {"scene_direction": "controlled dog walk with front chest leash redirection"},
+                    {"scene_direction": "close view of padded mesh on the dog's chest"},
+                ],
+            },
+        ),
+        variant_count=2,
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    variants = output.payload["variants"]
+    assert [variant["variant_id"] for variant in variants] == ["V1", "V2"]
+    for variant in variants:
+        assert not variant["hook"].startswith(("V1:", "V2:"))
+        assert not variant["message"].startswith(("V1:", "V2:"))
+        assert len(variant["hook"]) <= 72
+    assert variants[0]["hook"] == "Front clip redirects pulling during everyday walks"
+    assert variants[0]["message"] == (
+        "Make buyers feel relief by proving front clip redirects pulling during everyday walks with clear product proof in the scene."
+    )
+
+
 def test_visual_proof_spec_uses_product_agnostic_recipes():
     runtime = AgentsRuntime()
 

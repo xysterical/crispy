@@ -935,6 +935,21 @@ class AgentsRuntime:
         proof = str(visual_proof_spec.get("proof_mechanism") or angle)
         return f"`{proof}` becomes a surprising physical metaphor without changing product truth"
 
+    def _variant_hook(self, angle: object) -> str:
+        text = str(angle or "Show the product benefit").strip()
+        text = re.sub(r"\s+", " ", text).strip(" .")
+        text = re.sub(r"\s+with\s+(clear|visible)\s+product\s+proof\b", "", text, flags=re.IGNORECASE)
+        if not text:
+            return "Show the product benefit"
+        if len(text) > 72:
+            text = text[:69].rsplit(" ", 1)[0].rstrip(" ,.;:") + "..."
+        return text[:1].upper() + text[1:]
+
+    def _variant_message(self, angle: object, emotion: object) -> str:
+        angle_text = str(angle or "the product benefit").strip(" .")
+        emotion_text = str(emotion or "confidence").strip(" .")
+        return f"Make buyers feel {emotion_text} by proving {angle_text} in the scene."
+
     def _planning_director_blocks(
         self,
         *,
@@ -2086,8 +2101,8 @@ class AgentsRuntime:
             scene = self._scene_arc_item(director_handoff, i)
             scene_direction = scene.get("scene_direction") or scene.get("beat") or "real product-use scene"
             emotion = emotional_beats[i % len(emotional_beats)] if emotional_beats else "clear buyer confidence"
-            hook = f"{variant_id}: {angle} through {scene_direction}"
-            message = f"{variant_id}: make the buyer feel {emotion} while proving the product in-scene."
+            hook = self._variant_hook(angle)
+            message = self._variant_message(angle, emotion)
             seed_variant = VariantCandidate(variant_id=variant_id, angle=angle, hook=hook, message=message)
             visual_proof_spec = self._variant_visual_proof_spec(
                 seed_variant,
