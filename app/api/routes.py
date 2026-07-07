@@ -144,6 +144,7 @@ from app.services.runs import (
     latest_scorecard,
     reject_stage,
     regenerate_variant_assets,
+    rerun_stage,
     refresh_async_assets,
     refresh_video_task_assets,
     review_variant,
@@ -3263,6 +3264,17 @@ def advance_pipeline_run(run_id: str, payload: ReviewActionRequest, db: Session 
 def reject_pipeline_run(run_id: str, payload: ReviewActionRequest, db: Session = Depends(get_db)) -> RunView:
     try:
         run = reject_stage(db, run_id, notes=payload.notes)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _serialize_run(db, run)
+
+
+@router.post("/runs/{run_id}/stages/{stage_name}/rerun", response_model=RunView)
+def rerun_pipeline_stage(run_id: str, stage_name: str, payload: ReviewActionRequest, db: Session = Depends(get_db)) -> RunView:
+    try:
+        run = rerun_stage(db, run_id, stage_name, notes=payload.notes)
         db.commit()
     except ValueError as exc:
         db.rollback()

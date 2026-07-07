@@ -557,6 +557,63 @@ def reject_stage(db: Session, run_id: str, notes: str = "") -> PipelineRun:
     return run
 
 
+def rerun_stage(db: Session, run_id: str, stage_name: str, notes: str = "") -> PipelineRun:
+    run = get_run(db, run_id)
+    stage_plan = stage_plan_for(run.pipeline_mode)
+    if stage_name not in stage_plan:
+        raise ValueError(f"stage {stage_name} is not in run pipeline")
+
+    start_index = stage_plan.index(stage_name)
+    target = get_stage_task(db, run_id, stage_name)
+    for downstream_stage in stage_plan[start_index + 1:]:
+        task = get_stage_task(db, run_id, downstream_stage)
+        task.status = TaskStatus.DRAFT.value
+        task.output_payload = {}
+        task.review_notes = None
+        task.error_message = None
+        task.failure_category = None
+        task.model_used = None
+        task.retry_at = None
+        task.started_at = None
+        task.completed_at = None
+        task.approved_at = None
+        task.rejected_at = None
+        task.metadata_json = {**(task.metadata_json or {}), "superseded_by_stage_rerun": stage_name}
+
+    target.status = TaskStatus.QUEUED.value
+    target.priority = 0
+    target.retry_at = None
+    target.output_payload = {}
+    target.review_notes = notes
+    target.error_message = None
+    target.failure_category = TaskFailureCategory.HUMAN_REJECT.value if notes else None
+    target.started_at = None
+    target.completed_at = None
+    target.approved_at = None
+    target.rejected_at = utcnow()
+    target.input_payload = _build_task_input(db, run, target)
+    target.metadata_json = {
+        **(target.metadata_json or {}),
+        "stage_rerun_requested": True,
+        "stage_rerun_notes": notes,
+    }
+    add_agent_trace_event(
+        db,
+        run_id=run.id,
+        stage_task_id=target.id,
+        stage_name=target.stage_name,
+        agent_name=(target.metadata_json or {}).get("agent_name") or "operator",
+        event_type="stage_rerun_requested",
+        message=f"Stage {stage_name} queued for rerun.",
+        payload={"notes": notes, "downstream_reset": stage_plan[start_index + 1:]},
+    )
+    run.current_stage = stage_name
+    run.status = RunStatus.RUNNING.value
+    run.updated_at = utcnow()
+    db.flush()
+    return run
+
+
 def _stage_output_optional(db: Session, run_id: str, stage_name: str) -> dict:
     task = db.scalar(select(StageTask).where(StageTask.run_id == run_id, StageTask.stage_name == stage_name))
     if not task:

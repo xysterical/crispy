@@ -314,6 +314,49 @@ def test_pipeline_run_can_progress_with_human_gates(client):
     assert "data:" in events_resp.text
 
 
+def test_stage_rerun_requeues_target_and_resets_downstream(client):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "rerun_w",
+            "project_name": "rerun_p",
+            "product_name": "pet wipes",
+            "product_code": "RERUN-001",
+            "industry_code": "pet_care",
+            "campaign_name": "rerun-campaign",
+            "channel": "meta",
+            "creative_preset": "meta_square_5s",
+        },
+    )
+    assert create_resp.status_code == 200
+    run_id = create_resp.json()["id"]
+
+    for stage in ["intake", "planning", "divergence"]:
+        _run_worker_once()
+        if stage != "divergence":
+            ok = client.post(f"/runs/{run_id}/advance", json={"notes": f"approve {stage}"})
+            assert ok.status_code == 200
+
+    rerun = client.post(f"/runs/{run_id}/stages/planning/rerun", json={"notes": "quality below bar"})
+    assert rerun.status_code == 200
+    payload = rerun.json()
+    assert payload["status"] == "running"
+    assert payload["current_stage"] == "planning"
+    tasks = {task["stage_name"]: task for task in payload["stage_tasks"]}
+    assert tasks["planning"]["status"] == "queued"
+    assert tasks["planning"]["output_payload"] == {}
+    assert tasks["planning"]["metadata_json"]["stage_rerun_requested"] is True
+    assert tasks["divergence"]["status"] == "draft"
+    assert tasks["divergence"]["output_payload"] == {}
+    assert any(event["event_type"] == "stage_rerun_requested" for event in payload["trace_events"])
+
+    _run_worker_once()
+    rerun_after_worker = client.get(f"/runs/{run_id}").json()
+    planning = next(task for task in rerun_after_worker["stage_tasks"] if task["stage_name"] == "planning")
+    assert planning["status"] == "waiting_review"
+    assert planning["attempt"] >= 2
+
+
 def test_run_deliverables_and_variants_endpoints(client):
     create_resp = client.post(
         "/runs",
