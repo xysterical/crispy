@@ -165,6 +165,11 @@
     async function api(path, opts){ const r=await fetch(path,{headers:{"Content-Type":"application/json"},...opts}); if(!r.ok) throw new Error(await r.text()); return r.json(); }
     function switchTab(t){ currentTab=t; document.querySelectorAll(".tab-btn").forEach(b=>b.classList.toggle("active",b.textContent.toLowerCase().includes(t))); document.querySelectorAll(".tab-content").forEach(c=>c.classList.toggle("active",c.id==="tab-"+t)); if(t==="store") refreshStoreTab(); if(t==="overview"||t==="products") refreshOverview(); }
     function destroyChart(key){ if(charts[key]){ charts[key].destroy(); delete charts[key]; } }
+    function renderChart(key, canvasId, config){
+      destroyChart(key);
+      if(!window.Chart) return;
+      charts[key]=new Chart(document.getElementById(canvasId).getContext("2d"), config);
+    }
     async function loadWorkspaces(){
       const data=await api("/shops?limit=50");
       workspaces=(data.shops||data.items||[]);
@@ -260,9 +265,7 @@
           <div class="kpi-card"><div class="kpi-value">${data.product_count||0}</div><div class="kpi-label">Products</div></div>
         `;
         const trend=data.daily_trend||[];
-        destroyChart("revenue");
-        const ctx=document.getElementById("revenue-chart").getContext("2d");
-        charts.revenue=new Chart(ctx,{type:"line",data:{labels:trend.map(t=>t.date),datasets:[{label:"Revenue",data:trend.map(t=>t.revenue),borderColor:"#059669",backgroundColor:"rgba(31,122,98,0.08)",fill:true,tension:0.3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
+        renderChart("revenue","revenue-chart",{type:"line",data:{labels:trend.map(t=>t.date),datasets:[{label:"Revenue",data:trend.map(t=>t.revenue),borderColor:"#059669",backgroundColor:"rgba(31,122,98,0.08)",fill:true,tension:0.3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
       }catch(e){ console.error(e); }
     }
     async function refreshStoreTab(){
@@ -272,9 +275,7 @@
         const products=data.products||[];
         const tbody=document.querySelector("#store-table tbody");
         tbody.innerHTML=products.map(p=>`<tr><td><a href="#" onclick="selectProduct('${esc(p.product_code)}');return false;">${esc(p.product_code)}</a></td><td>$${p.revenue.toFixed(0)}</td><td>${p.quantity}</td><td>${p.revenue_share_pct}%</td><td>${p.score_hint.toFixed(1)}</td></tr>`).join("");
-        destroyChart("store");
-        const ctx=document.getElementById("store-chart").getContext("2d");
-        charts.store=new Chart(ctx,{type:"bar",data:{labels:products.slice(0,10).map(p=>p.product_code),datasets:[{label:"Revenue",data:products.slice(0,10).map(p=>p.revenue),backgroundColor:"rgba(31,122,98,0.6)"}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
+        renderChart("store","store-chart",{type:"bar",data:{labels:products.slice(0,10).map(p=>p.product_code),datasets:[{label:"Revenue",data:products.slice(0,10).map(p=>p.revenue),backgroundColor:"rgba(31,122,98,0.6)"}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
       }catch(e){ console.error(e); }
     }
     async function manualSync(platform){

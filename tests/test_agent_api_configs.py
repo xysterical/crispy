@@ -291,6 +291,7 @@ def test_data_dashboard_page_loads(client):
     assert resp.status_code == 200
     assert "Data Dashboard" in resp.text
     assert "Chart.js" in resp.text or "chart.js" in resp.text.lower()
+    assert "if(!window.Chart) return;" in resp.text
 
 
 def test_data_dashboard_summary_endpoint(client):
