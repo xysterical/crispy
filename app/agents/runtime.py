@@ -412,6 +412,30 @@ class AgentsRuntime:
         encoded = base64.b64encode(raw).decode("ascii")
         return f"data:{mime};base64,{encoded}"
 
+    def _local_image_to_review_data_url(self, path_str: str, *, max_side: int = 1024, quality: int = 82) -> str | None:
+        path = Path(path_str)
+        if not path.exists() or not path.is_file():
+            return None
+        try:
+            from PIL import Image  # type: ignore
+        except Exception:
+            return self._local_image_to_data_url(path_str)
+        try:
+            from io import BytesIO
+
+            with Image.open(path) as image:
+                image = image.convert("RGB")
+                image.thumbnail((max_side, max_side))
+                buffer = BytesIO()
+                image.save(buffer, format="JPEG", quality=quality, optimize=True)
+                raw = buffer.getvalue()
+        except Exception:
+            return self._local_image_to_data_url(path_str)
+        if not raw:
+            return None
+        encoded = base64.b64encode(raw).decode("ascii")
+        return f"data:image/jpeg;base64,{encoded}"
+
     def _provider_reference_url(self, value: object) -> str | None:
         url = str(value or "").strip()
         return url if url.startswith(("http://", "https://", "asset://")) else None
@@ -3857,7 +3881,12 @@ class AgentsRuntime:
                 return uri
             if media_type == "video":
                 return self._local_video_to_data_url(uri)
-            return self._local_image_to_data_url(uri)
+            extra = (runtime_config or {}).get("extra") or {}
+            return self._local_image_to_review_data_url(
+                uri,
+                max_side=int(extra.get("visual_qa_image_max_side") or 1024),
+                quality=int(extra.get("visual_qa_image_jpeg_quality") or 82),
+            )
 
         max_model_images = int(((runtime_config or {}).get("extra") or {}).get("visual_qa_max_model_images") or 12)
         max_model_videos = int(((runtime_config or {}).get("extra") or {}).get("visual_qa_max_model_videos") or 4)
@@ -3984,6 +4013,8 @@ class AgentsRuntime:
                                 "variant_id": variant.variant_id,
                                 "asset_type": asset_type,
                                 "uri": asset.get("uri"),
+                                "review_transport": "compressed_data_url" if media_url.startswith("data:image/jpeg") else "original_uri",
+                                "review_input_chars": len(media_url),
                             }
                         )
                 if asset_type == "video" and len(model_video_inputs) < max_model_videos:
@@ -4119,12 +4150,16 @@ class AgentsRuntime:
         model_summary = ""
         model_used = model
         estimated_cost = 0.0
+        review_runtime_config = dict(runtime_config or {})
+        review_extra = dict(review_runtime_config.get("extra") or {})
+        review_extra.setdefault("request_timeout_seconds", 180)
+        review_runtime_config["extra"] = review_extra
         try:
             model_summary, model_used, estimated_cost = self._chat_complete(
                 provider,
                 model,
                 prompt,
-                runtime_config,
+                review_runtime_config,
                 image_urls=model_image_inputs,
                 video_urls=model_video_inputs,
             )

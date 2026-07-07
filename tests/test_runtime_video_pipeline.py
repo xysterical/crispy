@@ -2223,6 +2223,64 @@ def test_visual_quality_assessment_surfaces_visual_proof_spec():
     assert "visual_proof_spec" in captured_prompt["prompt"]
 
 
+def test_visual_quality_assessment_compresses_local_images_for_model_review(tmp_path):
+    from PIL import Image
+
+    image_path = tmp_path / "large-review-source.png"
+    Image.new("RGB", (1800, 1400), color=(40, 120, 210)).save(image_path)
+    raw_data_url_length = len(AgentsRuntime()._local_image_to_data_url(str(image_path)) or "")
+
+    runtime = AgentsRuntime()
+    captured: dict[str, object] = {}
+
+    def fake_chat_complete(provider, model, prompt, runtime_config, **kwargs):
+        captured["image_urls"] = list(kwargs.get("image_urls") or [])
+        captured["runtime_config"] = runtime_config
+        return (
+            '{"model_summary":"ok","visual_proof_reviews":[{"variant_id":"V1","status":"pass","evidence":"product visible","failed_conditions":[]}]}',
+            "stub-model",
+            0.0,
+        )
+
+    runtime._chat_complete = fake_chat_complete
+
+    output = runtime.run_visual_quality_assessment(
+        run_id="runtime-visual-review-compressed-input",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="secure fit",
+                    hook="Clip in confidence",
+                    message="Show a clear product image.",
+                )
+            ]
+        ),
+        copy_images={
+            "image_assets": [
+                {
+                    "variant_id": "V1",
+                    "uri": str(image_path),
+                    "visual_qa": {"status": "pass", "score": 98, "flags": [], "checks": []},
+                }
+            ]
+        },
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    image_urls = captured["image_urls"]
+    assert isinstance(image_urls, list)
+    assert image_urls[0].startswith("data:image/jpeg;base64,")
+    assert len(image_urls[0]) < raw_data_url_length
+    runtime_config = captured["runtime_config"]
+    assert isinstance(runtime_config, dict)
+    assert runtime_config["extra"]["request_timeout_seconds"] == 180
+    manifest = output.payload["model_media_inputs"]["manifest"][0]
+    assert manifest["review_transport"] == "compressed_data_url"
+    assert manifest["review_input_chars"] == len(image_urls[0])
+
+
 def test_visual_quality_assessment_blocks_failed_visual_proof_review():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: (
