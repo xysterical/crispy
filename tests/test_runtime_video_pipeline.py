@@ -7,7 +7,19 @@ import pytest
 
 from app.agents.runtime import AgentsRuntime
 from app.providers.llm import GeneratedImage, GeneratedVideo, ImageGenResult, VideoGenResult
-from app.schemas.contracts import PlanningBrief, ProductIntake, VariantCandidate, VariantSet, VideoScriptItem, VideoScriptPack, VideoSegmentPlan
+from app.schemas.contracts import (
+    CopyImageBundle,
+    CopyVariant,
+    ImageAssetRef,
+    PlanningBrief,
+    ProductIntake,
+    VariantCandidate,
+    VariantSet,
+    VideoBundle,
+    VideoScriptItem,
+    VideoScriptPack,
+    VideoSegmentPlan,
+)
 
 
 class _FakeVideoProvider:
@@ -2704,6 +2716,69 @@ def test_parse_llm_json_non_string_input_raises():
     runtime = AgentsRuntime()
     with pytest.raises(ValueError, match="empty"):
         runtime._parse_llm_json(None, "scripts")  # type: ignore[arg-type]
+
+
+def test_evaluation_selection_sends_compressed_images_to_kimi(tmp_path):
+    image_path = tmp_path / "variant.png"
+    image_path.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    ))
+    captured = {}
+
+    def fake_chat_complete(provider, model, prompt, runtime_config, **kwargs):
+        captured["provider"] = provider
+        captured["model"] = model
+        captured["prompt"] = prompt
+        captured["runtime_config"] = runtime_config
+        captured["image_urls"] = kwargs.get("image_urls")
+        return (
+            '{"variants":[{"variant_id":"V1","hook_appeal":80,"copy_clarity":79,'
+            '"brand_alignment":78,"visual_execution":77,"compliance_safety":90,'
+            '"total_score":81,"compliance_level":"low","recommended_action":"approve_variant",'
+            '"compliance_risks":[],"compliance_reasons":["safe"],"brief_reason":"Best image."}]}',
+            "kimi-k2.6",
+            0.0,
+        )
+
+    runtime = AgentsRuntime()
+    runtime._chat_complete = fake_chat_complete
+    runtime_config = {"extra": {}}
+
+    output = runtime.run_evaluation_selection(
+        run_id="eval-image-test",
+        variant_set=VariantSet(variants=[
+            VariantCandidate(variant_id="V1", angle="comfort", hook="Walk calmer", message="Padded harness.")
+        ]),
+        copy_bundle=CopyImageBundle(
+            copy_variants=[
+                CopyVariant(
+                    variant_id="V1",
+                    primary_text="Walk calmer with padded support.",
+                    headline="Calmer Walks",
+                    description="Padded harness.",
+                    call_to_action="Shop Now",
+                )
+            ],
+            image_assets=[
+                ImageAssetRef(variant_id="V1", uri=str(image_path), prompt="dog harness ad")
+            ],
+        ),
+        script_pack=VideoScriptPack(scripts=[]),
+        video_bundle=VideoBundle(videos=[]),
+        visual_quality={"variant_summaries": [{"variant_id": "V1", "qa_status": "pass", "visual_score": 88}]},
+        provider="kimi",
+        model="kimi-k2.6",
+        runtime_config=runtime_config,
+    )
+
+    assert captured["image_urls"][0].startswith("data:image/jpeg;base64,")
+    assert captured["runtime_config"]["extra"]["request_timeout_seconds"] == 180
+    assert captured["runtime_config"]["extra"]["thinking_mode"] == "disabled"
+    assert captured["runtime_config"]["extra"]["max_output_tokens"] == 2400
+    assert "Attached images map to variants" in captured["prompt"]
+    assert output.payload["model_media_inputs"]["image_count"] == 1
+    assert output.payload["model_media_inputs"]["manifest"][0]["review_transport"] == "compressed_data_url"
+    assert runtime_config == {"extra": {}}
 
 
 # ---------------------------------------------------------------------------

@@ -4344,6 +4344,36 @@ class AgentsRuntime:
         variant_contexts = self._build_evaluation_context(
             variant_set, copy_bundle, script_pack, video_bundle, visual_quality,
         )
+        evaluation_runtime_config = dict(runtime_config or {})
+        evaluation_extra = dict(evaluation_runtime_config.get("extra") or {})
+        evaluation_extra.setdefault("request_timeout_seconds", 180)
+        if provider == "kimi" or model.startswith("kimi-k"):
+            evaluation_extra.setdefault("thinking_mode", "disabled")
+            evaluation_extra.setdefault("max_output_tokens", 2400)
+        evaluation_runtime_config["extra"] = evaluation_extra
+
+        model_image_inputs: list[str] = []
+        model_media_manifest: list[dict] = []
+        image_by_id = {image.variant_id: image for image in copy_bundle.image_assets}
+        for item in variant_set.variants:
+            image = image_by_id.get(item.variant_id)
+            if not image or not image.uri:
+                continue
+            media_url = image.uri
+            if media_url.startswith(("http://", "https://", "data:")):
+                review_url = media_url
+            else:
+                review_url = self._local_image_to_review_data_url(media_url)
+            if not review_url:
+                continue
+            model_image_inputs.append(review_url)
+            model_media_manifest.append({
+                "variant_id": item.variant_id,
+                "source_uri": image.uri,
+                "media_index": len(model_image_inputs),
+                "review_transport": "compressed_data_url" if review_url.startswith("data:image/jpeg") else "original_uri",
+                "review_input_chars": len(review_url),
+            })
 
         dimensions = (
             "thumb_stop_power, product_clarity, purchase_intent, native_tiktok_feel, "
@@ -4363,6 +4393,7 @@ class AgentsRuntime:
             task_instruction=(
                 f"Evaluate each variant and return a JSON object with a 'variants' array. "
                 f"Context — variants: {json.dumps(variant_contexts, ensure_ascii=False)}. "
+                f"Attached images map to variants by this manifest: {json.dumps(model_media_manifest, ensure_ascii=False)}. "
                 f"GM policy: {json.dumps(gm_policy.get('stage_guidance') or {}, ensure_ascii=False)}.{tiktok_note}\n\n"
                 f"For each variant, score these dimensions 0-100: {dimensions}. "
                 "Also provide: total_score (0-100), compliance_level ('low'/'medium'/'high'), "
@@ -4373,7 +4404,13 @@ class AgentsRuntime:
                 "Return ONLY valid JSON, no markdown wrapping."
             ),
         )
-        raw, model_used, estimated_cost = self._chat_complete(provider, model, prompt, runtime_config)
+        raw, model_used, estimated_cost = self._chat_complete(
+            provider,
+            model,
+            prompt,
+            evaluation_runtime_config,
+            image_urls=model_image_inputs,
+        )
         parsed = self._parse_evaluation_json(raw)
         llm_variants = {
             v.get("variant_id"): v
@@ -4473,6 +4510,10 @@ class AgentsRuntime:
             "evaluation_result": evaluation.model_dump(),
             "selected_deliverables": selected.model_dump(),
             "variants": variant_set.model_dump(),
+            "model_media_inputs": {
+                "image_count": len(model_image_inputs),
+                "manifest": model_media_manifest,
+            },
             "active_gm_policy": gm_policy,
         }
         uri = self.media.write_text_artifact(run_id, "evaluation_selection.json", str(payload))
