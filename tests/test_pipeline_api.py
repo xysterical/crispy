@@ -9,7 +9,7 @@ from app.data.models import VariantAsset
 from app.data.session import SessionLocal
 from app.providers.llm import GeneratedImage, GeneratedVideo, ImageGenResult, VideoGenResult
 from app.orchestrator.state_machine import STAGE_ORDER, stage_plan_for
-from app.services.runs import _build_task_input, _qa_repair_context, _submit_next_video_segment, execute_next_queued_stage
+from app.services.runs import _build_task_input, _qa_repair_context, _retry_delay, _submit_next_video_segment, execute_next_queued_stage
 
 
 def _run_worker_once() -> None:
@@ -43,6 +43,50 @@ def _valid_png_b64() -> str:
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def test_retryable_stage_failure_waits_in_queue(client, monkeypatch):
+    def fail_intake(*_args, **_kwargs):
+        raise TimeoutError("provider read timeout")
+
+    monkeypatch.setattr("app.services.runs.runtime.run_intake", fail_intake)
+
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-retry",
+            "project_name": "p-retry",
+            "product_name": "retry harness",
+            "product_code": "RETRY-001",
+            "industry_code": "pet_care",
+            "campaign_name": "retry campaign",
+            "channel": "meta",
+            "creative_preset": "meta_square_5s",
+            "business_context": {"target_audience": "dog owners"},
+        },
+    )
+    assert create_resp.status_code == 200
+    run_id = create_resp.json()["id"]
+
+    _run_worker_once()
+
+    run = client.get(f"/runs/{run_id}").json()
+    task = next(item for item in run["stage_tasks"] if item["stage_name"] == "intake")
+    assert run["status"] == "running"
+    assert task["status"] == "queued"
+    assert task["metadata_json"]["waiting_state"]["retry_delay_seconds"] == 180.0
+    assert task["metadata_json"]["waiting_state"]["next_attempt"] == 2
+    with SessionLocal() as db:
+        from app.data.models import StageTask
+
+        row = db.query(StageTask).filter_by(run_id=run_id, stage_name="intake").one()
+        assert row.failure_category == "timeout"
+        assert row.retry_at is not None
+        assert row.max_retries == 4
+    assert _retry_delay(1) == 180.0
+    assert _retry_delay(2) == 300.0
+    assert _retry_delay(3) == 480.0
+    assert _retry_delay(99) == 480.0
 
 
 def test_qa_repair_context_maps_visual_qa_flags_to_actions():

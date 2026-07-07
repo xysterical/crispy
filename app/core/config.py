@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     polling_interval_seconds: float = 1.0
     worker_concurrency: int = 3
     video_polling_interval_seconds: float = 30.0
-    max_stage_retries: int = 3
+    max_stage_retries: int = 4
     retry_base_delay_seconds: float = 10.0
     retry_backoff_multiplier: float = 3.0
     personas_dir: Path = Field(default=Path("personas"))

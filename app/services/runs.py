@@ -93,6 +93,7 @@ REGENERATABLE_STAGES = {
     "storyboard_image_generation",
     "video_generation",
 }
+STAGE_RETRY_DELAYS_SECONDS = (180.0, 300.0, 480.0)
 
 
 def _get_stage_output(db: Session, run_id: str, stage_name: str) -> dict | None:
@@ -111,10 +112,7 @@ def utcnow() -> datetime:
 
 
 def _retry_delay(attempt: int) -> float:
-    from app.core.config import get_settings
-
-    settings = get_settings()
-    return settings.retry_base_delay_seconds * (settings.retry_backoff_multiplier ** (attempt - 1))
+    return STAGE_RETRY_DELAYS_SECONDS[min(max(attempt, 1), len(STAGE_RETRY_DELAYS_SECONDS)) - 1]
 
 
 def select_next_queued_task(db: Session) -> StageTask | None:
@@ -1489,6 +1487,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
             "persona_snapshots": persona_snapshots,
             "compiled_persona": compiled_persona,
         }
+        task.metadata_json.pop("waiting_state", None)
         add_agent_trace_event(
             db,
             run_id=run.id,
@@ -1877,13 +1876,26 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
 
         settings = get_settings()
         is_retryable = category in RETRYABLE_FAILURES
-        under_max = (task.attempt or 0) < settings.max_stage_retries
+        max_attempts = max(int(task.max_retries or 0), settings.max_stage_retries)
+        under_max = (task.attempt or 0) < max_attempts
 
         if is_retryable and under_max:
             delay = _retry_delay(task.attempt or 1)
             task.status = TaskStatus.QUEUED.value
             task.retry_at = utcnow() + timedelta(seconds=delay)
             task.priority = max(0, (task.priority or 2) - 1)
+            task.max_retries = max_attempts
+            task.metadata_json = {
+                **(task.metadata_json or {}),
+                "waiting_state": {
+                    "status": "waiting_retry",
+                    "retry_at": task.retry_at.isoformat(),
+                    "retry_delay_seconds": delay,
+                    "next_attempt": (task.attempt or 0) + 1,
+                    "max_attempts": max_attempts,
+                    "failure_category": category,
+                },
+            }
             logger.warning(
                 "Task %s (%s) attempt %s failed (%s); retry scheduled in %ss",
                 task.id, task.stage_name, task.attempt, category, delay,

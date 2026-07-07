@@ -227,7 +227,7 @@ class StageTask(Base):
     status: Mapped[str] = mapped_column(String(32), default=TaskStatus.DRAFT.value)
     attempt: Mapped[int] = mapped_column(Integer, default=0)
     priority: Mapped[int] = mapped_column(Integer, default=2)
-    max_retries: Mapped[int] = mapped_column(Integer, default=3)
+    max_retries: Mapped[int] = mapped_column(Integer, default=4)
     retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     input_payload: Mapped[dict] = mapped_column(json_type(), default=dict)
     output_payload: Mapped[dict] = mapped_column(json_type(), default=dict)
