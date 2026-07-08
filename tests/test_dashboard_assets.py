@@ -135,6 +135,10 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "bindTracePayloadToggles" in html
     assert "variant-board-toggle" in html
     assert "variant_board_collapsed" in html
+    assert "function renderReviewChecklist(run)" in html
+    assert "function currentReviewTask(run)" in html
+    assert "Review checklist" in html
+    assert "${renderReviewChecklist(run)}" in html
 
 
 def test_dashboard_create_run_has_accordion_sections(client):

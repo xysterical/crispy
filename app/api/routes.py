@@ -1450,6 +1450,78 @@ def _dashboard_shared_js() -> str:
               </div>
             `;
           }
+          function firstTextValue(obj, keys){
+            if (!obj || typeof obj !== "object") return "";
+            for (const key of keys) {
+              const value = obj[key];
+              if (typeof value === "string" && value.trim()) return value.trim();
+              if (Array.isArray(value) && value.length) return value.map((item) => typeof item === "string" ? item : JSON.stringify(item)).slice(0, 3).join("; ");
+            }
+            return "";
+          }
+          function summarizeList(label, rows, keys){
+            if (!Array.isArray(rows) || !rows.length) return "";
+            const sample = rows.slice(0, 3).map((item) => {
+              if (typeof item === "string") return item;
+              return firstTextValue(item, keys) || JSON.stringify(item).slice(0, 120);
+            }).filter(Boolean).join(" | ");
+            return `${label}: ${rows.length}${sample ? ` - ${sample}` : ""}`;
+          }
+          function currentReviewTask(run){
+            const tasks = run.stage_tasks || [];
+            return tasks.find((task) => task.stage_name === run.current_stage && task.status === "waiting_review")
+              || tasks.find((task) => task.status === "waiting_review")
+              || null;
+          }
+          function reviewChecklistItems(task){
+            const payload = task.output_payload || {};
+            const stage = task.stage_name;
+            const items = [];
+            if (task.summary) items.push(task.summary);
+            if (stage === "intake") {
+              items.push(summarizeList("SKU rows", payload.sku_summary, ["sku", "name", "title", "product_name"]));
+              items.push(summarizeList("Image references", payload.image_references, ["filename", "uri", "url"]));
+              items.push(firstTextValue(payload, ["asset_media_summary", "summary"]));
+            } else if (stage === "planning") {
+              items.push(summarizeList("Strategic angles", payload.strategic_angles, ["angle", "name", "summary", "hook"]));
+              items.push(summarizeList("Constraints", payload.constraints, ["rule", "constraint", "summary"]));
+            } else if (stage === "divergence") {
+              items.push(summarizeList("Variants", payload.variants, ["variant_id", "angle", "hook", "message"]));
+            } else if (stage === "copy_image_generation") {
+              items.push(summarizeList("Copy variants", payload.copy_variants, ["headline", "primary_text", "hook"]));
+              items.push(summarizeList("Image assets", payload.image_assets, ["variant_id", "uri", "prompt"]));
+            } else if (stage === "video_scripting") {
+              items.push(summarizeList("Video scripts", payload.scripts, ["variant_id", "hook", "opening_hook", "script"]));
+            } else if (stage === "storyboard_image_generation") {
+              items.push(summarizeList("Storyboard frames", payload.frames, ["frame_id", "variant_id", "prompt", "image_uri"]));
+            } else if (stage === "video_generation") {
+              items.push(summarizeList("Video assets", payload.videos, ["variant_id", "generation_status", "video_uri", "error"]));
+            } else if (stage === "visual_quality_assessment") {
+              const summary = payload.summary || payload.visual_quality_summary || {};
+              items.push(firstTextValue(summary, ["recommended_action", "status", "model_summary"]));
+              items.push(summarizeList("Issues", summary.issues || payload.issues, ["message", "key"]));
+            } else if (stage === "evaluation_selection") {
+              const selected = payload.selected_deliverables || {};
+              if (selected.winner_variant_id) items.push(`Winner candidate: ${selected.winner_variant_id}`);
+              items.push(summarizeList("Ranked variants", payload.evaluation_result?.ranked_variants, ["variant_id", "rationale", "reason"]));
+            }
+            return items.filter((item) => typeof item === "string" && item.trim()).slice(0, 6);
+          }
+          function renderReviewChecklist(run){
+            const task = currentReviewTask(run);
+            if (!task) return "";
+            const items = reviewChecklistItems(task);
+            const list = items.length
+              ? items.map((item) => `<li>${esc(item)}</li>`).join("")
+              : "<li>Review the stage output before approving or rejecting.</li>";
+            return `
+              <section class="status-explainer review" style="margin-top:12px;">
+                <div class="status-explainer-kicker">Review checklist</div>
+                <h3>${esc(task.stage_name)} output</h3>
+                <ol>${list}</ol>
+              </section>
+            `;
+          }
           function statusExplanationClass(tone){
             if (tone === "danger") return "status-explainer danger";
             if (tone === "review") return "status-explainer review";
@@ -1607,6 +1679,7 @@ def _dashboard_shared_js() -> str:
                 <div style="margin-top:8px;"><button onclick="refreshAsyncAssets('${run.id}')">Refresh async assets</button></div>
               </div>
               ${renderStatusExplanation(run)}
+              ${renderReviewChecklist(run)}
               ${renderExecutionMemory(executionMemory)}
               ${renderDeliverables(deliverables)}
               ${renderVariantBoard(run.id, variants)}
