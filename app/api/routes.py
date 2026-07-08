@@ -1467,6 +1467,30 @@ def _dashboard_shared_js() -> str:
             }).filter(Boolean).join(" | ");
             return `${label}: ${rows.length}${sample ? ` - ${sample}` : ""}`;
           }
+          function summarizeVariants(rows){
+            if (!Array.isArray(rows) || !rows.length) return "";
+            return {
+              title: `Variants: ${rows.length}`,
+              rows: rows.slice(0, 6).map((item) => {
+                if (typeof item === "string") return { title: item, detail: "" };
+                const variantId = item.variant_id || item.id || "variant";
+                return {
+                  title: `${variantId}: ${item.angle || item.hook || "Variant"}`,
+                  detail: [item.hook, item.message].filter(Boolean).join(" - "),
+                };
+              }),
+            };
+          }
+          function renderChecklistItem(item){
+            if (typeof item === "string") return `<li>${esc(item)}</li>`;
+            if (item && Array.isArray(item.rows)) {
+              return `<li><div class="review-checklist-group-title">${esc(item.title || "Items")}</div><ul class="review-checklist-sublist">${item.rows.map((row) => {
+                if (typeof row === "string") return `<li>${esc(row)}</li>`;
+                return `<li><b>${esc(row.title || "-")}</b>${row.detail ? `<div>${esc(row.detail)}</div>` : ""}</li>`;
+              }).join("")}</ul></li>`;
+            }
+            return "";
+          }
           function currentReviewTask(run){
             const tasks = run.stage_tasks || [];
             return tasks.find((task) => task.stage_name === run.current_stage && task.status === "waiting_review")
@@ -1486,7 +1510,7 @@ def _dashboard_shared_js() -> str:
               items.push(summarizeList("Strategic angles", payload.strategic_angles, ["angle", "name", "summary", "hook"]));
               items.push(summarizeList("Constraints", payload.constraints, ["rule", "constraint", "summary"]));
             } else if (stage === "divergence") {
-              items.push(summarizeList("Variants", payload.variants, ["variant_id", "angle", "hook", "message"]));
+              items.push(summarizeVariants(payload.variants));
             } else if (stage === "copy_image_generation") {
               items.push(summarizeList("Copy variants", payload.copy_variants, ["headline", "primary_text", "hook"]));
               items.push(summarizeList("Image assets", payload.image_assets, ["variant_id", "uri", "prompt"]));
@@ -1505,14 +1529,14 @@ def _dashboard_shared_js() -> str:
               if (selected.winner_variant_id) items.push(`Winner candidate: ${selected.winner_variant_id}`);
               items.push(summarizeList("Ranked variants", payload.evaluation_result?.ranked_variants, ["variant_id", "rationale", "reason"]));
             }
-            return items.filter((item) => typeof item === "string" && item.trim()).slice(0, 6);
+            return items.filter((item) => item && (typeof item !== "string" || item.trim())).slice(0, 6);
           }
           function renderReviewChecklist(run){
             const task = currentReviewTask(run);
             if (!task) return "";
             const items = reviewChecklistItems(task);
             const list = items.length
-              ? items.map((item) => `<li>${esc(item)}</li>`).join("")
+              ? items.map(renderChecklistItem).join("")
               : "<li>Review the stage output before approving or rejecting.</li>";
             return `
               <section class="status-explainer review" style="margin-top:12px;">
