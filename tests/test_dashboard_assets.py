@@ -250,6 +250,17 @@ def test_dashboard_create_run_labels_pipeline_and_specs_clearly(client):
     assert modes["marketplace_main_image"]["display_name"] == "Studio Main Image"
 
 
+def test_create_run_dashboard_renders_failure_details(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    html = resp.text
+
+    assert "createRunErrorDetailHtml" in html
+    assert "No failure detail returned by the server." in html
+    assert "JSON.parse(text)" in html
+    assert "renderCreateRunMessage('error', 'Run creation failed.', createRunErrorDetailHtml(detail))" in html
+
+
 def test_dashboard_variant_detail_renders_review_hints_section(client):
     resp = client.get("/dashboard")
     assert resp.status_code == 200

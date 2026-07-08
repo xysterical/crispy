@@ -894,6 +894,32 @@ CREATE_RUN_JS = """
     }).join('') + '</ul>';
   }
 
+  function createRunErrorDetailHtml(detail) {
+    if (typeof detail === 'string') {
+      return '<div>' + escapeCreateRunHtml(detail) + '</div>';
+    }
+    if (Array.isArray(detail)) {
+      return '<ul style="margin:8px 0 0 18px;padding:0;">' + detail.map(function(row) {
+        const loc = Array.isArray(row.loc) ? row.loc.join('.') : '';
+        const msg = row.msg || row.message || JSON.stringify(row);
+        return '<li>' + escapeCreateRunHtml((loc ? loc + ': ' : '') + msg) + '</li>';
+      }).join('') + '</ul>';
+    }
+    if (detail && typeof detail === 'object') {
+      const rows = [];
+      ['error', 'message', 'reason'].forEach(function(key) {
+        if (detail[key]) rows.push(key + ': ' + detail[key]);
+      });
+      if (rows.length) {
+        return '<ul style="margin:8px 0 0 18px;padding:0;">' + rows.map(function(row) {
+          return '<li>' + escapeCreateRunHtml(row) + '</li>';
+        }).join('') + '</ul>';
+      }
+      return '<div>' + escapeCreateRunHtml(JSON.stringify(detail)) + '</div>';
+    }
+    return '<div>No failure detail returned by the server.</div>';
+  }
+
   function renderCreateRunMessage(kind, title, detailHtml) {
     const msg = document.getElementById('create-msg');
     const color = kind === 'error' ? 'var(--danger)' : kind === 'warn' ? 'var(--warning)' : 'var(--accent)';
@@ -970,10 +996,16 @@ CREATE_RUN_JS = """
     }
 
     fetch('/runs/rich', { method: 'POST', body: fd })
-      .then(function(r) { return r.json().then(function(data) { return { status: r.status, data: data }; }); })
+      .then(function(r) {
+        return r.text().then(function(text) {
+          let data = text;
+          try { data = text ? JSON.parse(text) : {}; } catch(e) {}
+          return { status: r.status, data: data };
+        });
+      })
       .then(function(result) {
         if (result.status >= 400) {
-          const detail = result.data.detail || {};
+          const detail = result.data && typeof result.data === 'object' && 'detail' in result.data ? result.data.detail : result.data;
           if (detail.preflight) {
             renderCreateRunMessage(
               'error',
@@ -981,7 +1013,7 @@ CREATE_RUN_JS = """
               '<div class="muted" style="margin-top:4px;">Fix the items below, then create the run again.</div>' + preflightRowsHtml(detail.preflight)
             );
           } else {
-            renderCreateRunMessage('error', typeof detail === 'string' ? detail : 'Run creation failed.', '');
+            renderCreateRunMessage('error', 'Run creation failed.', createRunErrorDetailHtml(detail));
           }
           return;
         }
