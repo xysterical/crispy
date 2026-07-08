@@ -834,7 +834,7 @@ def test_copy_image_generation_blocks_placeholder_assets():
         "stub-image-model",
     )
 
-    with pytest.raises(RuntimeError, match="image generation failed local QA"):
+    with pytest.raises(RuntimeError, match="image provider produced no reviewable assets"):
         runtime.run_copy_image_generation(
             run_id="copy-placeholder-blocked",
             variant_set=VariantSet(
@@ -858,6 +858,65 @@ def test_copy_image_generation_blocks_placeholder_assets():
             provider="deepseek",
             model="deepseek-v4-pro",
         )
+
+
+def test_copy_image_generation_continues_after_placeholder_asset():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("copy hint", "text-model", 0.0)
+    calls = {"count": 0}
+
+    def generate_image(**kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return (
+                type("ImageResult", (), {"estimated_cost": 0.0, "images": [], "model_used": "image-model"})(),
+                "stub-image-provider",
+                "stub-image-model",
+            )
+        return (
+            ImageGenResult(
+                model_used="image-model",
+                images=[GeneratedImage(task_id="image-task-2", status="submitted", raw_response={"status": "submitted"})],
+                task_id="image-task-2",
+                status="submitted",
+                raw_response={"status": "submitted"},
+            ),
+            "stub-image-provider",
+            "stub-image-model",
+        )
+
+    runtime._generate_image = generate_image
+
+    output = runtime.run_copy_image_generation(
+        run_id="copy-placeholder-continues",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="secure fit",
+                    hook="Clip in confidence",
+                    message="Show the harness clearly.",
+                ),
+                VariantCandidate(
+                    variant_id="V2",
+                    angle="front detail",
+                    hook="See the D-ring up close",
+                    message="Show the harness hardware clearly.",
+                ),
+            ]
+        ),
+        intake=ProductIntake(product_name="blue pet harness"),
+        business_context={"target_audience": "dog owners", "primary_cta": "Shop Now"},
+        creative_specs={},
+        market="US",
+        locale="en-US",
+        provider="deepseek",
+        model="deepseek-v4-pro",
+    )
+
+    assert calls["count"] == 2
+    assert output.payload["image_assets"][0]["image_asset_contract"]["blocking"] is True
+    assert output.payload["image_assets"][1]["source"] == "external_task_pending"
 
 
 def test_copy_image_generation_blocks_all_provider_error_assets():

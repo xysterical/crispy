@@ -2663,8 +2663,6 @@ class AgentsRuntime:
                     expected_ratio=image_size,
                 )
             self._attach_image_asset_contract(image_payload)
-            if image_source != "generation_error":
-                self._require_generated_image_asset(image_payload)
             images.append(image_ref)
             artifacts.append(
                 {
