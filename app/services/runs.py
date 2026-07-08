@@ -991,10 +991,17 @@ def _latest_video_payload_for_variant(db: Session, run_id: str, variant_id: str)
 def _merge_stage_payload(stage_name: str, existing: dict, new_payload: dict) -> dict:
     existing = dict(existing or {})
     if stage_name == "copy_image_generation":
+        def merge_by_variant(old_items: list[dict], new_items: list[dict]) -> list[dict]:
+            merged = {str(item.get("variant_id") or ""): item for item in old_items if isinstance(item, dict)}
+            for item in new_items:
+                if isinstance(item, dict):
+                    merged[str(item.get("variant_id") or "")] = item
+            return [item for key, item in merged.items() if key]
+
         return {
             **existing,
-            "copy_variants": [*(existing.get("copy_variants") or []), *(new_payload.get("copy_variants") or [])],
-            "image_assets": [*(existing.get("image_assets") or []), *(new_payload.get("image_assets") or [])],
+            "copy_variants": merge_by_variant(existing.get("copy_variants") or [], new_payload.get("copy_variants") or []),
+            "image_assets": merge_by_variant(existing.get("image_assets") or [], new_payload.get("image_assets") or []),
         }
     if stage_name == "video_scripting":
         return {**existing, "scripts": [*(existing.get("scripts") or []), *(new_payload.get("scripts") or [])]}
@@ -1061,6 +1068,66 @@ def _generated_asset_failure(payload: dict, uri: str | None) -> tuple[str | None
     if uri and not _uri_has_payload(uri):
         return TaskFailureCategory.PROVIDER_ERROR.value, "generated media file is empty or placeholder-sized"
     return None, None
+
+
+def _copy_image_failure_lines(image_assets: list[dict]) -> list[str]:
+    lines: list[str] = []
+    for item in image_assets:
+        if not isinstance(item, dict):
+            continue
+        failure_category, error_message = _generated_asset_failure(item, item.get("uri"))
+        if failure_category:
+            variant_id = item.get("variant_id") or "variant"
+            lines.append(f"{variant_id}: {error_message or failure_category}")
+    return lines
+
+
+def _settle_copy_image_stage_status(
+    db: Session,
+    run: PipelineRun,
+    task: StageTask,
+    image_assets: list[dict],
+    *,
+    emit_trace: bool = True,
+) -> None:
+    pending = [item for item in image_assets if isinstance(item, dict) and _pending_copy_image_asset(item)]
+    failures = _copy_image_failure_lines(image_assets)
+    if pending:
+        if task.status == TaskStatus.FAILED.value:
+            task.status = TaskStatus.WAITING_REVIEW.value
+            task.failure_category = None
+            task.error_message = None
+            run.status = RunStatus.WAITING_REVIEW.value
+            run.current_stage = task.stage_name
+            run.updated_at = utcnow()
+        return
+    if failures:
+        error_message = "Copy/image generation failed assets: " + "; ".join(failures)
+        changed = task.status != TaskStatus.FAILED.value or task.error_message != error_message
+        task.status = TaskStatus.FAILED.value
+        task.failure_category = TaskFailureCategory.PROVIDER_ERROR.value
+        task.error_message = error_message
+        run.status = RunStatus.FAILED.value
+        run.current_stage = task.stage_name
+        run.updated_at = utcnow()
+        if changed and emit_trace:
+            add_agent_trace_event(
+                db,
+                run_id=run.id,
+                stage_task_id=task.id,
+                stage_name=task.stage_name,
+                agent_name=(task.metadata_json or {}).get("agent_name") or "copy_image_agent",
+                event_type="failed",
+                message=task.error_message,
+                payload={"failure_category": task.failure_category, "asset_failures": failures},
+            )
+    elif task.status == TaskStatus.FAILED.value:
+        task.status = TaskStatus.WAITING_REVIEW.value
+        task.failure_category = None
+        task.error_message = None
+        run.status = RunStatus.WAITING_REVIEW.value
+        run.current_stage = task.stage_name
+        run.updated_at = utcnow()
 
 
 def _refresh_completed_image_qa(
@@ -1912,14 +1979,26 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
 
         task.status = TaskStatus.WAITING_REVIEW.value
         run.status = RunStatus.WAITING_REVIEW.value
+        if task.stage_name == "copy_image_generation":
+            _settle_copy_image_stage_status(
+                db,
+                run,
+                task,
+                [item for item in (task.output_payload or {}).get("image_assets", []) or [] if isinstance(item, dict)],
+                emit_trace=False,
+            )
         add_agent_trace_event(
             db,
             run_id=run.id,
             stage_task_id=task.id,
             stage_name=task.stage_name,
             agent_name=lead_agent,
-            event_type="completed",
-            message=f"{lead_agent} completed {task.stage_name}; waiting for human review.",
+            event_type="completed" if task.status == TaskStatus.WAITING_REVIEW.value else "failed",
+            message=(
+                f"{lead_agent} completed {task.stage_name}; waiting for human review."
+                if task.status == TaskStatus.WAITING_REVIEW.value
+                else (task.error_message or f"{lead_agent} failed {task.stage_name}.")
+            ),
             provider_name=provider_name,
             model_name=model_name,
             payload={"model_used": output.model_used, "estimated_cost": output.estimated_cost},
@@ -2948,10 +3027,11 @@ def refresh_copy_image_task_assets(db: Session, run_id: str) -> dict:
         image_assets = list(image_assets_by_variant.values())
         task.output_payload = {**task.output_payload, "image_assets": image_assets}
         pending = [item for item in image_assets if isinstance(item, dict) and _pending_copy_image_asset(item)]
-        failed = [item for item in image_assets if isinstance(item, dict) and item.get("error")]
         copy_auto = should_auto_approve(run.approval_mode, task.stage_name) or (
             run.approval_mode == "semi_auto" and is_marketplace_main_image(run.creative_specs)
         )
+        _settle_copy_image_stage_status(db, run, task, image_assets)
+        failed = _copy_image_failure_lines(image_assets)
         if copy_auto and task.status == TaskStatus.WAITING_REVIEW.value and not pending and not failed:
             auto_approve_stage(db, run.id, task.stage_name)
     db.flush()
@@ -3484,6 +3564,31 @@ def regenerate_variant_assets(
     run.budget_used = float(run.budget_used or 0.0) + output.estimated_cost
     run.updated_at = utcnow()
     db.flush()
+    return variant
+
+
+def retry_copy_image_asset(
+    db: Session,
+    *,
+    run_id: str,
+    variant_id: str,
+    reason: str,
+) -> RunVariant:
+    variant = regenerate_variant_assets(
+        db,
+        run_id=run_id,
+        variant_id=variant_id,
+        reason=reason,
+        target_stage="copy_image_generation",
+    )
+    run = get_run(db, run_id)
+    task = get_stage_task(db, run_id, "copy_image_generation")
+    _settle_copy_image_stage_status(
+        db,
+        run,
+        task,
+        [item for item in (task.output_payload or {}).get("image_assets", []) or [] if isinstance(item, dict)],
+    )
     return variant
 
 

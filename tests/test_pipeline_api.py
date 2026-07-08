@@ -234,7 +234,8 @@ def test_run_status_explanation_guides_operator_next_steps(client):
     assert failed["status_explanation"]["primary_action"] == "Reject to retry"
 
 
-def test_pipeline_run_can_progress_with_human_gates(client):
+def test_pipeline_run_can_progress_with_human_gates(client, monkeypatch):
+    _patch_valid_generated_images(monkeypatch)
     create_resp = client.post(
         "/runs",
         json={
@@ -357,7 +358,8 @@ def test_stage_rerun_requeues_target_and_resets_downstream(client):
     assert planning["attempt"] >= 2
 
 
-def test_run_deliverables_and_variants_endpoints(client):
+def test_run_deliverables_and_variants_endpoints(client, monkeypatch):
+    _patch_valid_generated_images(monkeypatch)
     create_resp = client.post(
         "/runs",
         json={
@@ -656,7 +658,8 @@ def test_custom_copy_image_only_does_not_require_video_specs(client):
     assert creative_specs["video_duration_seconds"] == 5
 
 
-def test_creative_preset_is_materialized_into_run(client):
+def test_creative_preset_is_materialized_into_run(client, monkeypatch):
+    _patch_valid_generated_images(monkeypatch)
     resp = client.post(
         "/runs",
         json={
@@ -778,7 +781,8 @@ def test_pipeline_mode_dtc_site_image_accepts_site_surface_override(client):
     assert run["creative_specs"]["site_surface"] == "homepage_hero"
 
 
-def test_dtc_site_surface_changes_planning_and_image_prompt(client):
+def test_dtc_site_surface_changes_planning_and_image_prompt(client, monkeypatch):
+    _patch_valid_generated_images(monkeypatch)
     def create_run_for_surface(surface: str, code: str) -> dict:
         resp = client.post(
             "/runs",
@@ -835,7 +839,8 @@ def test_dtc_site_surface_changes_planning_and_image_prompt(client):
     assert "social media ad image" not in pdp_image["prompt"].lower()
 
 
-def test_dtc_site_surface_adds_surface_specific_review_hints(client):
+def test_dtc_site_surface_adds_surface_specific_review_hints(client, monkeypatch):
+    _patch_valid_generated_images(monkeypatch)
     def create_run_to_visual_qa(surface: str, code: str) -> tuple[dict, dict]:
         resp = client.post(
             "/runs",
@@ -1254,6 +1259,103 @@ def test_assets_refresh_recovers_pending_copy_image_task(client, monkeypatch):
         assert db.query(AgentTraceEvent).filter_by(run_id=run_id, event_type="external_task_polled").count() == 1
         assert image_asset.failure_category is None
         assert Path(image_asset.uri).stat().st_size > 1024
+
+
+def test_assets_refresh_fails_copy_image_stage_when_assets_failed(client):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-copy-image-refresh-failed",
+            "project_name": "p-copy-image-refresh-failed",
+            "product_name": "paper cup",
+            "product_code": "COPY-IMAGE-REFRESH-FAILED-001",
+            "industry_code": "packaging",
+            "campaign_name": "copy-image-refresh-failed",
+            "pipeline_mode": "copy_image_only",
+            "approval_mode": "manual",
+            "creative_preset": "meta_square_5s",
+        },
+    )
+    assert create_resp.status_code == 200
+    run_id = create_resp.json()["id"]
+
+    with SessionLocal() as db:
+        from app.data.models import PipelineRun, RunStatus, RunVariant, StageTask, TaskStatus
+
+        run = db.get(PipelineRun, run_id)
+        run.current_stage = "copy_image_generation"
+        run.status = RunStatus.WAITING_REVIEW.value
+        variants = [
+            RunVariant(run_id=run_id, variant_id="V1", angle="Cup", hook="Hook", message="Message"),
+            RunVariant(run_id=run_id, variant_id="V2", angle="Cup", hook="Hook", message="Message"),
+        ]
+        db.add_all(variants)
+        db.flush()
+        image_payloads = [
+            {
+                "variant_id": "V1",
+                "uri": f"assets/{run_id}/V1_generation_error.txt",
+                "source": "generation_error",
+                "error": "request failed for all endpoint candidates",
+            },
+            {
+                "variant_id": "V2",
+                "uri": f"assets/{run_id}/copy_image_2.png",
+                "source": "placeholder",
+                "generation_status": "completed",
+            },
+        ]
+        copy_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="copy_image_generation").one()
+        copy_task.status = TaskStatus.WAITING_REVIEW.value
+        copy_task.output_payload = {"copy_variants": [], "image_assets": image_payloads}
+        for variant, payload in zip(variants, image_payloads, strict=True):
+            db.add(
+                VariantAsset(
+                    run_variant_id=variant.id,
+                    run_id=run_id,
+                    stage_name="copy_image_generation",
+                    asset_type="image",
+                    uri=payload["uri"],
+                    provider_name="stub",
+                    model_name="stub-image",
+                    prompt_summary="paper cup",
+                    idempotency_key=f"failed-copy-image-{variant.variant_id}",
+                    payload=payload,
+                )
+            )
+        db.commit()
+
+    resp = client.post(f"/runs/{run_id}/assets/refresh")
+    assert resp.status_code == 200
+
+    with SessionLocal() as db:
+        from app.data.models import PipelineRun, StageTask, TaskStatus
+
+        run = db.get(PipelineRun, run_id)
+        copy_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="copy_image_generation").one()
+        assert run.status == "failed"
+        assert copy_task.status == TaskStatus.FAILED.value
+        assert "V1: request failed for all endpoint candidates" in copy_task.error_message
+        assert "V2: provider returned placeholder media" in copy_task.error_message
+
+
+def test_copy_image_merge_replaces_regenerated_variant_payload():
+    from app.services.runs import _merge_stage_payload
+
+    merged = _merge_stage_payload(
+        "copy_image_generation",
+        {
+            "copy_variants": [{"variant_id": "V1", "headline": "old"}, {"variant_id": "V2", "headline": "keep"}],
+            "image_assets": [{"variant_id": "V1", "uri": "old.png"}, {"variant_id": "V2", "uri": "keep.png"}],
+        },
+        {
+            "copy_variants": [{"variant_id": "V1", "headline": "new"}],
+            "image_assets": [{"variant_id": "V1", "uri": "new.png"}],
+        },
+    )
+
+    assert merged["copy_variants"] == [{"variant_id": "V1", "headline": "new"}, {"variant_id": "V2", "headline": "keep"}]
+    assert merged["image_assets"] == [{"variant_id": "V1", "uri": "new.png"}, {"variant_id": "V2", "uri": "keep.png"}]
 
 
 def test_assets_refresh_rechecks_completed_copy_image_qa(client):

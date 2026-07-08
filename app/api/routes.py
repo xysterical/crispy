@@ -147,6 +147,7 @@ from app.services.runs import (
     rerun_stage,
     refresh_async_assets,
     refresh_video_task_assets,
+    retry_copy_image_asset,
     review_variant,
     run_deliverables,
     run_trace_events,
@@ -1011,6 +1012,12 @@ def _dashboard_shared_js() -> str:
             });
           }
 
+          async function retryVariantImage(runId, variantId){
+            await variantAction(runId, variantId, `/runs/${runId}/variants/${variantId}/assets/image/retry`, {
+              reason: "retry image asset from dashboard"
+            });
+          }
+
           async function scheduleVariantQuick(variantId, runId, hook){
             const wsSelect = document.getElementById('workspace_name');
             const wsName = wsSelect?.value || 'workspace_demo';
@@ -1172,6 +1179,7 @@ def _dashboard_shared_js() -> str:
                 <button onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/select', {shortlist:true, comment:'shortlisted from dashboard'})">Shortlist</button>
                 <button class="primary" onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/select', {winner:true, comment:'winner chosen from dashboard'})">Set Winner</button>
                 <button onclick="requestVariantRegeneration('${runId}', '${variantId}')">Regenerate</button>
+                <button onclick="retryVariantImage('${runId}', '${variantId}')">Retry Image</button>
                 <button onclick="scheduleVariantQuick('${variantId}','${runId}','${(item.hook||'').replace(/'/g,\"\\\\'\")}')" style="background:var(--soft);border-color:var(--accent);color:var(--accent);">+ Calendar</button>
               </div>
             `;
@@ -3280,6 +3288,28 @@ def post_variant_regenerate(
         db.commit()
         data = next(item for item in run_variants(db, run_id)["items"] if item["variant_id"] == variant_id)
     except (ValueError, StopIteration) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return RunVariantView(**data)
+
+
+@router.post("/runs/{run_id}/variants/{variant_id}/assets/image/retry", response_model=RunVariantView)
+def post_variant_image_retry(
+    run_id: str,
+    variant_id: str,
+    payload: VariantRegenerateRequest,
+    db: Session = Depends(get_db),
+) -> RunVariantView:
+    try:
+        variant = retry_copy_image_asset(
+            db,
+            run_id=run_id,
+            variant_id=variant_id,
+            reason=payload.reason or "retry image asset",
+        )
+        db.commit()
+        data = next(item for item in run_variants(db, run_id)["items"] if item["variant_id"] == variant.variant_id)
+    except (ValueError, RuntimeError, StopIteration) as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return RunVariantView(**data)
