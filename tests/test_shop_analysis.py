@@ -327,6 +327,65 @@ def test_gm_memory_compaction_creates_summary_and_supersedes_raw(client, db_sess
     assert all((row.content or {}).get("superseded_by_id") == body["id"] for row in raw)
 
 
+def test_conflicting_compacted_memory_is_not_used_for_planning(client, db_session):
+    from app.data.models import GmMemory, Workspace
+    from app.services.runs import _build_task_input, create_run
+    from app.schemas.api import RunCreateRequest
+
+    shop = Workspace(name="conflict-shop", industry_code="pet_accessories")
+    db_session.add(shop)
+    db_session.flush()
+
+    run = create_run(
+        db_session,
+        RunCreateRequest(
+            workspace_name="conflict-shop",
+            project_name="conflict-project",
+            product_name="conflict leash",
+            product_code="CONFLICT-SKU",
+            industry_code="pet_accessories",
+            campaign_name="conflict-campaign",
+            creative_preset="custom",
+            creative_specs={"image_size": "1:1", "video_size": "1:1", "resolution": "720p", "video_duration_seconds": 5},
+        ),
+    )
+    db_session.add_all(
+        [
+            GmMemory(
+                project_id=run.project_id,
+                memory_scope="product",
+                product_code="CONFLICT-SKU",
+                source_type="feedback_import",
+                memory_type="store_intelligence",
+                content={"summary": "Conflicting source A", "winning_patterns": [{"angle": "utility proof"}]},
+            ),
+            GmMemory(
+                project_id=run.project_id,
+                memory_scope="product",
+                product_code="CONFLICT-SKU",
+                source_type="feedback_import",
+                memory_type="store_intelligence",
+                content={"summary": "Conflicting source B", "avoid_patterns": [{"angle": "utility proof"}]},
+            ),
+        ]
+    )
+    db_session.commit()
+
+    resp = client.post(
+        "/gm-memory/compact",
+        json={"project_id": run.project_id, "memory_scope": "product", "product_code": "CONFLICT-SKU"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["content"]["conflicts"][0]["pattern_key"] == "utility proof"
+    assert body["content"]["winning_patterns"] == []
+    assert body["content"]["avoid_patterns"] == []
+
+    planning_task = next(task for task in run.stage_tasks if task.stage_name == "planning")
+    task_input = _build_task_input(db_session, run, planning_task)
+    assert all(item["id"] != body["id"] for item in task_input["gm_lessons"])
+
+
 def test_planning_trace_records_applied_gm_memory(client):
     from app.data.models import AgentTraceEvent, GmMemory, PipelineRun, StageTask
     from app.data.session import SessionLocal
