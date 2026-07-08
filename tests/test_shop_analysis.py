@@ -386,6 +386,86 @@ def test_conflicting_compacted_memory_is_not_used_for_planning(client, db_sessio
     assert all(item["id"] != body["id"] for item in task_input["gm_lessons"])
 
 
+def test_low_confidence_memory_is_ignored_unless_pinned(client, db_session):
+    from app.data.models import GmMemory, Workspace
+    from app.services.runs import _build_task_input, create_run
+    from app.schemas.api import RunCreateRequest
+
+    shop = Workspace(name="dirty-shop", industry_code="pet_accessories")
+    db_session.add(shop)
+    db_session.flush()
+    run = create_run(
+        db_session,
+        RunCreateRequest(
+            workspace_name="dirty-shop",
+            project_name="dirty-project",
+            product_name="dirty leash",
+            product_code="DIRTY-SKU",
+            industry_code="pet_accessories",
+            campaign_name="dirty-campaign",
+            creative_preset="custom",
+            creative_specs={"image_size": "1:1", "video_size": "1:1", "resolution": "720p", "video_duration_seconds": 5},
+        ),
+    )
+    dirty = GmMemory(
+        project_id=run.project_id,
+        memory_scope="product",
+        product_code="DIRTY-SKU",
+        source_type="feedback_import",
+        memory_type="summary",
+        content={"summary": "Low confidence memory", "winning_patterns": [{"angle": "bad angle"}], "confidence": 0.2},
+    )
+    good = GmMemory(
+        project_id=run.project_id,
+        memory_scope="product",
+        product_code="DIRTY-SKU",
+        source_type="feedback_import",
+        memory_type="summary",
+        content={"summary": "Trusted memory", "winning_patterns": [{"angle": "good angle"}], "confidence": 0.7},
+    )
+    db_session.add_all([dirty, good])
+    db_session.flush()
+
+    planning_task = next(task for task in run.stage_tasks if task.stage_name == "planning")
+    task_input = _build_task_input(db_session, run, planning_task)
+    lesson_ids = {item["id"] for item in task_input["gm_lessons"]}
+    assert good.id in lesson_ids
+    assert dirty.id not in lesson_ids
+
+    dirty.pinned = True
+    db_session.flush()
+    task_input = _build_task_input(db_session, run, planning_task)
+    assert dirty.id in {item["id"] for item in task_input["gm_lessons"]}
+
+
+def test_dirty_memory_is_not_compacted(client, db_session):
+    from app.data.models import GmMemory, Project, Workspace
+
+    shop = Workspace(name="dirty-compact-shop")
+    db_session.add(shop)
+    db_session.flush()
+    project = Project(workspace_id=shop.id, name="dirty-compact-project")
+    db_session.add(project)
+    db_session.flush()
+    db_session.add(
+        GmMemory(
+            project_id=project.id,
+            memory_scope="product",
+            product_code="DIRTY-COMPACT",
+            source_type="feedback_import",
+            memory_type="store_intelligence",
+            content={"summary": "Too weak to compact", "winning_patterns": ["weak"], "confidence": 0.2},
+        )
+    )
+    db_session.commit()
+
+    resp = client.post(
+        "/gm-memory/compact",
+        json={"project_id": project.id, "memory_scope": "product", "product_code": "DIRTY-COMPACT"},
+    )
+    assert resp.status_code == 404
+
+
 def test_planning_trace_records_applied_gm_memory(client):
     from app.data.models import AgentTraceEvent, GmMemory, PipelineRun, StageTask
     from app.data.session import SessionLocal

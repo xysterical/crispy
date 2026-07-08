@@ -70,7 +70,7 @@ from app.services.execution_memory import (
     write_stage_rejection_memory,
     write_variant_review_memory,
 )
-from app.services.gm_memory import memory_has_unresolved_conflicts
+from app.services.gm_memory import memory_dirty_reasons, memory_is_strategy_safe
 from app.services.marketplace_qa import MARKETPLACE_REVIEW_TAGS, is_marketplace_main_image
 from app.services.personas import get_persona
 from app.services.gm_evolution import compile_run_outcome_reflection, resolve_active_gm_policy
@@ -754,9 +754,9 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
     product_rows = sorted(product_rows, key=_gm_memory_priority)[:10]
     industry_rows = sorted(industry_rows, key=_gm_memory_priority)[:10]
     shop_rows = sorted(shop_rows, key=_gm_memory_priority)[:5]
-    product_rows = [row for row in product_rows if not memory_has_unresolved_conflicts(row.content or {})]
-    industry_rows = [row for row in industry_rows if not memory_has_unresolved_conflicts(row.content or {})]
-    shop_rows = [row for row in shop_rows if not memory_has_unresolved_conflicts(row.content or {})]
+    product_rows = [row for row in product_rows if memory_is_strategy_safe(row)]
+    industry_rows = [row for row in industry_rows if memory_is_strategy_safe(row)]
+    shop_rows = [row for row in shop_rows if memory_is_strategy_safe(row)]
 
     merged: list[dict] = []
     seen_fingerprints: set[str] = set()
@@ -770,6 +770,7 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
             "memory_type": row.memory_type,
             "status": row.status,
             "pinned": bool(row.pinned),
+            "dirty_reasons": memory_dirty_reasons(row),
             "score_hint": row.score_hint,
             "content": row.content or {},
         }

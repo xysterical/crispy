@@ -352,10 +352,24 @@
       const content = item.content || {};
       return content.summary || content.source || JSON.stringify(content).slice(0, 180);
     }
+    function memoryDirtyReasons(item) {
+      if (item.pinned) return [];
+      const content = item.content || {};
+      const reasons = [];
+      if ((content.conflicts || []).some((x) => (x || {}).status !== "resolved")) reasons.push("unresolved conflicts");
+      if (typeof content.confidence === "number" && content.confidence < 0.45) reasons.push("low confidence");
+      const hasContent = ["summary", "winning_patterns", "avoid_patterns", "top_variants", "underperformers", "profile", "report", "total_revenue", "overall_roas"].some((k) => {
+        const v = content[k];
+        return Array.isArray(v) ? v.length : Boolean(v);
+      });
+      if (!hasContent) reasons.push("empty actionable content");
+      return reasons;
+    }
     function renderMemory(item) {
       const content = item.content || {};
       const evidence = (content.evidence || []).length;
       const conflicts = content.conflicts || [];
+      const dirtyReasons = memoryDirtyReasons(item);
       const confidence = content.confidence == null ? "-" : content.confidence;
       const pinLabel = item.pinned ? "Unpin" : "Pin";
       const statusAction = item.status === "active" ? "Archive" : "Activate";
@@ -367,9 +381,11 @@
           <span class="pill mono">${esc(item.memory_type)}</span>
           <span class="pill mono">${esc(item.source_type)}</span>
           ${item.pinned ? '<span class="badge badge-warn">Pinned</span>' : ''}
+          ${dirtyReasons.length ? `<span class="badge badge-warn">Dirty</span>` : ''}
           ${conflicts.length ? `<span class="badge badge-warn">${conflicts.length} conflicts</span>` : ''}
         </div>
         <div class="memory-summary">${esc(memorySummary(item))}</div>
+        ${dirtyReasons.length ? `<div class="muted">Dirty reasons: ${dirtyReasons.map(esc).join(", ")}</div>` : ''}
         ${conflicts.length ? `<div class="muted">Conflicts: ${conflicts.map((item) => esc(item.pattern_key || item.reason)).join(", ")}</div>` : ''}
         <div class="muted mono">${esc(item.id)} · score=${item.score_hint ?? "-"} · confidence=${confidence} · evidence=${evidence}</div>
         <div class="memory-actions">

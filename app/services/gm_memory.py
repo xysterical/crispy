@@ -12,6 +12,25 @@ def memory_has_unresolved_conflicts(content: dict) -> bool:
     return any((item or {}).get("status") != "resolved" for item in (content.get("conflicts") or []))
 
 
+def memory_dirty_reasons(row: GmMemory) -> list[str]:
+    if row.pinned:
+        return []
+    content = row.content or {}
+    reasons: list[str] = []
+    if memory_has_unresolved_conflicts(content):
+        reasons.append("unresolved_conflicts")
+    confidence = content.get("confidence")
+    if isinstance(confidence, int | float) and confidence < 0.45:
+        reasons.append("low_confidence")
+    if not _has_actionable_content(content):
+        reasons.append("empty_actionable_content")
+    return reasons
+
+
+def memory_is_strategy_safe(row: GmMemory) -> bool:
+    return not memory_dirty_reasons(row)
+
+
 def split_conflicting_patterns(winning_patterns: list, avoid_patterns: list) -> tuple[list, list, list[dict]]:
     winning_by_key = {_pattern_key(item): item for item in winning_patterns if _pattern_key(item)}
     avoid_by_key = {_pattern_key(item): item for item in avoid_patterns if _pattern_key(item)}
@@ -51,6 +70,7 @@ def compact_gm_memory(
     candidates = list(db.scalars(query.order_by(desc(GmMemory.created_at)).limit(limit)).all())
     if shop_id:
         candidates = [row for row in candidates if (row.content or {}).get("shop_id") == shop_id]
+    candidates = [row for row in candidates if memory_is_strategy_safe(row)]
     if not candidates:
         return None
 
@@ -111,3 +131,20 @@ def _pattern_key(item) -> str:
     else:
         value = item
     return str(value or "").strip().lower()
+
+
+def _has_actionable_content(content: dict) -> bool:
+    return any(
+        content.get(key)
+        for key in (
+            "summary",
+            "winning_patterns",
+            "avoid_patterns",
+            "top_variants",
+            "underperformers",
+            "profile",
+            "report",
+            "total_revenue",
+            "overall_roas",
+        )
+    )
