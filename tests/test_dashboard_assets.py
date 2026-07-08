@@ -142,6 +142,12 @@ def test_dashboard_create_run_has_accordion_sections(client):
     assert resp.status_code == 200
     html = resp.text
     assert "Product & Assets" in html
+    assert "Product Name (required)" in html
+    assert "Product Category (required)" in html
+    assert "Campaign (required)" in html
+    assert '<input id="product_name" value="" placeholder="Enter product name" required />' in html
+    assert '<input id="project_name" list="category-list" value="" placeholder="e.g. summer-collection" required />' in html
+    assert '<input id="campaign_name" value="" placeholder="e.g. spring-launch" required />' in html
     assert "Platform & Creative" in html
     assert "Campaign & Targeting" in html
     assert "Research & Context" in html
@@ -259,6 +265,16 @@ def test_create_run_dashboard_renders_failure_details(client):
     assert "No failure detail returned by the server." in html
     assert "JSON.parse(text)" in html
     assert "renderCreateRunMessage('error', 'Run creation failed.', createRunErrorDetailHtml(detail))" in html
+
+
+def test_create_run_dashboard_opens_created_run_detail(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    html = resp.text
+
+    assert "const createdRunId = result.data.id;" in html
+    assert "selectRun(createdRunId).then(refreshAfterCreate).catch(refreshAfterCreate)" in html
+    assert "detailPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });" in html
 
 
 def test_dashboard_variant_detail_renders_review_hints_section(client):

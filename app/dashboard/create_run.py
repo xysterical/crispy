@@ -51,7 +51,7 @@ CREATE_RUN_HTML = """
                     <div class="file-preview-grid" id="file-preview-grid"></div>
                     <div class="row" style="margin-top:10px;">
                       <div><label>Product Code (required)</label><input id="product_code" value="" placeholder="e.g. PRD-001" required onblur="checkProductHint()" /></div>
-                      <div><label>Product Name</label><input id="product_name" value="" placeholder="Enter product name" /></div>
+                      <div><label>Product Name (required)</label><input id="product_name" value="" placeholder="Enter product name" required /></div>
                     </div>
                     <div id="product-hint" class="hint" style="display:none;"></div>
                     <div class="row">
@@ -62,13 +62,13 @@ CREATE_RUN_HTML = """
                         </select>
                       </div>
                       <div>
-                        <label>Product Category</label>
-                        <input id="project_name" list="category-list" value="" placeholder="e.g. summer-collection" />
+                        <label>Product Category (required)</label>
+                        <input id="project_name" list="category-list" value="" placeholder="e.g. summer-collection" required />
                         <datalist id="category-list"></datalist>
                       </div>
                     </div>
                     <div class="row">
-                      <div><label>Campaign</label><input id="campaign_name" value="" placeholder="e.g. spring-launch" /></div>
+                      <div><label>Campaign (required)</label><input id="campaign_name" value="" placeholder="e.g. spring-launch" required /></div>
                       <div><label>Industry Code (required)</label><input id="industry_code" value="general_merchandise" required /></div>
                     </div>
                     <div class="action-row" style="justify-content:flex-end;margin-top:8px;">
@@ -1029,7 +1029,17 @@ CREATE_RUN_JS = """
           renderCreateRunMessage('ok', 'Run created: ' + result.data.id, '');
         }
         setTimeout(closeDrawer, 1400);
-        if (typeof refreshRuns === 'function') refreshRuns();
+        const createdRunId = result.data.id;
+        const refreshAfterCreate = function() {
+          if (typeof refreshRuns === 'function') refreshRuns();
+          const detailPanel = document.getElementById('run-detail-panel');
+          if (detailPanel) detailPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        };
+        if (createdRunId && typeof selectRun === 'function') {
+          selectRun(createdRunId).then(refreshAfterCreate).catch(refreshAfterCreate);
+        } else {
+          refreshAfterCreate();
+        }
       })
       .catch(function(err) {
         renderCreateRunMessage('error', 'Run creation failed.', '<div>' + escapeCreateRunHtml(err.message) + '</div>');
