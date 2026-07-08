@@ -267,6 +267,7 @@ def test_shopify_sync_writes_shop_memory_contract(client, db_session, monkeypatc
     assert resp.status_code == 200
     rows = resp.json()
     assert rows[0]["memory_type"] == "summary"
+    assert client.get("/gm-memory", params={"project_id": project.id, "scope": "shop"}).json()[0]["project_id"] == project.id
 
     patch = client.patch(f"/gm-memory/{rows[0]['id']}", json={"pinned": True, "status": "archived"})
     assert patch.status_code == 200

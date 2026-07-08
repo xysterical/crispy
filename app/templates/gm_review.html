@@ -33,8 +33,13 @@
   .narrative { white-space:pre-wrap; line-height:1.6; }
   .pill-row { display:flex; flex-wrap:wrap; gap:6px; }
   .pill { display:inline-block; padding:5px 10px; border-radius:999px; background:var(--soft); font-size:12px; }
+  .memory-toolbar { display:grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap:10px; margin-bottom:12px; }
+  .memory-list { display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:10px; }
+  .memory-item { border:1px solid var(--line); border-radius:12px; padding:12px; background:#fff; display:flex; flex-direction:column; gap:8px; }
+  .memory-actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .memory-summary { font-size:13px; line-height:1.45; }
   @media (max-width: 1100px) {
-    .filter-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+    .filter-grid, .memory-toolbar { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
     .panel-grid, .panel-grid-3 { grid-template-columns: 1fr; }
   }
 {% endblock %}
@@ -62,7 +67,7 @@
         </div>
         <div>
           <label>Project</label>
-          <select id="gm-project"><option value="">Select project</option></select>
+          <select id="gm-project" onchange="onProjectChange()"><option value="">Select project</option></select>
         </div>
         <div>
           <label>Window</label>
@@ -104,6 +109,71 @@
         </div>
       </div>
       <div id="gm-msg" class="status-msg muted" style="min-height:18px;margin-top:10px;"></div>
+    </section>
+
+    <section class="card" style="margin-bottom:16px;">
+      <div class="section-head">
+        <div>
+          <h2>Memory Review</h2>
+          <div class="muted">Review, pin, archive, reactivate, or compact GM memory before it affects planning.</div>
+        </div>
+        <div class="hero-actions">
+          <button onclick="loadMemories()">Refresh Memories</button>
+          <button class="primary" onclick="compactMemory()">Compact Memory</button>
+        </div>
+      </div>
+      <div class="memory-toolbar">
+        <div>
+          <label>Scope</label>
+          <select id="mem-scope" onchange="loadMemories()">
+            <option value="product">Product</option>
+            <option value="shop">Shop</option>
+            <option value="industry">Industry</option>
+          </select>
+        </div>
+        <div>
+          <label>Status</label>
+          <select id="mem-status" onchange="loadMemories()">
+            <option value="active">Active</option>
+            <option value="archived">Archived</option>
+            <option value="superseded">Superseded</option>
+            <option value="">All</option>
+          </select>
+        </div>
+        <div>
+          <label>Memory Type</label>
+          <select id="mem-type" onchange="loadMemories()">
+            <option value="">All</option>
+            <option value="summary">Summary</option>
+            <option value="store_intelligence">Store intelligence</option>
+            <option value="product_intelligence">Product intelligence</option>
+            <option value="strategy">Strategy</option>
+            <option value="visual_quality">Visual quality</option>
+          </select>
+        </div>
+        <div>
+          <label>Source</label>
+          <select id="mem-source" onchange="loadMemories()">
+            <option value="">All</option>
+            <option value="feedback_import">Feedback import</option>
+            <option value="shopify_sync">Shopify sync</option>
+            <option value="meta_sync">Meta sync</option>
+            <option value="shop_profile">Shop profile</option>
+            <option value="competitor_analysis">Competitor analysis</option>
+            <option value="memory_compaction">Memory compaction</option>
+          </select>
+        </div>
+        <div>
+          <label>Product Code</label>
+          <input id="mem-product" placeholder="Required for product scope" onchange="loadMemories()" />
+        </div>
+        <div>
+          <label>Limit</label>
+          <input id="mem-limit" type="number" min="1" max="200" value="30" onchange="loadMemories()" />
+        </div>
+      </div>
+      <div id="memory-msg" class="muted" style="min-height:18px;margin-bottom:10px;"></div>
+      <div id="memory-list" class="memory-list"><div class="empty">Select workspace and project to load memory.</div></div>
     </section>
 
     <section class="card" style="margin-bottom:16px;">
@@ -180,9 +250,11 @@
   </main>
 
   <script>
+    let gmWorkspaces = [];
+    let gmProjects = [];
     function esc(v) { return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;"); }
-    async function api(path) {
-      const res = await fetch(path);
+    async function api(path, opts) {
+      const res = await fetch(path, {headers: {"Content-Type": "application/json"}, ...(opts || {})});
       if (!res.ok) throw new Error(await res.text());
       return res.json();
     }
@@ -191,23 +263,42 @@
       el.textContent = msg || "";
       el.style.color = type === "error" ? "var(--danger)" : type === "ok" ? "var(--accent-dark)" : "var(--muted)";
     }
+    function setMemoryMsg(msg, type="muted") {
+      const el = document.getElementById("memory-msg");
+      el.textContent = msg || "";
+      el.style.color = type === "error" ? "var(--danger)" : type === "ok" ? "var(--accent-dark)" : "var(--muted)";
+    }
     async function loadWorkspaces() {
       const data = await api("/shops?limit=50");
-      const shops = data.shops || data.items || [];
+      gmWorkspaces = data.shops || data.items || [];
       const sel = document.getElementById("gm-ws");
-      sel.innerHTML = '<option value="">Select workspace</option>' + shops.map((item) => `<option value="${esc(item.name)}">${esc(item.name)}</option>`).join("");
+      sel.innerHTML = '<option value="">Select workspace</option>' + gmWorkspaces.map((item) => `<option value="${esc(item.name)}">${esc(item.name)}</option>`).join("");
     }
     async function onWorkspaceChange() {
       const ws = document.getElementById("gm-ws").value;
       const sel = document.getElementById("gm-project");
       sel.innerHTML = '<option value="">Select project</option>';
+      gmProjects = [];
+      document.getElementById("memory-list").innerHTML = '<div class="empty">Select project to load memory.</div>';
       if (!ws) return;
       try {
         const data = await api(`/projects?workspace_name=${encodeURIComponent(ws)}`);
-        sel.innerHTML = '<option value="">Select project</option>' + data.map((item) => `<option value="${esc(item.name)}">${esc(item.name)}</option>`).join("");
+        gmProjects = data || [];
+        sel.innerHTML = '<option value="">Select project</option>' + gmProjects.map((item) => `<option value="${esc(item.name)}">${esc(item.name)}</option>`).join("");
       } catch (err) {
         setMsg("Failed to load projects: " + err.message, "error");
       }
+    }
+    function onProjectChange() {
+      loadMemories();
+    }
+    function currentProject() {
+      const name = document.getElementById("gm-project").value;
+      return gmProjects.find((item) => item.name === name) || null;
+    }
+    function currentWorkspace() {
+      const name = document.getElementById("gm-ws").value;
+      return gmWorkspaces.find((item) => item.name === name) || null;
     }
     function toggleCustomWindow() {
       const isCustom = document.getElementById("gm-window").value === "custom";
@@ -240,6 +331,106 @@
         return;
       }
       el.innerHTML = items.map(renderer).join("");
+    }
+    function memoryQuery(project) {
+      const params = new URLSearchParams();
+      const scope = document.getElementById("mem-scope").value;
+      const status = document.getElementById("mem-status").value;
+      const type = document.getElementById("mem-type").value;
+      const source = document.getElementById("mem-source").value;
+      const product = document.getElementById("mem-product").value.trim() || document.getElementById("gm-product").value.trim();
+      if (project && project.id) params.set("project_id", project.id);
+      params.set("scope", scope);
+      params.set("limit", document.getElementById("mem-limit").value || "30");
+      params.set("status", status);
+      if (type) params.set("memory_type", type);
+      if (source) params.set("source_type", source);
+      if (scope === "product" && product) params.set("product_code", product);
+      return params.toString();
+    }
+    function memorySummary(item) {
+      const content = item.content || {};
+      return content.summary || content.source || JSON.stringify(content).slice(0, 180);
+    }
+    function renderMemory(item) {
+      const content = item.content || {};
+      const evidence = (content.evidence || []).length;
+      const confidence = content.confidence == null ? "-" : content.confidence;
+      const pinLabel = item.pinned ? "Unpin" : "Pin";
+      const statusAction = item.status === "active" ? "Archive" : "Activate";
+      const nextStatus = item.status === "active" ? "archived" : "active";
+      return `<div class="memory-item">
+        <div class="pill-row">
+          <span class="badge ${item.status === "active" ? "badge-ok" : "badge-muted"}">${esc(item.status)}</span>
+          <span class="pill mono">${esc(item.memory_scope)}</span>
+          <span class="pill mono">${esc(item.memory_type)}</span>
+          <span class="pill mono">${esc(item.source_type)}</span>
+          ${item.pinned ? '<span class="badge badge-warn">Pinned</span>' : ''}
+        </div>
+        <div class="memory-summary">${esc(memorySummary(item))}</div>
+        <div class="muted mono">${esc(item.id)} · score=${item.score_hint ?? "-"} · confidence=${confidence} · evidence=${evidence}</div>
+        <div class="memory-actions">
+          <button onclick="updateMemory('${esc(item.id)}', {pinned: ${item.pinned ? "false" : "true"}})">${pinLabel}</button>
+          <button onclick="updateMemory('${esc(item.id)}', {status: '${nextStatus}'})">${statusAction}</button>
+          <button class="danger" onclick="updateMemory('${esc(item.id)}', {status: 'superseded'})">Supersede</button>
+        </div>
+      </div>`;
+    }
+    async function loadMemories() {
+      const project = currentProject();
+      if (!project) {
+        document.getElementById("memory-list").innerHTML = '<div class="empty">Select workspace and project to load memory.</div>';
+        return;
+      }
+      setMemoryMsg("Loading memories...");
+      try {
+        const scoped = await api("/gm-memory?" + memoryQuery(project));
+        document.getElementById("memory-list").innerHTML = scoped.length
+          ? scoped.map(renderMemory).join("")
+          : '<div class="empty">No memories match these filters.</div>';
+        setMemoryMsg(`${scoped.length} memories loaded.`, "ok");
+      } catch (err) {
+        setMemoryMsg("Failed to load memories: " + err.message, "error");
+      }
+    }
+    async function updateMemory(id, payload) {
+      setMemoryMsg("Updating memory...");
+      try {
+        await api(`/gm-memory/${encodeURIComponent(id)}`, {method: "PATCH", body: JSON.stringify(payload)});
+        await loadMemories();
+      } catch (err) {
+        setMemoryMsg("Failed to update memory: " + err.message, "error");
+      }
+    }
+    async function compactMemory() {
+      const project = currentProject();
+      if (!project) {
+        setMemoryMsg("Select workspace and project first.", "error");
+        return;
+      }
+      const scope = document.getElementById("mem-scope").value;
+      const product = document.getElementById("mem-product").value.trim() || document.getElementById("gm-product").value.trim();
+      const workspace = currentWorkspace();
+      const payload = {project_id: project.id, memory_scope: scope, limit: Number(document.getElementById("mem-limit").value || 20)};
+      if (scope === "product") {
+        if (!product) {
+          setMemoryMsg("Product scope compaction needs a product code.", "error");
+          return;
+        }
+        payload.product_code = product;
+      }
+      if (scope === "industry" && workspace && workspace.industry_code) payload.industry_code = workspace.industry_code;
+      if (scope === "shop" && workspace && workspace.id) payload.shop_id = workspace.id;
+      setMemoryMsg("Compacting memories...");
+      try {
+        await api("/gm-memory/compact", {method: "POST", body: JSON.stringify(payload)});
+        document.getElementById("mem-status").value = "active";
+        document.getElementById("mem-type").value = "summary";
+        await loadMemories();
+        setMemoryMsg("Compaction created a new summary memory.", "ok");
+      } catch (err) {
+        setMemoryMsg("Compaction skipped: " + err.message, "error");
+      }
     }
     function renderSummary(data) {
       document.getElementById("gm-headline").textContent = data.executive_summary.headline || "-";

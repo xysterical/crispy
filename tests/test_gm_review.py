@@ -204,5 +204,7 @@ def test_gm_review_page_and_dashboard_link_load(client):
     assert resp.status_code == 200
     html = resp.text
     assert "GM Review Console" in html
+    assert "Memory Review" in html
+    assert "Compact Memory" in html
     assert "Generate Review" in html
     assert "Export Markdown" in html

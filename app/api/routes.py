@@ -2525,6 +2525,7 @@ def _gm_memory_item(row: GmMemory) -> GmMemoryItem:
 
 @router.get("/gm-memory", response_model=list[GmMemoryItem])
 def list_gm_memory(
+    project_id: str | None = Query(default=None),
     scope: str | None = Query(default=None),
     product_code: str | None = Query(default=None),
     industry_code: str | None = Query(default=None),
@@ -2535,6 +2536,8 @@ def list_gm_memory(
     db: Session = Depends(get_db),
 ) -> list[GmMemoryItem]:
     query = select(GmMemory).order_by(desc(GmMemory.pinned), desc(GmMemory.created_at))
+    if project_id:
+        query = query.where(GmMemory.project_id == project_id)
     if scope:
         query = query.where(GmMemory.memory_scope == scope)
     if product_code:
