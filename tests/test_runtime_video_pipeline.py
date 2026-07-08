@@ -860,6 +860,49 @@ def test_copy_image_generation_blocks_placeholder_assets():
         )
 
 
+def test_copy_image_generation_keeps_provider_error_as_failed_asset():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("copy hint", "text-model", 0.0)
+
+    def fail_image(**kwargs):
+        raise RuntimeError("request failed for all endpoint candidates")
+
+    runtime._generate_image = fail_image
+
+    output = runtime.run_copy_image_generation(
+        run_id="copy-provider-error-asset",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="formal event",
+                    hook="Silver dress moment",
+                    message="Show the dress clearly.",
+                )
+            ]
+        ),
+        intake=ProductIntake(
+            product_name="silver dream dress",
+            asset_media_summary="light silver-grey midi dress with ruffled neckline",
+        ),
+        business_context={"primary_cta": "Shop Now"},
+        creative_specs={},
+        market="US",
+        locale="en-US",
+        provider="deepseek",
+        model="deepseek-v4-pro",
+    )
+
+    image = output.payload["image_assets"][0]
+    flags = image["visual_qa"]["flags"]
+    assert image["source"] == "generation_error"
+    assert image["error"] == "request failed for all endpoint candidates"
+    assert flags == ["visual_qa_generation_error"]
+    assert "visual_qa_decode_error" not in flags
+    assert "visual_qa_product_truth_color_mismatch" not in flags
+    assert image["image_asset_contract"]["blocking"] is True
+
+
 def test_copy_image_generation_exposes_pending_image_task():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("copy hint", "text-model", 0.0)

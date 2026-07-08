@@ -2648,14 +2648,23 @@ class AgentsRuntime:
                 "creative_leap_spec": dict(item.creative_leap_spec or {}),
             }
             image_payload["reference_source_count"] = len(historical_references or [])
-            image_payload["visual_qa"] = self._local_media_qa(
-                asset_type="image",
-                uri=image_uri,
-                payload=image_payload,
-                expected_ratio=image_size,
-            )
+            if image_source == "generation_error":
+                image_payload["visual_qa"] = {
+                    "status": "fail",
+                    "score": 0.0,
+                    "flags": ["visual_qa_generation_error"],
+                    "checks": [{"key": "generation_error", "status": "fail", "message": error_text or "image generation failed"}],
+                }
+            else:
+                image_payload["visual_qa"] = self._local_media_qa(
+                    asset_type="image",
+                    uri=image_uri,
+                    payload=image_payload,
+                    expected_ratio=image_size,
+                )
             self._attach_image_asset_contract(image_payload)
-            self._require_generated_image_asset(image_payload)
+            if image_source != "generation_error":
+                self._require_generated_image_asset(image_payload)
             images.append(image_ref)
             artifacts.append(
                 {
