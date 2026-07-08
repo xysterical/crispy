@@ -2675,9 +2675,31 @@ class AgentsRuntime:
             )
 
         bundle = CopyImageBundle(copy_variants=copies, image_assets=images)
+        image_asset_payloads = [artifact["payload"] for artifact in artifacts if artifact["type"] == "generated_image"]
+        pending_statuses = {"submitted", "queued", "pending", "processing", "running"}
+        has_pending_image = any(
+            str(payload.get("source") or "") == "external_task_pending"
+            or str(payload.get("generation_status") or "").lower() in pending_statuses
+            for payload in image_asset_payloads
+        )
+        has_reviewable_image = any(
+            not (payload.get("error") or (payload.get("image_asset_contract") or {}).get("blocking"))
+            for payload in image_asset_payloads
+        )
+        if image_asset_payloads and not has_reviewable_image and not has_pending_image:
+            failure_flags = sorted(
+                {
+                    str(flag)
+                    for payload in image_asset_payloads
+                    for flag in (payload.get("image_asset_contract") or {}).get("flags") or []
+                }
+            )
+            reason = ", ".join(failure_flags) or "all_images_failed"
+            raise RuntimeError(f"image provider produced no reviewable assets: {reason}")
+
         bundle_payload = {
             "copy_variants": [item.model_dump() for item in copies],
-            "image_assets": [artifact["payload"] for artifact in artifacts if artifact["type"] == "generated_image"],
+            "image_assets": image_asset_payloads,
             "strategy_handoff": self._business_strategy_handoff(
                 stage="copy_image_generation",
                 decisions=[

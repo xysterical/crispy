@@ -860,7 +860,7 @@ def test_copy_image_generation_blocks_placeholder_assets():
         )
 
 
-def test_copy_image_generation_keeps_provider_error_as_failed_asset():
+def test_copy_image_generation_blocks_all_provider_error_assets():
     runtime = AgentsRuntime()
     runtime._chat_complete = lambda *args, **kwargs: ("copy hint", "text-model", 0.0)
 
@@ -869,8 +869,57 @@ def test_copy_image_generation_keeps_provider_error_as_failed_asset():
 
     runtime._generate_image = fail_image
 
+    with pytest.raises(RuntimeError, match="image provider produced no reviewable assets"):
+        runtime.run_copy_image_generation(
+            run_id="copy-provider-error-asset",
+            variant_set=VariantSet(
+                variants=[
+                    VariantCandidate(
+                        variant_id="V1",
+                        angle="formal event",
+                        hook="Silver dress moment",
+                        message="Show the dress clearly.",
+                    )
+                ]
+            ),
+            intake=ProductIntake(
+                product_name="silver dream dress",
+                asset_media_summary="light silver-grey midi dress with ruffled neckline",
+            ),
+            business_context={"primary_cta": "Shop Now"},
+            creative_specs={},
+            market="US",
+            locale="en-US",
+            provider="deepseek",
+            model="deepseek-v4-pro",
+        )
+
+
+def test_copy_image_generation_keeps_mixed_provider_error_as_failed_asset():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: ("copy hint", "text-model", 0.0)
+    calls = {"count": 0}
+
+    def generate_or_fail(**kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return (
+                ImageGenResult(
+                    model_used="image-model",
+                    images=[GeneratedImage(task_id="image-task-1", status="submitted", raw_response={"status": "submitted"})],
+                    task_id="image-task-1",
+                    status="submitted",
+                    raw_response={"status": "submitted"},
+                ),
+                "stub-image-provider",
+                "stub-image-model",
+            )
+        raise RuntimeError("request failed for all endpoint candidates")
+
+    runtime._generate_image = generate_or_fail
+
     output = runtime.run_copy_image_generation(
-        run_id="copy-provider-error-asset",
+        run_id="copy-mixed-provider-error-asset",
         variant_set=VariantSet(
             variants=[
                 VariantCandidate(
@@ -878,7 +927,13 @@ def test_copy_image_generation_keeps_provider_error_as_failed_asset():
                     angle="formal event",
                     hook="Silver dress moment",
                     message="Show the dress clearly.",
-                )
+                ),
+                VariantCandidate(
+                    variant_id="V2",
+                    angle="fit detail",
+                    hook="A closer look at the ruffles",
+                    message="Show neckline and fabric clearly.",
+                ),
             ]
         ),
         intake=ProductIntake(
@@ -893,7 +948,7 @@ def test_copy_image_generation_keeps_provider_error_as_failed_asset():
         model="deepseek-v4-pro",
     )
 
-    image = output.payload["image_assets"][0]
+    image = output.payload["image_assets"][1]
     flags = image["visual_qa"]["flags"]
     assert image["source"] == "generation_error"
     assert image["error"] == "request failed for all endpoint candidates"
