@@ -144,6 +144,10 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "items.push(summarizeVariants(payload.variants));" in html
     assert "Review checklist" in html
     assert "${renderReviewChecklist(run)}" in html
+    assert "function renderFailureReasons(info)" in html
+    assert "Failure reasons" in html
+    assert "Generated media could not be decoded." in html
+    assert "extractFailureFlags(info.detail)" in html
     assert ".status-explainer-main { display: block; text-align: center; }" in html
     assert ".status-explainer-action { display: inline-flex; margin-top: 8px;" in html
     assert "white-space: nowrap;" in html

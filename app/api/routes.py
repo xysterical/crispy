@@ -1552,6 +1552,37 @@ def _dashboard_shared_js() -> str:
             if (tone === "success") return "status-explainer success";
             return "status-explainer info";
           }
+          function failureReasonLabel(flag){
+            const labels = {
+              visual_qa_decode_error: "Generated media could not be decoded.",
+              visual_qa_placeholder: "Provider returned a placeholder or unusable asset.",
+              visual_qa_product_truth_color_mismatch: "Generated asset does not preserve required product colors.",
+              visual_qa_product_truth_structure_review: "Generated asset needs product-structure review.",
+              visual_qa_low_information: "Generated asset has too little visual information.",
+              visual_qa_aspect_mismatch: "Generated asset aspect ratio does not match the request.",
+              visual_qa_missing_file: "Generated asset file is missing.",
+              visual_qa_empty_file: "Generated asset file is empty.",
+              visual_qa_missing_uri: "Generated asset URI is missing.",
+              visual_qa_visual_proof_failed: "Visual proof did not clearly demonstrate the intended claim.",
+            };
+            return labels[flag] || flag.replaceAll("_", " ");
+          }
+          function extractFailureFlags(detail){
+            return [...new Set(String(detail || "").match(/(?:visual_qa|marketplace)_[a-z0-9_]+/g) || [])];
+          }
+          function renderFailureReasons(info){
+            if (info.tone !== "danger") return "";
+            const flags = extractFailureFlags(info.detail);
+            if (!flags.length) return "";
+            return `
+              <div class="failure-reasons">
+                <div class="review-checklist-group-title">Failure reasons</div>
+                <ul class="review-checklist-sublist">
+                  ${flags.map((flag) => `<li><b>${esc(flag)}</b><div>${esc(failureReasonLabel(flag))}</div></li>`).join("")}
+                </ul>
+              </div>
+            `;
+          }
           function renderStatusExplanation(run){
             const info = run.status_explanation || {};
             const actions = (info.next_actions || []).map((item) => `<li>${esc(item)}</li>`).join("");
@@ -1565,6 +1596,7 @@ def _dashboard_shared_js() -> str:
                   </div>
                   <div class="status-explainer-action">${esc(info.primary_action || "Review run")}</div>
                 </div>
+                ${renderFailureReasons(info)}
                 ${actions ? `<ol>${actions}</ol>` : ""}
               </section>
             `;
