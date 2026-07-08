@@ -139,6 +139,10 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "function currentReviewTask(run)" in html
     assert "Review checklist" in html
     assert "${renderReviewChecklist(run)}" in html
+    assert ".status-explainer-main { display: block; text-align: center; }" in html
+    assert ".status-explainer-action { display: inline-flex; margin-top: 8px;" in html
+    assert "white-space: nowrap;" in html
+    assert ".status-explainer ol { margin: 10px 0 0 0; padding-left: 22px;" in html
 
 
 def test_dashboard_create_run_has_accordion_sections(client):
