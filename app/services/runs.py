@@ -3147,6 +3147,15 @@ def _qa_repair_context(
                 flags.append(f"segment_blocked:{blocked_id}")
     flag_set = list(dict.fromkeys(flags))
     rules = {
+        "media_gate_generation_error": "Retry image generation; the provider failed before returning usable media.",
+        "media_gate_placeholder": "Produce a real usable visual asset; do not return a placeholder, blank image, or error artifact.",
+        "media_gate_decode_error": "Return a valid decodable media file.",
+        "media_gate_empty_file": "Return a non-empty generated asset.",
+        "media_gate_missing_file": "Regenerate the missing asset file.",
+        "media_gate_missing_uri": "Return a concrete asset URI.",
+        "media_gate_product_truth_color_mismatch": "Restore the required product colors from the product truth contract.",
+        "media_gate_product_truth_structure_review": "Preserve the submitted product structure and visible parts.",
+        "media_gate_low_information": "Increase visible product detail and visual information.",
         "visual_qa_placeholder": "Produce a real usable visual asset; do not return a placeholder, blank image, or error artifact.",
         "visual_qa_decode_error": "Return a valid decodable media file.",
         "visual_qa_empty_file": "Return a non-empty generated asset.",

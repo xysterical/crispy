@@ -929,8 +929,8 @@ def _dashboard_shared_js() -> str:
 
           function qualityChipClass(flag){
             if (["ready_to_review", "winner", "shortlisted"].includes(flag)) return "good";
-            if (["processing_assets", "missing_assets", "compliance_attention", "low_score", "pending_review", "visual_qa_attention", "visual_qa_needs_frame_review", "visual_qa_remote_unchecked", "visual_qa_aspect_mismatch", "visual_qa_low_information", "visual_qa_video_header_unverified"].includes(flag)) return "warn";
-            if (["failed_assets", "media_issue", "operator_quality_issue", "needs_regeneration", "rejected", "visual_qa_failed", "visual_qa_placeholder", "visual_qa_empty_video", "visual_qa_decode_error", "visual_qa_empty_file", "visual_qa_missing_file"].includes(flag)) return "bad";
+            if (["processing_assets", "missing_assets", "compliance_attention", "low_score", "pending_review", "visual_qa_attention", "visual_qa_needs_frame_review", "visual_qa_remote_unchecked", "visual_qa_aspect_mismatch", "visual_qa_low_information", "visual_qa_video_header_unverified", "media_gate_asset_processing", "media_gate_aspect_mismatch", "media_gate_low_information"].includes(flag)) return "warn";
+            if (["failed_assets", "media_issue", "operator_quality_issue", "needs_regeneration", "rejected", "visual_qa_failed", "visual_qa_placeholder", "visual_qa_empty_video", "visual_qa_decode_error", "visual_qa_empty_file", "visual_qa_missing_file", "media_gate_generation_error", "media_gate_placeholder", "media_gate_empty_video", "media_gate_decode_error", "media_gate_empty_file", "media_gate_missing_file", "media_gate_missing_uri"].includes(flag)) return "bad";
             return "";
           }
           function qualitySurfaceBadges(summary){
@@ -1554,6 +1554,16 @@ def _dashboard_shared_js() -> str:
           }
           function failureReasonLabel(flag){
             const labels = {
+              media_gate_generation_error: "Image generation provider failed before producing media.",
+              media_gate_decode_error: "Copy/Image local media gate could not decode the generated media.",
+              media_gate_placeholder: "Copy/Image local media gate found a placeholder or unusable asset.",
+              media_gate_product_truth_color_mismatch: "Copy/Image local media gate did not find required product colors.",
+              media_gate_product_truth_structure_review: "Copy/Image local media gate needs product-structure review.",
+              media_gate_low_information: "Copy/Image local media gate found too little visual information.",
+              media_gate_aspect_mismatch: "Copy/Image local media gate found an aspect-ratio mismatch.",
+              media_gate_missing_file: "Copy/Image local media gate could not find the generated asset file.",
+              media_gate_empty_file: "Copy/Image local media gate found an empty generated asset file.",
+              media_gate_missing_uri: "Copy/Image local media gate found a missing generated asset URI.",
               visual_qa_decode_error: "Generated media could not be decoded.",
               visual_qa_placeholder: "Provider returned a placeholder or unusable asset.",
               visual_qa_product_truth_color_mismatch: "Generated asset does not preserve required product colors.",
@@ -1568,7 +1578,7 @@ def _dashboard_shared_js() -> str:
             return labels[flag] || flag.replaceAll("_", " ");
           }
           function extractFailureFlags(detail){
-            return [...new Set(String(detail || "").match(/(?:visual_qa|marketplace)_[a-z0-9_]+/g) || [])];
+            return [...new Set(String(detail || "").match(/(?:media_gate|visual_qa|marketplace)_[a-z0-9_]+/g) || [])];
           }
           function renderFailureReasons(info){
             if (info.tone !== "danger") return "";

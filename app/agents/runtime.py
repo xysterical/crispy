@@ -1142,7 +1142,7 @@ class AgentsRuntime:
             "status": "fail" if blocking else "warn" if warn else "pass",
             "blocking": blocking,
             "recommended_action": "regenerate_image" if blocking else "manual_review" if warn else "pass_to_evaluation",
-            "flags": sorted(set([*qa_flags, *marketplace_flags])),
+            "flags": sorted(set([*(flag.replace("visual_qa_", "media_gate_", 1) for flag in qa_flags), *marketplace_flags])),
             "qa_status": qa.get("status"),
             "marketplace_qa_status": marketplace_qa.get("status"),
         }

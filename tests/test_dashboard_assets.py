@@ -146,6 +146,8 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "${renderReviewChecklist(run)}" in html
     assert "function renderFailureReasons(info)" in html
     assert "Failure reasons" in html
+    assert "media_gate_decode_error" in html
+    assert "Copy/Image local media gate could not decode the generated media." in html
     assert "Generated media could not be decoded." in html
     assert "extractFailureFlags(info.detail)" in html
     assert ".status-explainer-main { display: block; text-align: center; }" in html

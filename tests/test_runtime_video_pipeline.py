@@ -901,6 +901,7 @@ def test_copy_image_generation_keeps_provider_error_as_failed_asset():
     assert "visual_qa_decode_error" not in flags
     assert "visual_qa_product_truth_color_mismatch" not in flags
     assert image["image_asset_contract"]["blocking"] is True
+    assert image["image_asset_contract"]["flags"] == ["media_gate_generation_error"]
 
 
 def test_copy_image_generation_exposes_pending_image_task():
@@ -948,7 +949,7 @@ def test_copy_image_generation_exposes_pending_image_task():
     assert image["external_task_state"]["status"] == "submitted"
     assert image["external_task_state"]["poll_count"] == 0
     assert image["image_asset_contract"]["blocking"] is False
-    assert "visual_qa_asset_processing" in image["image_asset_contract"]["flags"]
+    assert "media_gate_asset_processing" in image["image_asset_contract"]["flags"]
 
 
 def test_copy_image_generation_uses_variant_visual_proof_spec():
