@@ -1358,9 +1358,11 @@ def test_assets_refresh_keeps_latest_retried_copy_image(client):
     run_id = create_resp.json()["id"]
     old_uri = f"assets/{run_id}/old.png"
     new_uri = f"assets/{run_id}/new.png"
+    failed_uri = f"assets/{run_id}/failed.txt"
     Path(old_uri).parent.mkdir(parents=True, exist_ok=True)
     Path(old_uri).write_bytes(base64.b64decode(_valid_png_b64()))
     Path(new_uri).write_bytes(base64.b64decode(_valid_png_b64()))
+    Path(failed_uri).write_text("provider returned placeholder media")
 
     with SessionLocal() as db:
         from app.data.models import PipelineRun, RunStatus, RunVariant, StageTask, TaskStatus
@@ -1385,7 +1387,12 @@ def test_assets_refresh_keeps_latest_retried_copy_image(client):
                 }
             ],
         }
-        for uri, task_id, key in [(old_uri, "old-task", "old"), (new_uri, "new-task", "new")]:
+        rows = [
+            (old_uri, "old-task", "old", "url", None),
+            (new_uri, "new-task", "new", "url", None),
+            (failed_uri, "failed-task", "failed", "placeholder", "provider returned placeholder media"),
+        ]
+        for uri, task_id, key, source, error in rows:
             db.add(
                 VariantAsset(
                     run_variant_id=variant.id,
@@ -1400,9 +1407,10 @@ def test_assets_refresh_keeps_latest_retried_copy_image(client):
                     payload={
                         "variant_id": "V1",
                         "uri": uri,
-                        "source": "url",
+                        "source": source,
                         "external_task_id": task_id,
                         "generation_status": "completed",
+                        "error": error,
                     },
                 )
             )

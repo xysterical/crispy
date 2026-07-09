@@ -156,14 +156,17 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "function currentReviewTask(run)" in html
     assert "function summarizeVariants(rows)" in html
     assert "function copyImageReviewRows(payload)" in html
+    assert "function videoReviewRows(payload)" in html
     assert "function focusVariantFromChecklist(variantId)" in html
     assert "function renderChecklistItem(item)" in html
     assert "review-checklist-sublist" in html
     assert "review-checklist-thumb" in html
+    assert "review-checklist-video" in html
     assert "Open in board" in html
     assert 'detail: [item.hook, item.message].filter(Boolean).join(" - "),' in html
     assert "items.push(summarizeVariants(payload.variants));" in html
     assert "items.push(copyImageReviewRows(payload));" in html
+    assert "items.push(videoReviewRows(payload));" in html
     assert "Review checklist" in html
     assert "${renderReviewChecklist(run)}" in html
     assert "function renderFailureReasons(info)" in html
