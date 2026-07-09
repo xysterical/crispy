@@ -691,6 +691,7 @@ def _dashboard_shared_js() -> str:
           let runDetailLastUpdated = null;
           let retryProgressTimer = null;
           let retryProgressState = null;
+          const retryingImageVariants = new Set();
           let runListInterval = null;
           const variantBoardCollapsedStorageKey = "variant_board_collapsed";
           let variantBoardCollapsed = false;
@@ -1012,10 +1013,35 @@ def _dashboard_shared_js() -> str:
             });
           }
 
-          async function retryVariantImage(runId, variantId){
-            await variantAction(runId, variantId, `/runs/${runId}/variants/${variantId}/assets/image/retry`, {
-              reason: "retry image asset from dashboard"
+          function setImageRetryLoading(runId, variantId, loading){
+            const key = `${runId}:${variantId}`;
+            document.querySelectorAll("[data-image-retry-run][data-image-retry-variant]").forEach((btn) => {
+              if (`${btn.dataset.imageRetryRun}:${btn.dataset.imageRetryVariant}` !== key) return;
+              btn.disabled = loading;
+              btn.classList.toggle("is-loading", loading);
+              btn.innerHTML = loading ? '<span class="retry-spinner" aria-hidden="true"></span>' : "Retry";
+              btn.title = loading ? "Retrying image generation" : "Retry image generation";
             });
+          }
+
+          async function retryVariantImage(event, runId, variantId){
+            event?.stopPropagation();
+            if (!window.confirm(`Retry image generation for ${variantId}?`)) return;
+            const key = `${runId}:${variantId}`;
+            retryingImageVariants.add(key);
+            setImageRetryLoading(runId, variantId, true);
+            try {
+              await api(`/runs/${runId}/variants/${variantId}/assets/image/retry`, {
+                method: "POST",
+                body: JSON.stringify({ reason: "retry image asset from dashboard" })
+              });
+              await selectRun(runId);
+            } catch (err) {
+              alert(err?.message || "Image retry failed.");
+            } finally {
+              retryingImageVariants.delete(key);
+              setImageRetryLoading(runId, variantId, false);
+            }
           }
 
           async function scheduleVariantQuick(variantId, runId, hook){
@@ -1179,7 +1205,6 @@ def _dashboard_shared_js() -> str:
                 <button onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/select', {shortlist:true, comment:'shortlisted from dashboard'})">Shortlist</button>
                 <button class="primary" onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/select', {winner:true, comment:'winner chosen from dashboard'})">Set Winner</button>
                 <button onclick="requestVariantRegeneration('${runId}', '${variantId}')">Regenerate</button>
-                <button onclick="retryVariantImage('${runId}', '${variantId}')">Retry Image</button>
                 <button onclick="scheduleVariantQuick('${variantId}','${runId}','${(item.hook||'').replace(/'/g,\"\\\\'\")}')" style="background:var(--soft);border-color:var(--accent);color:var(--accent);">+ Calendar</button>
               </div>
             `;
@@ -1317,13 +1342,27 @@ def _dashboard_shared_js() -> str:
               const lastDecision = execSummary.last_decision?.summary || "-";
               const blocker = execSummary.active_blockers?.[0]?.summary || "-";
               const regenGoal = execSummary.active_regen_goal?.summary || "-";
+              const imageRetrying = retryingImageVariants.has(`${runId}:${item.variant_id}`);
+              const retryButton = `
+                <button class="image-retry-btn ${imageRetrying ? "is-loading" : ""}"
+                  data-image-retry-run="${esc(runId)}"
+                  data-image-retry-variant="${esc(item.variant_id)}"
+                  title="${imageRetrying ? "Retrying image generation" : "Retry image generation"}"
+                  ${imageRetrying ? "disabled" : ""}
+                  onclick="retryVariantImage(event, '${runId}', '${item.variant_id}')">
+                  ${imageRetrying ? '<span class="retry-spinner" aria-hidden="true"></span>' : "Retry"}
+                </button>
+              `;
               return `
                 <article class="variant-score-card" data-variant-id="${esc(item.variant_id)}" onclick="toggleVariantDetail('${runId}', '${item.variant_id}')">
                   <div class="rank-badge">${idx + 1}</div>
                   <div class="stage-title">${esc(item.variant_id)}</div>
                   <div class="muted" style="font-size:11px;">${esc(item.angle || "-")}</div>
                   <div class="score-number ${scoreColorClass(score)}">${score != null ? Math.round(score) : "-"}</div>
-                  ${image ? `<img class="thumb" src="${mediaUrl(image.uri)}" alt="variant thumbnail" />` : '<div class="thumb muted" style="display:flex;align-items:center;justify-content:center;font-size:11px;">No image</div>'}
+                  <div class="thumb-wrap">
+                    ${image ? `<img class="thumb" src="${mediaUrl(image.uri)}" alt="variant thumbnail" />` : '<div class="thumb muted" style="display:flex;align-items:center;justify-content:center;font-size:11px;">No image</div>'}
+                    ${retryButton}
+                  </div>
                   <div class="quality-row" style="justify-content:center;">
                     ${item.is_winner ? '<span class="quality-chip good">Winner</span>' : ''}
                     ${item.shortlisted && !item.is_winner ? '<span class="quality-chip good">Shortlisted</span>' : ''}

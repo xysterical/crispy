@@ -333,7 +333,13 @@
     .variant-score-card .score-number.high { color: var(--accent); }
     .variant-score-card .score-number.mid { color: var(--warning); }
     .variant-score-card .score-number.low { color: var(--danger); }
-    .variant-score-card .thumb { width: 100%; height: 140px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--gray-100); margin: 8px 0; }
+    .variant-score-card .thumb-wrap { position: relative; margin: 8px 0; }
+    .variant-score-card .thumb { width: 100%; height: 140px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--gray-100); margin: 0; display: block; }
+    .variant-score-card .image-retry-btn { position: absolute; right: 8px; bottom: 8px; min-width: 48px; height: 28px; padding: 0 10px; border-radius: 999px; font-size: 11px; background: rgba(255,255,255,0.92); border-color: var(--line); box-shadow: var(--shadow-sm); display: inline-flex; align-items: center; justify-content: center; }
+    .variant-score-card .image-retry-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .variant-score-card .image-retry-btn.is-loading { min-width: 34px; color: var(--accent); cursor: wait; }
+    .retry-spinner { width: 14px; height: 14px; border: 2px solid rgba(5,150,105,0.22); border-top-color: var(--accent); border-radius: 50%; animation: retry-spin 700ms linear infinite; }
+    @keyframes retry-spin { to { transform: rotate(360deg); } }
     .variant-score-card .quick-actions { display: flex; gap: 5px; margin-top: 8px; }
     .variant-score-card .quick-actions button { flex: 1; padding: 6px 4px; font-size: 11px; border-radius: var(--radius-sm); }
     .variant-detail-panel { border: 2px solid var(--accent); border-radius: var(--radius-xl); padding: 24px; margin-top: 14px; background: #fff; transform-origin: top center; transform: scale(var(--modal-scale)); opacity: 0; pointer-events: none; transition: transform var(--modal-open-dur) var(--modal-ease), opacity var(--modal-open-dur) var(--modal-ease); will-change: transform, opacity; }

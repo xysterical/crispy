@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 from sqlalchemy import create_engine
@@ -14,6 +15,21 @@ def _run_worker_once() -> None:
     with SessionLocal() as db:
         execute_next_queued_stage(db)
         db.commit()
+
+
+def _patch_valid_generated_images(monkeypatch):
+    def fake_materialize_generated_image(_selected):
+        from PIL import Image
+
+        image = Image.new("RGB", (200, 200))
+        for x in range(200):
+            for y in range(200):
+                image.putpixel((x, y), ((x * 3) % 255, (y * 5) % 255, ((x + y) * 2) % 255))
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue(), "b64_json"
+
+    monkeypatch.setattr("app.services.runs.runtime._materialize_generated_image", fake_materialize_generated_image)
 
 
 def test_dashboard_pages_share_global_rail(client):
@@ -82,7 +98,8 @@ def test_dashboard_data_source_switch(client):
             alt_db_path.unlink()
 
 
-def test_artifacts_endpoint_filters_generated_outputs(client):
+def test_artifacts_endpoint_filters_generated_outputs(client, monkeypatch):
+    _patch_valid_generated_images(monkeypatch)
     create_resp = client.post(
         "/runs",
         json={
@@ -302,3 +319,15 @@ def test_dashboard_variant_detail_renders_review_hints_section(client):
     html = resp.text
     assert "Review Hints" in html
     assert "qSummary.review_hints" in html
+
+
+def test_dashboard_image_retry_is_thumbnail_overlay(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "function retryVariantImage(event, runId, variantId)" in html
+    assert "window.confirm(`Retry image generation for ${variantId}?`)" in html
+    assert "thumb-wrap" in html
+    assert "image-retry-btn" in html
+    assert "retry-spinner" in html
+    assert '<button onclick="retryVariantImage' not in html
