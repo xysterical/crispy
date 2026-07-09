@@ -147,3 +147,37 @@ def test_variant_regeneration_exposes_execution_memory_summary(client, monkeypat
     regen_payload = regen.json()
     assert regen_payload["execution_summary"]["active_regen_goal"]
     assert regen_payload["execution_summary"]["recent_memory"]
+
+
+def test_image_retry_does_not_write_execution_memory(client, monkeypatch):
+    _patch_valid_generated_images(monkeypatch)
+
+    run = _create_run(client)
+    run_id = run["id"]
+
+    for stage in ["intake", "planning", "divergence", "copy_image_generation"]:
+        _run_worker_once()
+        if stage != "copy_image_generation":
+            ok = client.post(f"/runs/{run_id}/advance", json={"notes": f"approve {stage}"})
+            assert ok.status_code == 200
+
+    variants_payload = client.get(f"/runs/{run_id}/variants").json()
+    target = variants_payload["items"][0]["variant_id"]
+
+    with SessionLocal() as db:
+        from app.data.models import ExecutionMemoryEntry
+
+        before = db.scalars(select(ExecutionMemoryEntry).where(ExecutionMemoryEntry.run_id == run_id)).all()
+        before_count = len(before)
+
+    retry = client.post(
+        f"/runs/{run_id}/variants/{target}/assets/image/retry",
+        json={"reason": "retry failed provider image"},
+    )
+    assert retry.status_code == 200
+
+    with SessionLocal() as db:
+        from app.data.models import ExecutionMemoryEntry
+
+        after = db.scalars(select(ExecutionMemoryEntry).where(ExecutionMemoryEntry.run_id == run_id)).all()
+        assert len(after) == before_count

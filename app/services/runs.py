@@ -3283,6 +3283,7 @@ def regenerate_variant_assets(
     variant_id: str,
     reason: str,
     target_stage: str | None = None,
+    write_memory: bool = True,
 ) -> RunVariant:
     run = get_run(db, run_id)
     variant = get_run_variant(db, run_id, variant_id)
@@ -3293,6 +3294,7 @@ def regenerate_variant_assets(
         action=VariantReviewAction.REQUEST_REGENERATION.value,
         comment=reason,
         metadata={"target_stage": target_stage},
+        write_memory=write_memory,
     )
     stage_name = target_stage or _default_regeneration_stage(run)
     if stage_name not in REGENERATABLE_STAGES:
@@ -3326,15 +3328,16 @@ def regenerate_variant_assets(
     scope = f"regen-{utcnow().strftime('%Y%m%d%H%M%S%f')}"
     asset_suffix = f"_{scope}"
     qa_repair = _qa_repair_context(db=db, variant=variant, reason=reason, target_stage=stage_name)
-    write_regeneration_memory(
-        db,
-        run_id=run.id,
-        variant=variant,
-        stage_name=stage_name,
-        reason=reason,
-        scope=scope,
-        status="requested",
-    )
+    if write_memory:
+        write_regeneration_memory(
+            db,
+            run_id=run.id,
+            variant=variant,
+            stage_name=stage_name,
+            reason=reason,
+            scope=scope,
+            status="requested",
+        )
     runtime_config = {
         **runtime_config,
         "force_regenerate": True,
@@ -3552,15 +3555,16 @@ def regenerate_variant_assets(
             "completed_at": utcnow().isoformat(),
         },
     }
-    write_regeneration_memory(
-        db,
-        run_id=run.id,
-        variant=variant,
-        stage_name=stage_name,
-        reason=reason,
-        scope=scope,
-        status="completed",
-    )
+    if write_memory:
+        write_regeneration_memory(
+            db,
+            run_id=run.id,
+            variant=variant,
+            stage_name=stage_name,
+            reason=reason,
+            scope=scope,
+            status="completed",
+        )
     run.budget_used = float(run.budget_used or 0.0) + output.estimated_cost
     run.updated_at = utcnow()
     db.flush()
@@ -3580,6 +3584,7 @@ def retry_copy_image_asset(
         variant_id=variant_id,
         reason=reason,
         target_stage="copy_image_generation",
+        write_memory=False,
     )
     run = get_run(db, run_id)
     task = get_stage_task(db, run_id, "copy_image_generation")
@@ -3601,6 +3606,7 @@ def review_variant(
     comment: str = "",
     tags: list[str] | None = None,
     metadata: dict | None = None,
+    write_memory: bool = True,
 ) -> RunVariant:
     variant = get_run_variant(db, run_id, variant_id)
     run = get_run(db, run_id)
@@ -3678,15 +3684,16 @@ def review_variant(
         message=f"Human review action {action} applied to variant {variant_id}.",
         payload={"variant_id": variant_id, "comment": comment, "tags": tags, "metadata": metadata},
     )
-    write_variant_review_memory(
-        db,
-        run_id=run_id,
-        variant=variant,
-        action=action,
-        comment=comment,
-        tags=tags,
-        metadata=metadata,
-    )
+    if write_memory:
+        write_variant_review_memory(
+            db,
+            run_id=run_id,
+            variant=variant,
+            action=action,
+            comment=comment,
+            tags=tags,
+            metadata=metadata,
+        )
     db.flush()
     return variant
 
