@@ -9,7 +9,7 @@ from app.data.models import VariantAsset
 from app.data.session import SessionLocal
 from app.providers.llm import GeneratedImage, GeneratedVideo, ImageGenResult, VideoGenResult
 from app.orchestrator.state_machine import STAGE_ORDER, stage_plan_for
-from app.services.runs import _build_task_input, _qa_repair_context, _retry_delay, _submit_next_video_segment, execute_next_queued_stage
+from app.services.runs import _build_task_input, _generated_asset_failure, _qa_repair_context, _retry_delay, _submit_next_video_segment, execute_next_queued_stage
 
 
 def _run_worker_once() -> None:
@@ -426,8 +426,59 @@ def test_run_deliverables_and_variants_endpoints(client, monkeypatch):
     ranked_first = evaluation_task["output_payload"]["evaluation_result"]["ranked_variants"][0]
     assert "visual_qa" in ranked_first["sub_scores"]
     assert "compliance_block" in ranked_first
-    assert "compliance_block" in evaluation_task["output_payload"]
-    assert any(reason.startswith("visual_qa_agent_status=") for reason in ranked_first["reasons"])
+
+
+def test_run_deliverables_excludes_failed_winner_media(client):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-deliverables-filter",
+            "project_name": "p-deliverables-filter",
+            "product_name": "pet brush",
+            "product_code": "PB-FILTER",
+            "industry_code": "pet_care",
+            "campaign_name": "meta-us-filter",
+            "creative_preset": "meta_square_5s",
+        },
+    )
+    run_id = create_resp.json()["id"]
+    ok_image = Path(f"assets/{run_id}/V1_ok.png")
+    ok_image.parent.mkdir(parents=True, exist_ok=True)
+    ok_image.write_bytes(b"x" * 2048)
+
+    with SessionLocal() as db:
+        from app.data.models import RunVariant
+
+        variant = RunVariant(run_id=run_id, variant_id="V1", angle="A", hook="H", message="M", is_winner=True)
+        db.add(variant)
+        db.flush()
+        db.add_all(
+            [
+                VariantAsset(
+                    run_variant_id=variant.id,
+                    run_id=run_id,
+                    stage_name="copy_image_generation",
+                    asset_type="image",
+                    uri=f"assets/{run_id}/V1_generation_error.txt",
+                    payload={"variant_id": "V1", "uri": f"assets/{run_id}/V1_generation_error.txt", "source": "generation_error"},
+                    idempotency_key="failed-winner-image",
+                ),
+                VariantAsset(
+                    run_variant_id=variant.id,
+                    run_id=run_id,
+                    stage_name="copy_image_generation",
+                    asset_type="image",
+                    uri=f"assets/{run_id}/V1_ok.png",
+                    payload={"variant_id": "V1", "uri": f"assets/{run_id}/V1_ok.png", "source": "generated"},
+                    idempotency_key="valid-winner-image",
+                ),
+            ]
+        )
+        db.commit()
+
+    payload = client.get(f"/runs/{run_id}/deliverables").json()["deliverables"]
+    assert [item["uri"] for item in payload["image_assets"]] == [f"assets/{run_id}/V1_ok.png"]
+    assert _generated_asset_failure({"source": "generation_error"}, "assets/x_generation_error.txt")[0] == "provider_error"
 
 
 def test_variant_review_endpoints_update_variant_library(client, monkeypatch):

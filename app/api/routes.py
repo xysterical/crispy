@@ -875,10 +875,11 @@ def _dashboard_shared_js() -> str:
           function renderDeliverables(deliverables) {
             const winner = deliverables?.winner_variant_id || "-";
             const copy = deliverables?.deliverables?.copy_variant || null;
-            const images = deliverables?.deliverables?.image_assets || [];
-            const video = deliverables?.deliverables?.video_asset || null;
+            const images = (deliverables?.deliverables?.image_assets || []).filter((asset) => !failedMediaAsset(asset));
+            const rawVideo = deliverables?.deliverables?.video_asset || null;
+            const video = failedMediaAsset(rawVideo) ? null : rawVideo;
             const image = images.length ? images[0] : null;
-            const scoreAction = deliverables?.score?.forecast?.recommended_action || deliverables?.score?.recommended_action || "-";
+            const scoreAction = deliverables?.score?.winner?.recommended_action || deliverables?.score?.forecast?.recommended_action || deliverables?.score?.recommended_action || "-";
             return `
               <h3>Deliverables Overview</h3>
               <div class="muted">winner: ${esc(winner)} | recommendation: ${esc(scoreAction)}</div>
@@ -910,6 +911,10 @@ def _dashboard_shared_js() -> str:
                 </article>
               </div>
             `;
+          }
+
+          function failedMediaAsset(asset) {
+            return asset?.failure_category || asset?.error || asset?.source === "generation_error" || String(asset?.uri || "").includes("_generation_error.");
           }
 
           function latestScore(item, scoreType){

@@ -1061,6 +1061,8 @@ def _generated_asset_failure(payload: dict, uri: str | None) -> tuple[str | None
     if status in {"submitted", "queued", "pending", "processing", "running"}:
         return None, None
     source = str(payload.get("source") or "").lower()
+    if source == "generation_error":
+        return TaskFailureCategory.PROVIDER_ERROR.value, "provider returned generation error artifact"
     if source == "placeholder":
         return TaskFailureCategory.PROVIDER_ERROR.value, "provider returned placeholder media"
     if source in {"external_task_pending", "segmented_pending"}:
@@ -2426,8 +2428,9 @@ def run_deliverables(db: Session, run_id: str) -> dict:
     assets = db.scalars(select(VariantAsset).where(VariantAsset.run_variant_id == winner.id).order_by(VariantAsset.created_at.asc())).all()
     scores = db.scalars(select(VariantScore).where(VariantScore.run_variant_id == winner.id)).all()
     copy_asset = next((item for item in assets if item.asset_type == "copy"), None)
-    image_assets = [item.payload for item in assets if item.asset_type == "image"]
-    video_asset = next((item.payload for item in assets if item.asset_type == "video"), None)
+    usable_assets = [item for item in assets if not (item.failure_category or _generated_asset_failure(item.payload or {}, item.uri)[0])]
+    image_assets = [item.payload for item in usable_assets if item.asset_type == "image"]
+    video_asset = next((item.payload for item in usable_assets if item.asset_type == "video"), None)
     evaluation = next((item for item in scores if item.score_type == "evaluation"), None)
     return {
         "winner_variant_id": winner.variant_id,

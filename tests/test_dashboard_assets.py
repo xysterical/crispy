@@ -184,6 +184,10 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "currentStageTask(run)?.metadata_json?.resolved_api" in html
     assert "run fallback:" in html
     assert "provider/model: ${esc(providerSummary(run))}" in html
+    assert "function failedMediaAsset(asset)" in html
+    assert "winner?.recommended_action" in html
+    assert "source === \"generation_error\"" in html
+    assert "_generation_error." in html
     assert ".status-explainer-main { display: block; text-align: center; }" in html
     assert ".status-explainer-action { display: inline-flex; margin-top: 8px;" in html
     assert "white-space: nowrap;" in html
