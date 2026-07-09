@@ -1564,12 +1564,68 @@ def _dashboard_shared_js() -> str:
               }),
             };
           }
+          function copyImageReviewRows(payload){
+            const copies = Array.isArray(payload.copy_variants) ? payload.copy_variants : [];
+            const images = Array.isArray(payload.image_assets) ? payload.image_assets : [];
+            const ids = [...new Set([...copies, ...images].map((item) => item?.variant_id || item?.id).filter(Boolean))];
+            return {
+              title: `Copy/Image variants: ${ids.length || Math.max(copies.length, images.length)}`,
+              rows: (ids.length ? ids : copies.map((_, index) => `V${index + 1}`)).map((variantId) => {
+                const copy = copies.find((item) => (item.variant_id || item.id) === variantId) || {};
+                const image = images.find((item) => (item.variant_id || item.id) === variantId) || {};
+                const imageStatus = image.error ? "image failed" : (image.generation_status || image.source || (image.uri ? "image ready" : "no image"));
+                return {
+                  title: `${variantId}: ${copy.headline || copy.hook || image.prompt || "Copy/Image output"}`,
+                  detail: [copy.primary_text, imageStatus].filter(Boolean).join(" - "),
+                  imageUri: image.uri && !image.error ? image.uri : "",
+                  actionVariantId: variantId,
+                };
+              }),
+            };
+          }
+          function videoReviewRows(payload){
+            const videos = Array.isArray(payload.videos) ? payload.videos : [];
+            return {
+              title: `Video variants: ${videos.length}`,
+              rows: videos.map((video, index) => {
+                const variantId = video.variant_id || video.id || `V${index + 1}`;
+                const status = video.error ? "video failed" : (video.generation_status || video.source || (video.video_uri ? "video ready" : "no video"));
+                return {
+                  title: `${variantId}: ${status}`,
+                  detail: [video.duration_seconds ? `${video.duration_seconds}s` : "", video.error || video.video_uri].filter(Boolean).join(" - "),
+                  videoUri: video.video_uri && !video.error ? video.video_uri : "",
+                  actionVariantId: variantId,
+                };
+              }),
+            };
+          }
+          function focusVariantFromChecklist(variantId){
+            variantBoardCollapsed = false;
+            persistVariantBoardCollapsedState();
+            const body = document.getElementById("variant-board-body");
+            if (body) body.classList.remove("is-collapsed");
+            const btn = document.getElementById("variant-board-toggle");
+            if (btn) btn.textContent = variantBoardToggleLabel();
+            const card = document.querySelector(`.variant-score-card[data-variant-id="${CSS.escape(variantId)}"]`);
+            if (card) {
+              card.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+              if (window.__lastRunId) toggleVariantDetail(window.__lastRunId, variantId);
+            }
+          }
           function renderChecklistItem(item){
             if (typeof item === "string") return `<li>${esc(item)}</li>`;
             if (item && Array.isArray(item.rows)) {
               return `<li><div class="review-checklist-group-title">${esc(item.title || "Items")}</div><ul class="review-checklist-sublist">${item.rows.map((row) => {
                 if (typeof row === "string") return `<li>${esc(row)}</li>`;
-                return `<li><b>${esc(row.title || "-")}</b>${row.detail ? `<div>${esc(row.detail)}</div>` : ""}</li>`;
+                return `<li class="${row.imageUri || row.videoUri ? "has-review-thumb" : ""}">
+                  ${row.imageUri ? `<img class="review-checklist-thumb" src="${mediaUrl(row.imageUri)}" alt="${esc(row.title || "variant thumbnail")}" />` : ""}
+                  ${row.videoUri ? `<video class="review-checklist-thumb review-checklist-video" src="${mediaUrl(row.videoUri)}" controls muted preload="metadata"></video>` : ""}
+                  <div class="review-checklist-row-main">
+                    <b>${esc(row.title || "-")}</b>
+                    ${row.detail ? `<div>${esc(row.detail)}</div>` : ""}
+                    ${row.actionVariantId ? `<button type="button" class="review-jump-btn" onclick="focusVariantFromChecklist('${esc(row.actionVariantId)}')">Open in board</button>` : ""}
+                  </div>
+                </li>`;
               }).join("")}</ul></li>`;
             }
             return "";
@@ -1595,14 +1651,13 @@ def _dashboard_shared_js() -> str:
             } else if (stage === "divergence") {
               items.push(summarizeVariants(payload.variants));
             } else if (stage === "copy_image_generation") {
-              items.push(summarizeList("Copy variants", payload.copy_variants, ["headline", "primary_text", "hook"]));
-              items.push(summarizeList("Image assets", payload.image_assets, ["variant_id", "uri", "prompt"]));
+              items.push(copyImageReviewRows(payload));
             } else if (stage === "video_scripting") {
               items.push(summarizeList("Video scripts", payload.scripts, ["variant_id", "hook", "opening_hook", "script"]));
             } else if (stage === "storyboard_image_generation") {
               items.push(summarizeList("Storyboard frames", payload.frames, ["frame_id", "variant_id", "prompt", "image_uri"]));
             } else if (stage === "video_generation") {
-              items.push(summarizeList("Video assets", payload.videos, ["variant_id", "generation_status", "video_uri", "error"]));
+              items.push(videoReviewRows(payload));
             } else if (stage === "visual_quality_assessment") {
               const summary = payload.summary || payload.visual_quality_summary || {};
               items.push(firstTextValue(summary, ["recommended_action", "status", "model_summary"]));
