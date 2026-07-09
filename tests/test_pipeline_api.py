@@ -1339,6 +1339,87 @@ def test_assets_refresh_fails_copy_image_stage_when_assets_failed(client):
         assert "V2: provider returned placeholder media" in copy_task.error_message
 
 
+def test_assets_refresh_keeps_latest_retried_copy_image(client):
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "w-copy-image-refresh-latest",
+            "project_name": "p-copy-image-refresh-latest",
+            "product_name": "paper cup",
+            "product_code": "COPY-IMAGE-REFRESH-LATEST-001",
+            "industry_code": "packaging",
+            "campaign_name": "copy-image-refresh-latest",
+            "pipeline_mode": "copy_image_only",
+            "approval_mode": "manual",
+            "creative_preset": "meta_square_5s",
+        },
+    )
+    assert create_resp.status_code == 200
+    run_id = create_resp.json()["id"]
+    old_uri = f"assets/{run_id}/old.png"
+    new_uri = f"assets/{run_id}/new.png"
+    Path(old_uri).parent.mkdir(parents=True, exist_ok=True)
+    Path(old_uri).write_bytes(base64.b64decode(_valid_png_b64()))
+    Path(new_uri).write_bytes(base64.b64decode(_valid_png_b64()))
+
+    with SessionLocal() as db:
+        from app.data.models import PipelineRun, RunStatus, RunVariant, StageTask, TaskStatus
+
+        run = db.get(PipelineRun, run_id)
+        run.current_stage = "copy_image_generation"
+        run.status = RunStatus.WAITING_REVIEW.value
+        variant = RunVariant(run_id=run_id, variant_id="V1", angle="Cup", hook="Hook", message="Message")
+        db.add(variant)
+        db.flush()
+        copy_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="copy_image_generation").one()
+        copy_task.status = TaskStatus.WAITING_REVIEW.value
+        copy_task.output_payload = {
+            "copy_variants": [],
+            "image_assets": [
+                {
+                    "variant_id": "V1",
+                    "uri": old_uri,
+                    "source": "url",
+                    "external_task_id": "old-task",
+                    "generation_status": "completed",
+                }
+            ],
+        }
+        for uri, task_id, key in [(old_uri, "old-task", "old"), (new_uri, "new-task", "new")]:
+            db.add(
+                VariantAsset(
+                    run_variant_id=variant.id,
+                    run_id=run_id,
+                    stage_name="copy_image_generation",
+                    asset_type="image",
+                    uri=uri,
+                    provider_name="stub",
+                    model_name="stub-image",
+                    prompt_summary="paper cup",
+                    idempotency_key=f"copy-image-latest-{key}",
+                    payload={
+                        "variant_id": "V1",
+                        "uri": uri,
+                        "source": "url",
+                        "external_task_id": task_id,
+                        "generation_status": "completed",
+                    },
+                )
+            )
+            db.flush()
+        db.commit()
+
+    resp = client.post(f"/runs/{run_id}/assets/refresh")
+    assert resp.status_code == 200
+
+    with SessionLocal() as db:
+        from app.data.models import StageTask
+
+        copy_task = db.query(StageTask).filter_by(run_id=run_id, stage_name="copy_image_generation").one()
+        assert copy_task.output_payload["image_assets"][0]["uri"] == new_uri
+        assert copy_task.output_payload["image_assets"][0]["external_task_id"] == "new-task"
+
+
 def test_copy_image_merge_replaces_regenerated_variant_payload():
     from app.services.runs import _merge_stage_payload
 

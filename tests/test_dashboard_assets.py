@@ -327,6 +327,11 @@ def test_dashboard_image_retry_is_thumbnail_overlay(client):
     html = resp.text
     assert "function retryVariantImage(event, runId, variantId)" in html
     assert "window.confirm(`Retry image generation for ${variantId}?`)" in html
+    assert "function waitForRetriedImage(runId, variantId)" in html
+    assert "function preferredImageAsset(images)" in html
+    assert "Image retry completed for ${variantId}." in html
+    assert "Image processing" in html
+    assert "Image failed" in html
     assert "thumb-wrap" in html
     assert "image-retry-btn" in html
     assert "retry-spinner" in html

@@ -921,6 +921,23 @@ def _dashboard_shared_js() -> str:
             return (item?.assets || []).filter((asset) => asset.asset_type === type);
           }
 
+          function assetGenerationState(asset){
+            const payload = asset?.payload || {};
+            const status = String(payload.generation_status || "").toLowerCase();
+            if (asset?.failure_category || payload.error || payload.source === "generation_error") return "failed";
+            if (["submitted", "queued", "pending", "processing", "running"].includes(status) || payload.source === "external_task_pending") return "processing";
+            if (status === "completed" || ["url", "b64_json"].includes(payload.source)) return "completed";
+            return "unknown";
+          }
+
+          function preferredImageAsset(images){
+            const rows = [...(images || [])].sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+            return rows.find((asset) => assetGenerationState(asset) === "processing")
+              || rows.find((asset) => assetGenerationState(asset) === "completed")
+              || rows[0]
+              || null;
+          }
+
           function qualitySummary(item){
             return item?.quality_summary || {};
           }
@@ -1019,9 +1036,22 @@ def _dashboard_shared_js() -> str:
               if (`${btn.dataset.imageRetryRun}:${btn.dataset.imageRetryVariant}` !== key) return;
               btn.disabled = loading;
               btn.classList.toggle("is-loading", loading);
-              btn.innerHTML = loading ? '<span class="retry-spinner" aria-hidden="true"></span>' : "Retry";
+              btn.innerHTML = loading ? '<span class="retry-spinner" aria-hidden="true"></span><span>Waiting</span>' : "Retry";
               btn.title = loading ? "Retrying image generation" : "Retry image generation";
             });
+          }
+
+          async function waitForRetriedImage(runId, variantId){
+            for (let i = 0; i < 18; i += 1) {
+              await new Promise((resolve) => setTimeout(resolve, i < 2 ? 3000 : 10000));
+              await api(`/runs/${runId}/assets/refresh`, { method: "POST" });
+              const variants = await api(`/runs/${runId}/variants`).catch(() => null);
+              const item = (variants?.items || []).find((row) => row.variant_id === variantId);
+              const image = preferredImageAsset(assetsByType(item, "image"));
+              const state = assetGenerationState(image);
+              if (state === "completed" || state === "failed") return { state, image };
+            }
+            return { state: "processing", image: null };
           }
 
           async function retryVariantImage(event, runId, variantId){
@@ -1036,6 +1066,11 @@ def _dashboard_shared_js() -> str:
                 body: JSON.stringify({ reason: "retry image asset from dashboard" })
               });
               await selectRun(runId);
+              const result = await waitForRetriedImage(runId, variantId);
+              await selectRun(runId);
+              if (result.state === "completed") alert(`Image retry completed for ${variantId}.`);
+              else if (result.state === "failed") alert(`Image retry failed for ${variantId}. Check failure reasons.`);
+              else alert(`Image retry is still processing for ${variantId}. Use Refresh Assets to check again.`);
             } catch (err) {
               alert(err?.message || "Image retry failed.");
             } finally {
@@ -1144,7 +1179,7 @@ def _dashboard_shared_js() -> str:
             if (!item) return '<div class="muted">Variant not found.</div>';
             const copy = assetsByType(item, "copy")[0]?.payload || null;
             const images = assetsByType(item, "image");
-            const image = images[0] || null;
+            const image = preferredImageAsset(images);
             const script = assetsByType(item, "video_script")[0]?.payload || null;
             const videoAsset = assetsByType(item, "video")[0] || null;
             const video = videoAsset?.payload || null;
@@ -1166,7 +1201,7 @@ def _dashboard_shared_js() -> str:
               </div>
               <div class="variant-detail-grid" style="margin-top:14px;">
                 <div>
-                  ${image ? `<a href="${mediaViewUrl(image.uri)}" target="_blank"><img class="detail-image" src="${mediaUrl(image.uri)}" alt="variant image" /></a>` : '<div class="muted">No image asset.</div>'}
+                  ${image && assetGenerationState(image) === "completed" ? `<a href="${mediaViewUrl(image.uri)}" target="_blank"><img class="detail-image" src="${mediaUrl(image.uri)}" alt="variant image" /></a>` : `<div class="muted">${assetGenerationState(image) === "processing" ? "Image processing." : assetGenerationState(image) === "failed" ? "Image failed." : "No image asset."}</div>`}
                   ${video?.video_uri ? `
                     <div style="margin-top:10px;">
                       <video controls playsinline class="media-preview video" src="${mediaUrl(video.video_uri)}" style="max-height:400px;"></video>
@@ -1333,7 +1368,8 @@ def _dashboard_shared_js() -> str:
             }
             const scoreCards = items.map((item, idx) => {
               const images = assetsByType(item, "image");
-              const image = images[0] || null;
+              const image = preferredImageAsset(images);
+              const imageState = assetGenerationState(image);
               const evaluation = latestScore(item, "evaluation");
               const score = evaluation?.total_score;
               const qSummary = qualitySummary(item);
@@ -1360,7 +1396,7 @@ def _dashboard_shared_js() -> str:
                   <div class="muted" style="font-size:11px;">${esc(item.angle || "-")}</div>
                   <div class="score-number ${scoreColorClass(score)}">${score != null ? Math.round(score) : "-"}</div>
                   <div class="thumb-wrap">
-                    ${image ? `<img class="thumb" src="${mediaUrl(image.uri)}" alt="variant thumbnail" />` : '<div class="thumb muted" style="display:flex;align-items:center;justify-content:center;font-size:11px;">No image</div>'}
+                    ${image && imageState === "completed" ? `<img class="thumb" src="${mediaUrl(image.uri)}" alt="variant thumbnail" />` : `<div class="thumb muted" style="display:flex;align-items:center;justify-content:center;font-size:11px;">${imageState === "processing" ? "Image processing" : imageState === "failed" ? "Image failed" : "No image"}</div>`}
                     ${retryButton}
                   </div>
                   <div class="quality-row" style="justify-content:center;">

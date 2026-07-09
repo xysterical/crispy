@@ -2944,7 +2944,7 @@ def refresh_copy_image_task_assets(db: Session, run_id: str) -> dict:
         select(VariantAsset).where(
             VariantAsset.run_id == run_id,
             VariantAsset.asset_type == "image",
-        )
+        ).order_by(VariantAsset.created_at.asc())
     ).all()
     for asset in assets:
         payload = dict(asset.payload or {})
