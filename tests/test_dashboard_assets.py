@@ -155,6 +155,7 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "function renderReviewChecklist(run)" in html
     assert "function currentReviewTask(run)" in html
     assert "function summarizeVariants(rows)" in html
+    assert "function intakeReviewRows(payload)" in html
     assert "function copyImageReviewRows(payload)" in html
     assert "function videoReviewRows(payload)" in html
     assert "function visualQualityReviewRows(payload)" in html
@@ -165,6 +166,10 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "review-checklist-video" in html
     assert "Open in board" in html
     assert 'detail: [item.hook, item.message].filter(Boolean).join(" - "),' in html
+    assert "items.push(intakeReviewRows(payload));" in html
+    assert "Intake summary" in html
+    assert "Must preserve" in html
+    assert "Media read" in html
     assert "items.push(summarizeVariants(payload.variants));" in html
     assert "items.push(copyImageReviewRows(payload));" in html
     assert "items.push(videoReviewRows(payload));" in html
@@ -189,7 +194,12 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "source === \"generation_error\"" in html
     assert "_generation_error." in html
     assert "run-notification-stack" in html
-    assert "function notifyRunTransitions(rows)" in html
+    assert "function payloadHasProcessingAssets(payload)" in html
+    assert "function reviewNotificationReady(run)" in html
+    assert "async function notifyRunTransitions(rows)" in html
+    assert "await api(`/runs/${run.id}`).catch(() => null)" in html
+    assert "if (!fullRun || !reviewNotificationReady(fullRun)) continue;" in html
+    assert "item?.source === \"external_task_pending\"" in html
     assert "showRunNotification(run, \"review\")" in html
     assert "showRunNotification(run, \"completed\")" in html
     assert "setTimeout(() => dismissRunNotification(run.id), 12000)" in html

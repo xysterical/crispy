@@ -860,6 +860,25 @@ def _dashboard_shared_js() -> str:
             return [run.status || "", run.current_stage || "", run.updated_at || ""].join("|");
           }
 
+          function payloadHasProcessingAssets(payload) {
+            const rows = [
+              ...(payload?.image_assets || []),
+              ...(payload?.frames || []),
+              ...(payload?.videos || []),
+            ];
+            return rows.some((item) => {
+              const status = String(item?.generation_status || item?.status || "").toLowerCase();
+              return (item?.external_task_id && ["", "submitted", "queued", "pending", "processing", "running"].includes(status))
+                || item?.source === "external_task_pending"
+                || item?.source === "segmented_pending";
+            });
+          }
+
+          function reviewNotificationReady(run) {
+            const task = currentReviewTask(run);
+            return !!task && !payloadHasProcessingAssets(task.output_payload || {});
+          }
+
           function dismissRunNotification(runId) {
             const toast = document.querySelector(`.run-notification[data-run-id="${CSS.escape(runId)}"]`);
             if (toast) toast.remove();
@@ -895,23 +914,31 @@ def _dashboard_shared_js() -> str:
             runNotificationTimers.set(run.id, setTimeout(() => dismissRunNotification(run.id), 12000));
           }
 
-          function notifyRunTransitions(rows) {
-            const next = new Map(rows.map((run) => [run.id, runNotificationKey(run)]));
-            if (runNotificationState) {
-              rows.forEach((run) => {
-                const prior = runNotificationState.get(run.id);
-                const current = next.get(run.id);
-                if (prior === current) return;
-                if (run.status === "waiting_review") showRunNotification(run, "review");
-                if (run.status === "completed") showRunNotification(run, "completed");
-              });
+          async function notifyRunTransitions(rows) {
+            if (!runNotificationState) {
+              runNotificationState = new Map(rows.map((run) => [run.id, runNotificationKey(run)]));
+              return;
+            }
+            const next = new Map(runNotificationState || []);
+            for (const run of rows) {
+              const current = runNotificationKey(run);
+              const prior = runNotificationState?.get(run.id);
+              if (prior === current) continue;
+              if (run.status === "waiting_review") {
+                const fullRun = await api(`/runs/${run.id}`).catch(() => null);
+                if (!fullRun || !reviewNotificationReady(fullRun)) continue;
+                showRunNotification(run, "review");
+              } else if (run.status === "completed") {
+                showRunNotification(run, "completed");
+              }
+              next.set(run.id, current);
             }
             runNotificationState = next;
           }
 
           async function refreshRuns() {
             const rows = await api("/runs");
-            notifyRunTransitions(rows);
+            await notifyRunTransitions(rows);
             const body = document.getElementById("runs-body");
             body.innerHTML = "";
             if (!rows.length) {
@@ -1625,6 +1652,43 @@ def _dashboard_shared_js() -> str:
               }),
             };
           }
+          function compactText(value, maxLength = 220){
+            const text = String(value || "").replace(/\\s+/g, " ").trim();
+            return text.length > maxLength ? `${text.slice(0, maxLength - 1)}...` : text;
+          }
+          function intakeReviewRows(payload){
+            const skuRows = Array.isArray(payload.sku_summary) ? payload.sku_summary : [];
+            const images = Array.isArray(payload.image_references) ? payload.image_references : [];
+            const videos = Array.isArray(payload.video_references) ? payload.video_references : [];
+            const identity = payload.visual_identity || {};
+            const truth = payload.product_truth_contract || {};
+            const valueProps = Array.isArray(payload.business_context?.key_value_props) ? payload.business_context.key_value_props : [];
+            const rows = [
+              {
+                title: `Product: ${payload.product_name || "unknown product"}`,
+                detail: [
+                  payload.market ? `Market: ${payload.market}` : "",
+                  payload.locale ? `Locale: ${payload.locale}` : "",
+                  valueProps.length ? `Value props: ${valueProps.slice(0, 3).join(", ")}` : "",
+                ].filter(Boolean).join(" | "),
+              },
+              {
+                title: `Inputs: ${skuRows.length} SKU rows, ${images.length} images, ${videos.length} videos`,
+                detail: [
+                  summarizeList("SKU sample", skuRows, ["sku", "name", "title", "product_name"]),
+                  summarizeList("Image sample", images, ["filename", "uri", "url"]),
+                  summarizeList("Video sample", videos, ["filename", "uri", "url"]),
+                ].filter(Boolean).join(" | "),
+              },
+            ];
+            const preserve = truth.must_preserve || identity.must_preserve_details || [];
+            if (preserve.length) rows.push({ title: "Must preserve", detail: preserve.slice(0, 5).join(" | ") });
+            if (identity.primary_colors?.length) rows.push({ title: "Visual identity", detail: `Colors: ${identity.primary_colors.slice(0, 5).join(", ")}` });
+            if (payload.asset_media_summary) rows.push({ title: "Media read", detail: compactText(payload.asset_media_summary) });
+            if (payload.llm_summary) rows.push({ title: "Normalized brief", detail: compactText(payload.llm_summary) });
+            if (payload.manual_research_brief) rows.push({ title: "Research notes", detail: compactText(payload.manual_research_brief) });
+            return { title: "Intake summary", rows };
+          }
           function copyImageReviewRows(payload){
             const copies = Array.isArray(payload.copy_variants) ? payload.copy_variants : [];
             const images = Array.isArray(payload.image_assets) ? payload.image_assets : [];
@@ -1735,9 +1799,7 @@ def _dashboard_shared_js() -> str:
             const items = [];
             if (task.summary) items.push(task.summary);
             if (stage === "intake") {
-              items.push(summarizeList("SKU rows", payload.sku_summary, ["sku", "name", "title", "product_name"]));
-              items.push(summarizeList("Image references", payload.image_references, ["filename", "uri", "url"]));
-              items.push(firstTextValue(payload, ["asset_media_summary", "summary"]));
+              items.push(intakeReviewRows(payload));
             } else if (stage === "planning") {
               items.push(summarizeList("Strategic angles", payload.strategic_angles, ["angle", "name", "summary", "hook"]));
               items.push(summarizeList("Constraints", payload.constraints, ["rule", "constraint", "summary"]));
