@@ -1082,6 +1082,14 @@ def _copy_image_failure_lines(image_assets: list[dict]) -> list[str]:
     return lines
 
 
+def _copy_image_asset_rank(payload: dict) -> int:
+    if _generated_asset_failure(payload, payload.get("uri"))[0]:
+        return 0
+    if _pending_copy_image_asset(payload):
+        return 1
+    return 2
+
+
 def _settle_copy_image_stage_status(
     db: Session,
     run: PipelineRun,
@@ -3012,7 +3020,9 @@ def refresh_copy_image_task_assets(db: Session, run_id: str) -> dict:
         asset.error_message = error_message
         variant_id = str(payload.get("variant_id") or "")
         if variant_id in image_assets_by_variant:
-            image_assets_by_variant[variant_id].update(payload)
+            current = image_assets_by_variant[variant_id]
+            if _copy_image_asset_rank(payload) >= _copy_image_asset_rank(current):
+                image_assets_by_variant[variant_id].update(payload)
         artifact = db.scalar(
             select(Artifact).where(
                 Artifact.run_id == run_id,
