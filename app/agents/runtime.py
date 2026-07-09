@@ -1790,10 +1790,7 @@ class AgentsRuntime:
         }
 
     def _apply_visual_proof_reviews(self, *, reports: list[dict], summaries: list[dict], model_summary: str) -> str:
-        try:
-            parsed = self._parse_llm_json(model_summary, schema_key="visual_proof_reviews")
-        except ValueError:
-            return model_summary
+        parsed = self._parse_llm_json(model_summary, schema_key="visual_proof_reviews")
         reviews = parsed.get("visual_proof_reviews") or []
         if not isinstance(reviews, list):
             return str(parsed.get("model_summary") or model_summary)
@@ -1808,6 +1805,8 @@ class AgentsRuntime:
                 continue
             status = str(review.get("status") or review.get("visual_proof_status") or "").lower()
             report["visual_proof_qa"] = review
+            if isinstance(review.get("visual_score"), (int, float)):
+                report["visual_score"] = round(float(review["visual_score"]), 2)
             if status == "fail":
                 issues = set(report.get("blocking_issues") or [])
                 issues.add("visual_qa_visual_proof_failed")
@@ -1823,6 +1822,8 @@ class AgentsRuntime:
                 continue
             status = str(review.get("status") or review.get("visual_proof_status") or "").lower()
             summary["visual_proof_qa"] = review
+            if isinstance(review.get("visual_score"), (int, float)):
+                summary["visual_score"] = round(float(review["visual_score"]), 2)
             if status == "fail":
                 issues = set(summary.get("issues") or [])
                 issues.add("visual_qa_visual_proof_failed")
@@ -4163,7 +4164,7 @@ class AgentsRuntime:
                 "Do not make claim-safety, policy, legal, or platform-compliance decisions; leave those to Evaluation. "
                 "When product_truth_flags are present, compare attached media against the product_truth_contract before passing the candidate. "
                 "When visual_proof_spec is present, check whether the media proves the desired_scene/proof_mechanism and avoids semantic_fail_conditions. "
-                "Return ONLY valid JSON shaped as {\"model_summary\":\"...\",\"visual_proof_reviews\":[{\"variant_id\":\"V1\",\"status\":\"pass|warn|fail\",\"evidence\":\"...\",\"failed_conditions\":[\"...\"]}]}. "
+                "Return ONLY valid JSON shaped as {\"model_summary\":\"...\",\"visual_proof_reviews\":[{\"variant_id\":\"V1\",\"status\":\"pass|warn|fail\",\"visual_score\":0-100,\"evidence\":\"...\",\"failed_conditions\":[\"...\"]}]}. "
                 "Use status=fail when the media expresses a semantic_fail_condition. Do not choose the final winner.\n"
                 f"intake_facts={json.dumps(intake, ensure_ascii=False)[:3000]}\n"
                 f"product_truth_contract={json.dumps(product_truth, ensure_ascii=False)[:2000]}\n"
@@ -4210,11 +4211,26 @@ class AgentsRuntime:
                     issues.append("visual_qa_model_review_unavailable")
                 summary["issues"] = sorted(set(issues))
         else:
-            model_summary = self._apply_visual_proof_reviews(
-                reports=reports,
-                summaries=summaries,
-                model_summary=model_summary,
-            )
+            try:
+                model_summary = self._apply_visual_proof_reviews(
+                    reports=reports,
+                    summaries=summaries,
+                    model_summary=model_summary,
+                )
+            except ValueError as exc:
+                model_summary = f"model_review_unavailable: parse_error: {str(exc)[:200]}"
+                for report in reports:
+                    report["model_review_status"] = "unavailable"
+                    if report.get("qa_status") == "pass":
+                        report["qa_status"] = "warn"
+                        report["recommended_action"] = "manual_review"
+                for summary in summaries:
+                    issues = list(summary.get("issues") or [])
+                    issues.append("visual_qa_model_review_unavailable")
+                    summary["issues"] = sorted(set(issues))
+                    if summary.get("qa_status") == "pass":
+                        summary["qa_status"] = "warn"
+                        summary["recommended_action"] = "manual_review"
 
         payload = {
             "reports": reports,
@@ -4244,10 +4260,24 @@ class AgentsRuntime:
 
     def _parse_evaluation_json(self, raw: str) -> dict:
         try:
-            return json.loads(raw)
+            parsed = json.loads(raw)
         except json.JSONDecodeError:
             match = re.search(r'\{[\s\S]*\}', raw)
-            return json.loads(match.group(0)) if match else {"variants": [], "raw_response": raw}
+            if not match:
+                raise ValueError("Evaluation response did not contain a JSON object")
+            parsed = json.loads(match.group(0))
+        if not isinstance(parsed, dict):
+            raise ValueError("Evaluation response JSON is not an object")
+        variants = parsed.get("variants")
+        if not isinstance(variants, list) or not variants:
+            raise ValueError("Evaluation response missing non-empty variants array")
+        return parsed
+
+    def _require_evaluation_scores(self, llm: dict, *, variant_id: str, dim_keys: list[str]) -> None:
+        if not isinstance(llm.get("total_score"), (int, float)):
+            raise ValueError(f"Evaluation response missing total_score for {variant_id}")
+        if not any(isinstance(llm.get(key), (int, float)) for key in dim_keys):
+            raise ValueError(f"Evaluation response missing sub-scores for {variant_id}")
 
     def _build_evaluation_context(
         self,
@@ -4476,6 +4506,7 @@ class AgentsRuntime:
                 if is_tiktok_shop
                 else ["hook_appeal", "copy_clarity", "brand_alignment", "visual_execution", "compliance_safety"]
             )
+            self._require_evaluation_scores(llm, variant_id=item.variant_id, dim_keys=dim_keys)
             sub_scores: dict[str, float] = {}
             for k in dim_keys:
                 val = llm.get(k)

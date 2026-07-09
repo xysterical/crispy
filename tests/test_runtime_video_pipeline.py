@@ -2507,6 +2507,59 @@ def test_visual_quality_assessment_blocks_failed_visual_proof_review():
     assert report["visual_proof_qa"]["evidence"] == "Dog is lunging forward with taut leash."
 
 
+def test_visual_quality_assessment_applies_model_visual_score():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: (
+        """
+        {
+          "model_summary": "The image is plausible but weak.",
+          "visual_proof_reviews": [
+            {
+              "variant_id": "V1",
+              "status": "warn",
+              "visual_score": 62,
+              "evidence": "Product is visible but the benefit is not strongly proven.",
+              "failed_conditions": []
+            }
+          ]
+        }
+        """,
+        "stub-model",
+        0.0,
+    )
+
+    output = runtime.run_visual_quality_assessment(
+        run_id="runtime-visual-score-applied",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="comfort",
+                    hook="Show comfort clearly",
+                    message="Product visible.",
+                )
+            ]
+        ),
+        copy_images={
+            "image_assets": [
+                {
+                    "variant_id": "V1",
+                    "uri": "assets/nonexistent.png",
+                    "visual_qa": {"status": "pass", "score": 95, "flags": [], "checks": []},
+                }
+            ]
+        },
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    summary = output.payload["variant_summaries"][0]
+    report = output.payload["reports"][0]
+    assert output.payload["model_summary"] == "The image is plausible but weak."
+    assert summary["visual_score"] == 62.0
+    assert report["visual_score"] == 62.0
+
+
 def test_visual_quality_assessment_marks_unavailable_model_review_for_manual_review():
     runtime = AgentsRuntime()
 
@@ -2945,6 +2998,47 @@ def test_evaluation_selection_sends_compressed_images_to_kimi(tmp_path):
     assert ranked["compliance_block"]["reasons"] == ["No prohibited claim."]
     assert output.payload["compliance_block"]["V1"]["score"] == 90
     assert runtime_config == {"extra": {}}
+
+
+def test_evaluation_selection_rejects_unscored_model_response(tmp_path):
+    image_path = tmp_path / "variant.png"
+    image_path.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    ))
+
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: (
+        '{"variants":[{"variant_id":"V1","brief_reason":"looks fine"}]}',
+        "kimi-k2.6",
+        0.0,
+    )
+
+    with pytest.raises(ValueError, match="missing total_score"):
+        runtime.run_evaluation_selection(
+            run_id="eval-unscored-response",
+            variant_set=VariantSet(variants=[
+                VariantCandidate(variant_id="V1", angle="comfort", hook="Walk calmer", message="Padded harness.")
+            ]),
+            copy_bundle=CopyImageBundle(
+                copy_variants=[
+                    CopyVariant(
+                        variant_id="V1",
+                        primary_text="Walk calmer with padded support.",
+                        headline="Calmer Walks",
+                        description="Padded harness.",
+                        call_to_action="Shop Now",
+                    )
+                ],
+                image_assets=[
+                    ImageAssetRef(variant_id="V1", uri=str(image_path), prompt="dog harness ad")
+                ],
+            ),
+            script_pack=VideoScriptPack(scripts=[]),
+            video_bundle=VideoBundle(videos=[]),
+            visual_quality={"variant_summaries": [{"variant_id": "V1", "qa_status": "pass", "visual_score": 88}]},
+            provider="kimi",
+            model="kimi-k2.6",
+        )
 
 
 # ---------------------------------------------------------------------------
