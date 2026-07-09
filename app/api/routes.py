@@ -1599,6 +1599,38 @@ def _dashboard_shared_js() -> str:
               }),
             };
           }
+          function visualQualityReviewRows(payload){
+            const summaries = Array.isArray(payload.variant_summaries) ? payload.variant_summaries : [];
+            const reports = Object.fromEntries((Array.isArray(payload.reports) ? payload.reports : [])
+              .filter((report) => report && report.variant_id)
+              .map((report) => [report.variant_id, report]));
+            const media = payload.model_media_inputs || {};
+            const titleParts = [
+              `Variants reviewed: ${summaries.length}`,
+              payload.model_review_status ? `model review: ${payload.model_review_status}` : "",
+              (media.image_count || media.video_count) ? `media inputs: ${media.image_count || 0} image, ${media.video_count || 0} video` : "",
+            ].filter(Boolean);
+            return {
+              title: titleParts.join(" | ") || "Visual QA",
+              rows: summaries.map((summary, index) => {
+                const variantId = summary.variant_id || `V${index + 1}`;
+                const report = reports[variantId] || {};
+                const proof = summary.visual_proof_qa || report.visual_proof_qa || {};
+                const issues = summary.issues || summary.blocking_issues || report.blocking_issues || [];
+                const detail = [
+                  summary.recommended_action ? `Action: ${summary.recommended_action}` : "",
+                  report.asset_reports ? `Assets checked: ${report.asset_reports.length}` : "",
+                  proof.evidence ? `Evidence: ${proof.evidence}` : "",
+                  issues.length ? `Issues: ${issues.slice(0, 3).join(", ")}` : "",
+                ].filter(Boolean).join(" | ");
+                return {
+                  title: `${variantId}: ${summary.qa_status || report.qa_status || "unknown"}${summary.visual_score != null ? ` (${summary.visual_score})` : ""}`,
+                  detail,
+                  actionVariantId: variantId,
+                };
+              }),
+            };
+          }
           function focusVariantFromChecklist(variantId){
             variantBoardCollapsed = false;
             persistVariantBoardCollapsedState();
@@ -1659,9 +1691,8 @@ def _dashboard_shared_js() -> str:
             } else if (stage === "video_generation") {
               items.push(videoReviewRows(payload));
             } else if (stage === "visual_quality_assessment") {
-              const summary = payload.summary || payload.visual_quality_summary || {};
-              items.push(firstTextValue(summary, ["recommended_action", "status", "model_summary"]));
-              items.push(summarizeList("Issues", summary.issues || payload.issues, ["message", "key"]));
+              if (payload.model_summary) items.push(`Model summary: ${payload.model_summary}`);
+              items.push(visualQualityReviewRows(payload));
             } else if (stage === "evaluation_selection") {
               const selected = payload.selected_deliverables || {};
               if (selected.winner_variant_id) items.push(`Winner candidate: ${selected.winner_variant_id}`);
@@ -1730,6 +1761,20 @@ def _dashboard_shared_js() -> str:
                 </ul>
               </div>
             `;
+          }
+          function currentStageTask(run){
+            const tasks = run.stage_tasks || [];
+            return tasks.find((task) => task.stage_name === run.current_stage)
+              || tasks.find((task) => task.status === "running" || task.status === "waiting_review" || task.status === "failed")
+              || null;
+          }
+          function providerSummary(run){
+            const resolved = currentStageTask(run)?.metadata_json?.resolved_api || {};
+            const rows = [];
+            if (resolved.provider_name || resolved.model_name) rows.push(`text: ${resolved.provider_name || "-"} / ${resolved.model_name || "-"}`);
+            if (resolved.image_provider_name || resolved.image_model_name) rows.push(`image: ${resolved.image_provider_name || "-"} / ${resolved.image_model_name || "-"}`);
+            if (resolved.video_provider_name || resolved.video_model_name) rows.push(`video: ${resolved.video_provider_name || "-"} / ${resolved.video_model_name || "-"}`);
+            return rows.length ? rows.join(" | ") : `run fallback: ${run.model_provider || "-"} / ${run.model_name || "-"}`;
           }
           function renderStatusExplanation(run){
             const info = run.status_explanation || {};
@@ -1878,7 +1923,7 @@ def _dashboard_shared_js() -> str:
               <div style="margin-bottom:12px;">
                 <div><b>Run:</b> ${esc(run.id)}</div>
                 <div><span class="${statusPillClass(run.status)}">${statusLabel(run.status)}</span> <span class="pill">stage: ${esc(run.current_stage || "-")}</span><span class="pill">mode: ${esc(run.pipeline_mode)}</span><span class="pill">approval: ${esc(run.approval_mode || "manual")}</span></div>
-                <div class="muted">provider/model: ${esc(run.model_provider)} / ${esc(run.model_name)} | budget: ${esc(run.budget_used)}</div>
+                <div class="muted">provider/model: ${esc(providerSummary(run))} | budget: ${esc(run.budget_used)}</div>
                 <div class="muted">product_code: ${esc(run.product_code)} | industry_code: ${esc(run.industry_code)} | creative_preset: ${esc(run.creative_preset)}</div>
                 <div style="margin-top:8px;"><button onclick="refreshAsyncAssets('${run.id}')">Refresh async assets</button></div>
               </div>

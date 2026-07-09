@@ -157,6 +157,7 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "function summarizeVariants(rows)" in html
     assert "function copyImageReviewRows(payload)" in html
     assert "function videoReviewRows(payload)" in html
+    assert "function visualQualityReviewRows(payload)" in html
     assert "function focusVariantFromChecklist(variantId)" in html
     assert "function renderChecklistItem(item)" in html
     assert "review-checklist-sublist" in html
@@ -167,6 +168,10 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "items.push(summarizeVariants(payload.variants));" in html
     assert "items.push(copyImageReviewRows(payload));" in html
     assert "items.push(videoReviewRows(payload));" in html
+    assert "items.push(visualQualityReviewRows(payload));" in html
+    assert "Model summary: ${payload.model_summary}" in html
+    assert "Variants reviewed:" in html
+    assert "Assets checked:" in html
     assert "Review checklist" in html
     assert "${renderReviewChecklist(run)}" in html
     assert "function renderFailureReasons(info)" in html
@@ -175,6 +180,10 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "Copy/Image local media gate could not decode the generated media." in html
     assert "Generated media could not be decoded." in html
     assert "extractFailureFlags(info.detail)" in html
+    assert "function providerSummary(run)" in html
+    assert "currentStageTask(run)?.metadata_json?.resolved_api" in html
+    assert "run fallback:" in html
+    assert "provider/model: ${esc(providerSummary(run))}" in html
     assert ".status-explainer-main { display: block; text-align: center; }" in html
     assert ".status-explainer-action { display: inline-flex; margin-top: 8px;" in html
     assert "white-space: nowrap;" in html
