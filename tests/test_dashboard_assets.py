@@ -51,6 +51,20 @@ def test_dashboard_pages_share_global_rail(client):
         assert "Back to Dashboard" not in resp.text
 
 
+def test_media_view_has_exit_controls(client):
+    media_path = Path("assets/test_media_view.png")
+    media_path.parent.mkdir(parents=True, exist_ok=True)
+    media_path.write_bytes(b"not-real-png")
+
+    resp = client.get("/media/view", params={"path": str(media_path)})
+
+    assert resp.status_code == 200
+    assert 'class="close-btn"' in resp.text
+    assert 'onclick="if (event.target === this) leaveViewer()"' in resp.text
+    assert 'event.key === "Escape"' in resp.text
+    assert 'window.location.href = "/dashboard"' in resp.text
+
+
 def test_dashboard_data_source_switch(client):
     run_resp = client.post(
         "/runs",

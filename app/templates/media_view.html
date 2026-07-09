@@ -18,12 +18,26 @@
         grid-template-rows: auto 1fr;
       }
       .bar {
-        padding: 10px 14px;
+        padding: 10px 14px 10px 82px;
         border-bottom: 1px solid rgba(255,255,255,0.12);
         font-size: 13px;
         color: #b8c8c0;
         overflow-wrap: anywhere;
       }
+      .close-btn {
+        position: fixed;
+        top: 10px;
+        left: 12px;
+        z-index: 2;
+        padding: 6px 10px;
+        border: 1px solid rgba(255,255,255,0.24);
+        border-radius: 8px;
+        background: rgba(255,255,255,0.08);
+        color: #eef6f1;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .close-btn:hover { background: rgba(255,255,255,0.16); }
       .stage {
         min-height: 0;
         display: flex;
@@ -50,8 +64,22 @@
   </head>
   <body>
     <main class="viewer">
+      <button class="close-btn" type="button" onclick="leaveViewer()">Close</button>
       <div class="bar">{{ title }}</div>
-      <div class="stage">{{ body | safe }}</div>
+      <div class="stage" onclick="if (event.target === this) leaveViewer()">{{ body | safe }}</div>
     </main>
+    <script>
+      function leaveViewer() {
+        if (window.history.length > 1) {
+          window.history.back();
+        } else {
+          window.close();
+          setTimeout(() => { window.location.href = "/dashboard"; }, 100);
+        }
+      }
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") leaveViewer();
+      });
+    </script>
   </body>
 </html>
