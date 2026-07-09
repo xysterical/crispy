@@ -188,6 +188,15 @@
     .review-checklist-sublist div { margin-top: 2px; color: var(--text-secondary); }
     .review-jump-btn { margin-top: 6px; padding: 5px 8px; font-size: 11px; border-radius: var(--radius-sm); background: #fff; }
 
+    /* ── Run notifications ── */
+    .run-notification-stack { position: fixed; top: 18px; left: 72px; z-index: 1100; display: grid; gap: 8px; width: min(360px, calc(100vw - 96px)); pointer-events: none; }
+    .run-notification { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 10px 12px; border: 1px solid var(--line); border-left: 4px solid var(--info); border-radius: var(--radius); background: #fff; color: var(--text); box-shadow: var(--shadow-lg); pointer-events: auto; cursor: pointer; }
+    .run-notification.review { border-left-color: var(--warning); }
+    .run-notification.completed { border-left-color: var(--accent); }
+    .run-notification-title { font-weight: 750; font-size: 13px; margin-bottom: 2px; }
+    .run-notification-meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    .run-notification-close { width: 24px; height: 24px; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: #fff; color: var(--muted); line-height: 1; }
+
     /* ── Drawer ── */
     .drawer-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.3); z-index: 999; backdrop-filter: blur(2px); opacity: 0; pointer-events: none; transition: opacity var(--panel-open-dur) var(--panel-ease); }
     .drawer-overlay.open { opacity: 1; pointer-events: auto; }

@@ -188,6 +188,12 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "winner?.recommended_action" in html
     assert "source === \"generation_error\"" in html
     assert "_generation_error." in html
+    assert "run-notification-stack" in html
+    assert "function notifyRunTransitions(rows)" in html
+    assert "showRunNotification(run, \"review\")" in html
+    assert "showRunNotification(run, \"completed\")" in html
+    assert "setTimeout(() => dismissRunNotification(run.id), 12000)" in html
+    assert "openRunNotification(runId)" in html
     assert ".status-explainer-main { display: block; text-align: center; }" in html
     assert ".status-explainer-action { display: inline-flex; margin-top: 8px;" in html
     assert "white-space: nowrap;" in html

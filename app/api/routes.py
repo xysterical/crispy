@@ -693,6 +693,8 @@ def _dashboard_shared_js() -> str:
           let retryProgressState = null;
           const retryingImageVariants = new Set();
           let runListInterval = null;
+          let runNotificationState = null;
+          const runNotificationTimers = new Map();
           const variantBoardCollapsedStorageKey = "variant_board_collapsed";
           let variantBoardCollapsed = false;
           let expandedVariantId = null;
@@ -854,8 +856,62 @@ def _dashboard_shared_js() -> str:
             return m;
           }
 
+          function runNotificationKey(run) {
+            return [run.status || "", run.current_stage || "", run.updated_at || ""].join("|");
+          }
+
+          function dismissRunNotification(runId) {
+            const toast = document.querySelector(`.run-notification[data-run-id="${CSS.escape(runId)}"]`);
+            if (toast) toast.remove();
+            const timer = runNotificationTimers.get(runId);
+            if (timer) clearTimeout(timer);
+            runNotificationTimers.delete(runId);
+          }
+
+          async function openRunNotification(runId) {
+            dismissRunNotification(runId);
+            await selectRun(runId);
+            const panel = document.getElementById("run-detail-panel");
+            if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+
+          function showRunNotification(run, kind) {
+            const stack = document.getElementById("run-notification-stack");
+            if (!stack) return;
+            dismissRunNotification(run.id);
+            const toast = document.createElement("div");
+            toast.className = `run-notification ${kind}`;
+            toast.dataset.runId = run.id;
+            const title = kind === "completed" ? "Run completed" : "Review needed";
+            const stage = run.current_stage || "done";
+            toast.innerHTML = `
+              <div onclick="openRunNotification('${run.id}')">
+                <div class="run-notification-title">${title}</div>
+                <div class="run-notification-meta">${esc(run.id.slice(0, 8))} - ${esc(stage)} - ${esc(modeLabel(run.pipeline_mode))}</div>
+              </div>
+              <button class="run-notification-close" onclick="event.stopPropagation(); dismissRunNotification('${run.id}')" title="Dismiss">&times;</button>
+            `;
+            stack.prepend(toast);
+            runNotificationTimers.set(run.id, setTimeout(() => dismissRunNotification(run.id), 12000));
+          }
+
+          function notifyRunTransitions(rows) {
+            const next = new Map(rows.map((run) => [run.id, runNotificationKey(run)]));
+            if (runNotificationState) {
+              rows.forEach((run) => {
+                const prior = runNotificationState.get(run.id);
+                const current = next.get(run.id);
+                if (prior === current) return;
+                if (run.status === "waiting_review") showRunNotification(run, "review");
+                if (run.status === "completed") showRunNotification(run, "completed");
+              });
+            }
+            runNotificationState = next;
+          }
+
           async function refreshRuns() {
             const rows = await api("/runs");
+            notifyRunTransitions(rows);
             const body = document.getElementById("runs-body");
             body.innerHTML = "";
             if (!rows.length) {
