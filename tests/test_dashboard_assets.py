@@ -225,6 +225,8 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "function renderScorecard(scorecard)" in html
     assert "scorecard-summary" in html
     assert "Total Score" in html
+    assert "No risk labels." not in html
+    assert "<h3 style=\"margin-top:8px;\">Agent Trace</h3>" in html
     assert "showRunNotification(run, \"completed\")" in html
     assert "setTimeout(() => dismissRunNotification(run.id), 12000)" in html
     assert "openRunNotification(runId)" in html

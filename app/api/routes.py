@@ -1636,8 +1636,8 @@ def _dashboard_shared_js() -> str:
               <div class="metric-row"><span>${esc(key.replaceAll("_", " "))}</span><b>${esc(value)}</b></div>
             `).join("");
             const risks = (scorecard.risk_labels || []).length
-              ? scorecard.risk_labels.map((label) => `<span class="pill">${esc(label)}</span>`).join("")
-              : `<span class="muted">No risk labels.</span>`;
+              ? `<div class="pill-row">${scorecard.risk_labels.map((label) => `<span class="pill">${esc(label)}</span>`).join("")}</div>`
+              : "";
             return `
               <div class="scorecard-summary">
                 <div class="scorecard-total">
@@ -1651,7 +1651,7 @@ def _dashboard_shared_js() -> str:
                   </section>
                   <section>
                     <h4>Risk & Compliance</h4>
-                    <div class="pill-row">${risks}</div>
+                    ${risks}
                     <div class="metric-row"><span>Compliance</span><b>${esc(scorecard.compliance_level || "-")}</b></div>
                     <div class="metric-row"><span>AI artifact score</span><b>${esc(scorecard.ai_artifact_score ?? "-")}</b></div>
                   </section>
@@ -2100,7 +2100,7 @@ def _dashboard_shared_js() -> str:
               ${renderExecutionMemory(executionMemory)}
               ${renderDeliverables(deliverables)}
               ${renderVariantBoard(run.id, variants)}
-              <h3 style="margin-top:14px;">Agent Trace</h3>
+              <h3 style="margin-top:8px;">Agent Trace</h3>
               <div id="agent-trace-container">${renderAgentTrace(run)}</div>
               <h3 style="margin-top:14px;">Stage Timeline</h3>
               ${renderTimeline(run)}

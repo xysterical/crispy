@@ -336,9 +336,9 @@
     .variant-board-header { margin-top:14px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
     .variant-board-header h3 { margin: 0; }
     .variant-toggle-btn { padding: 7px 12px; font-size: 12px; border-radius: 999px; }
-    .variant-board-body { overflow: hidden; max-height: 8000px; opacity: 1; transform: translateY(0); transition: max-height 220ms ease, opacity 180ms ease, transform 180ms ease; }
+    .variant-board-body { overflow: hidden; max-height: 8000px; opacity: 1; transform: translateY(0); transition: max-height 220ms ease, opacity 180ms ease, transform 180ms ease; margin-bottom: 2px; }
     .variant-board-body.is-collapsed { max-height: 0; opacity: 0; transform: translateY(-4px); }
-    .variant-scoreboard { display: flex; gap: 10px; overflow-x: auto; padding: 8px 2px 12px 2px; scroll-behavior: smooth; scroll-snap-type: x proximity; }
+    .variant-scoreboard { display: flex; gap: 10px; overflow-x: auto; padding: 8px 2px 6px 2px; scroll-behavior: smooth; scroll-snap-type: x proximity; }
     .variant-score-card { flex: 0 0 192px; border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px; background: #fff; cursor: pointer; scroll-snap-align: start; transition: border-color 150ms ease, box-shadow 150ms ease, transform 120ms ease; position: relative; box-shadow: var(--shadow-xs); }
     .variant-score-card:hover { border-color: var(--accent); box-shadow: var(--shadow-md); transform: translateY(-2px); }
     .variant-score-card.selected { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(5,150,105,0.15); background: var(--green-50); }
