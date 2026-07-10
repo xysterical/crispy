@@ -147,15 +147,10 @@
       </div>
       <div class="card">
         <h3>CSV Fallback Imports</h3>
-        <div class="muted" style="margin-bottom:8px;">Use when APIs are unavailable or for cost-free testing. Required columns are validated server-side.</div>
-        <div class="muted" style="margin-bottom:8px;">Shopify: product_code/sku + revenue or quantity. Meta: creative_key/ad_id + impressions, clicks, spend.</div>
-        <label>Shopify CSV</label>
-        <input id="offline-shopify-file" type="file" accept=".csv,text/csv" style="margin-bottom:6px;" />
-        <button onclick="uploadOfflineCsv('shopify')">Import Shopify CSV</button>
-        <div style="height:10px;"></div>
-        <label>Meta CSV</label>
-        <input id="offline-meta-file" type="file" accept=".csv,text/csv" style="margin-bottom:6px;" />
-        <button onclick="uploadOfflineCsv('meta')">Import Meta CSV</button>
+        <input id="offline-shopify-file" type="file" accept=".csv,text/csv" style="display:none;" onchange="uploadOfflineCsv('shopify')" />
+        <input id="offline-meta-file" type="file" accept=".csv,text/csv" style="display:none;" onchange="uploadOfflineCsv('meta')" />
+        <button onclick="chooseOfflineCsv('shopify')">Import Shopify CSV</button>
+        <button onclick="chooseOfflineCsv('meta')" class="secondary-btn" style="margin-left:6px;">Import Meta CSV</button>
         <div id="offline-batches" class="csv-stager"></div>
         <div id="offline-csv-msg" class="muted" style="margin-top:8px;min-height:18px;"></div>
       </div>
@@ -396,7 +391,7 @@
       return `${(value/1024/1024).toFixed(1)} MB`;
     }
     function renderOfflineEmpty(){
-      return '<div class="csv-stager-empty"><strong>No CSV files staged</strong><span>Upload Shopify or Meta CSV fallback files here. They stay temporary until removed.</span></div>';
+      return '<div class="csv-stager-empty"><strong>No CSV files staged</strong><span>Use Shopify CSV with product_code/sku plus revenue or quantity.</span><span>Use Meta CSV with creative_key/ad_id plus impressions, clicks, and spend.</span></div>';
     }
     function renderOfflineRows(items){
       if(!items.length) return renderOfflineEmpty();
@@ -432,11 +427,18 @@
         if(currentTab==="creative") await loadCreativeDecisions();
       }catch(e){ showOfflineMsg("Remove failed: "+e.message, "warn"); }
     }
+    function chooseOfflineCsv(platform){
+      if(!currentProj){ showOfflineMsg("Select a project first", "warn"); return; }
+      const input=document.getElementById(platform==="meta"?"offline-meta-file":"offline-shopify-file");
+      if(!input) return;
+      input.value="";
+      input.click();
+    }
     async function uploadOfflineCsv(platform){
       if(!currentProj){ showOfflineMsg("Select a project first", "warn"); return; }
       const input=document.getElementById(platform==="meta"?"offline-meta-file":"offline-shopify-file");
       const file=input?.files?.[0];
-      if(!file){ showOfflineMsg("Choose a CSV file first", "warn"); return; }
+      if(!file) return;
       const form=new FormData();
       form.append("workspace_name", currentWs);
       form.append("project_name", currentProj);
@@ -452,6 +454,7 @@
         await loadProducts();
         if(currentTab==="creative") await loadCreativeDecisions();
       }catch(e){ showOfflineMsg("Import failed: "+e.message, "warn"); }
+      finally{ input.value=""; }
     }
     async function loadAutoSyncConfig(){
       if(!currentWs) return;

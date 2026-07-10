@@ -294,6 +294,9 @@ def test_data_dashboard_page_loads(client):
     assert "CSV Fallback Imports" in resp.text
     assert "csv-stager" in resp.text
     assert "No CSV files staged" in resp.text
+    assert "Use Shopify CSV with product_code/sku" in resp.text
+    assert "chooseOfflineCsv" in resp.text
+    assert "Use when APIs are unavailable" not in resp.text
     assert "csv-file-row" in resp.text
     assert "Credentials" not in resp.text
     assert "Chart.js" in resp.text or "chart.js" in resp.text.lower()
