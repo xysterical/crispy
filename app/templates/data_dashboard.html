@@ -89,6 +89,17 @@
   .tag-warn { background: #fff6e6; color: #9a6b00; }
   .tag-rising { background: #e6f7ee; color: #1a6b44; }
   .tag-declining { background: #ffeaea; color: #a04040; }
+  .csv-collapse-head {
+    width: 100%; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+    border: 0; background: transparent; color: inherit; padding: 0; text-align: left;
+  }
+  .csv-collapse-head:hover { background: transparent; }
+  .csv-collapse-title { display: block; color: var(--muted); font-size: 13px; letter-spacing: .08em; text-transform: uppercase; font-weight: 800; }
+  .csv-collapse-hint { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 400; letter-spacing: 0; text-transform: none; }
+  .csv-collapse-icon { color: var(--muted); font-size: 14px; line-height: 1; padding-top: 2px; }
+  .csv-collapse-body { display: none; margin-top: 10px; }
+  .csv-fallback-card.expanded .csv-collapse-body { display: block; }
+  .csv-fallback-card.expanded .csv-collapse-icon { transform: rotate(180deg); }
   .csv-upload-actions {
     display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 8px;
   }
@@ -151,8 +162,15 @@
         <div style="margin-bottom:6px;"><label>Meta interval</label><select id="meta-interval" onchange="saveAutoSync()"><option value="0">Off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></div>
         <div class="sync-status" style="margin-top:8px;"><span class="status-dot off" id="sync-dot"></span><span class="muted" id="sync-status-text">-</span></div>
       </div>
-      <div class="card">
-        <h3>CSV Fallback Imports</h3>
+      <div class="card csv-fallback-card" id="csv-fallback-card">
+        <button class="csv-collapse-head" onclick="toggleCsvFallback()" aria-expanded="false" aria-controls="csv-fallback-body">
+          <span>
+            <span class="csv-collapse-title">CSV Fallback Imports</span>
+            <span class="csv-collapse-hint" id="csv-fallback-hint">Use offline Shopify or Meta CSV when APIs are unavailable.</span>
+          </span>
+          <span class="csv-collapse-icon" id="csv-fallback-icon">⌄</span>
+        </button>
+        <div class="csv-collapse-body" id="csv-fallback-body">
         <input id="offline-shopify-file" type="file" accept=".csv,text/csv" style="display:none;" onchange="uploadOfflineCsv('shopify')" />
         <input id="offline-meta-file" type="file" accept=".csv,text/csv" style="display:none;" onchange="uploadOfflineCsv('meta')" />
         <div class="csv-upload-actions">
@@ -161,6 +179,7 @@
         </div>
         <div id="offline-batches" class="csv-stager"></div>
         <div id="offline-csv-msg" class="muted" style="margin-top:8px;min-height:18px;"></div>
+        </div>
       </div>
     </aside>
     <div class="main-panel">
@@ -391,6 +410,21 @@
       el.textContent=msg;
       el.style.color=type==="ok"?"#1a6b44":type==="warn"?"#a04040":"var(--muted)";
     }
+    function toggleCsvFallback(force){
+      const card=document.getElementById("csv-fallback-card");
+      const head=card?.querySelector(".csv-collapse-head");
+      if(!card) return;
+      const expand=typeof force==="boolean"?force:!card.classList.contains("expanded");
+      card.classList.toggle("expanded", expand);
+      if(head) head.setAttribute("aria-expanded", expand ? "true" : "false");
+    }
+    function updateCsvFallbackHint(count){
+      const hint=document.getElementById("csv-fallback-hint");
+      if(!hint) return;
+      hint.textContent=count>0
+        ? `${count} CSV fallback file${count===1?"":"s"} staged. Expand to review or remove.`
+        : "Use offline Shopify or Meta CSV when APIs are unavailable.";
+    }
     function formatBytes(bytes){
       const value=Number(bytes||0);
       if(!value) return "size unknown";
@@ -415,12 +449,13 @@
     }
     async function loadOfflineBatches(){
       const box=document.getElementById("offline-batches");
-      if(!box || !currentProj){ if(box) box.innerHTML=""; return; }
+      if(!box || !currentProj){ updateCsvFallbackHint(0); if(box) box.innerHTML=""; return; }
       try{
         const data=await api(`/data-dashboard/offline-csv-imports?workspace_name=${encodeURIComponent(currentWs)}&project_name=${encodeURIComponent(currentProj)}`);
         const items=data.items||[];
+        updateCsvFallbackHint(items.length);
         box.innerHTML=renderOfflineRows(items);
-      }catch(e){ box.innerHTML='<div class="csv-stager-empty"><strong>CSV staging unavailable</strong><span>Refresh the dashboard or check the data API.</span></div>'; }
+      }catch(e){ updateCsvFallbackHint(0); box.innerHTML='<div class="csv-stager-empty"><strong>CSV staging unavailable</strong><span>Refresh the dashboard or check the data API.</span></div>'; }
     }
     async function deleteOfflineBatch(batchId){
       if(!currentProj || !batchId) return;

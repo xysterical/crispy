@@ -295,7 +295,11 @@ def test_data_dashboard_page_loads(client):
     assert "csv-stager" in resp.text
     assert "csv-upload-actions" in resp.text
     assert "csv-upload-btn" in resp.text
+    assert "csv-collapse-head" in resp.text
+    assert "csv-collapse-body" in resp.text
+    assert "toggleCsvFallback" in resp.text
     assert "No CSV files staged" in resp.text
+    assert "Use offline Shopify or Meta CSV when APIs are unavailable." in resp.text
     assert "Use Shopify CSV with product_code/sku" in resp.text
     assert "chooseOfflineCsv" in resp.text
     assert "Use when APIs are unavailable" not in resp.text
