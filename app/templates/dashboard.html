@@ -11,6 +11,26 @@
   #run-detail-panel {
     background: rgba(255, 255, 255, 0.96);
   }
+  .run-detail-content { padding-top: 4px; }
+  .run-meta-compact { margin: 4px 0 12px; text-align: center; }
+  .execution-memory-card summary {
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;
+    cursor: pointer; list-style: none;
+  }
+  .execution-memory-card summary::-webkit-details-marker { display: none; }
+  .execution-memory-card summary::after {
+    content: "Show"; color: var(--muted); font-size: 12px; font-weight: 700;
+  }
+  .execution-memory-card[open] summary::after { content: "Hide"; }
+  .execution-memory-card summary span span { display: block; margin-top: 3px; font-size: 12px; font-weight: 400; }
+  .scorecard-summary { border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; background: #fff; }
+  .scorecard-total { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 12px; }
+  .scorecard-total strong { font-size: 30px; color: var(--accent); }
+  .scorecard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .scorecard-grid h4 { margin-bottom: 8px; color: var(--text); }
+  .metric-row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid rgba(15,23,42,0.07); color: var(--text-secondary); text-transform: capitalize; }
+  .metric-row b { color: var(--text); }
+  .scorecard-note { margin-top: 12px; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
 {% endblock %}
 {% block body %}
 <body class="has-global-rail">

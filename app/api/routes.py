@@ -1601,9 +1601,14 @@ def _dashboard_shared_js() -> str:
             const data = executionMemory || {};
             const runLedger = data.run_ledger || {};
             return `
-              <div class="card" style="margin:12px 0;">
-                <h3>Execution Memory</h3>
-                <div class="panel-grid-3">
+              <details class="card execution-memory-card" style="margin:12px 0;">
+                <summary>
+                  <span>
+                    <b>Execution Memory</b>
+                    <span class="muted">Locked facts, active constraints, regen goals, and recent decisions.</span>
+                  </span>
+                </summary>
+                <div class="panel-grid-3" style="margin-top:10px;">
                   <section>
                     <div class="muted" style="margin-bottom:6px;">Locked Facts</div>
                     <div class="pill-row">${executionSummaries(runLedger.locked_facts, "No locked facts yet.")}</div>
@@ -1621,6 +1626,37 @@ def _dashboard_shared_js() -> str:
                   <div class="muted" style="margin-bottom:6px;">Recent Human Decisions</div>
                   <div class="pill-row">${executionSummaries(data.recent_reviews, "No human review memory yet.")}</div>
                 </div>
+              </details>
+            `;
+          }
+          function renderScorecard(scorecard){
+            if (!scorecard) return `<span class="muted">No score yet.</span>`;
+            const subScores = scorecard.sub_scores || {};
+            const subScoreRows = Object.entries(subScores).map(([key, value]) => `
+              <div class="metric-row"><span>${esc(key.replaceAll("_", " "))}</span><b>${esc(value)}</b></div>
+            `).join("");
+            const risks = (scorecard.risk_labels || []).length
+              ? scorecard.risk_labels.map((label) => `<span class="pill">${esc(label)}</span>`).join("")
+              : `<span class="muted">No risk labels.</span>`;
+            return `
+              <div class="scorecard-summary">
+                <div class="scorecard-total">
+                  <span class="muted">Total Score</span>
+                  <strong>${esc(scorecard.total_score ?? "-")}</strong>
+                </div>
+                <div class="scorecard-grid">
+                  <section>
+                    <h4>Sub Scores</h4>
+                    ${subScoreRows || `<div class="muted">No sub scores.</div>`}
+                  </section>
+                  <section>
+                    <h4>Risk & Compliance</h4>
+                    <div class="pill-row">${risks}</div>
+                    <div class="metric-row"><span>Compliance</span><b>${esc(scorecard.compliance_level || "-")}</b></div>
+                    <div class="metric-row"><span>AI artifact score</span><b>${esc(scorecard.ai_artifact_score ?? "-")}</b></div>
+                  </section>
+                </div>
+                <div class="scorecard-note">${esc(scorecard.explanation?.selection || scorecard.explanation || "No explanation.")}</div>
               </div>
             `;
           }
@@ -2000,6 +2036,12 @@ def _dashboard_shared_js() -> str:
             }
             runDetailLastUpdated = null;
           }
+          function setRunDetailHtml(html) {
+            const detail = document.getElementById("run-detail");
+            detail.classList.remove("run-detail-empty");
+            detail.classList.add("run-detail-content");
+            detail.innerHTML = html;
+          }
 
           async function silentRefreshRunDetail(run) {
             const wasCollapsed = variantBoardCollapsed;
@@ -2020,7 +2062,7 @@ def _dashboard_shared_js() -> str:
             run.trace_events = currentTraceEvents;
 
             expandedVariantId = wasExpandedVariantId;
-            document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables, variants, executionMemory);
+            setRunDetailHtml(renderRunDetail(run, deliverables, variants, executionMemory));
             setRetryProgressFromRun(run);
 
             if (wasCollapsed) {
@@ -2044,9 +2086,9 @@ def _dashboard_shared_js() -> str:
           }
 
           function renderRunDetail(run, deliverables, variants, executionMemory){
-            const score = run.latest_scorecard ? `<pre>${esc(JSON.stringify(run.latest_scorecard, null, 2))}</pre>` : `<span class="muted">No score yet.</span>`;
+            const score = renderScorecard(run.latest_scorecard);
             return `
-              <div style="margin-bottom:12px;">
+              <div class="run-meta-compact">
                 <div><b>Run:</b> ${esc(run.id)}</div>
                 <div><span class="${statusPillClass(run.status)}">${statusLabel(run.status)}</span> <span class="pill">stage: ${esc(run.current_stage || "-")}</span><span class="pill">mode: ${esc(run.pipeline_mode)}</span><span class="pill">approval: ${esc(run.approval_mode || "manual")}</span></div>
                 <div class="muted">provider/model: ${esc(providerSummary(run))} | budget: ${esc(run.budget_used)}</div>
@@ -2080,7 +2122,7 @@ def _dashboard_shared_js() -> str:
             ]);
             currentTraceEvents = run.trace_events || [];
             runDetailLastUpdated = run.updated_at;
-            document.getElementById("run-detail").innerHTML = renderRunDetail(run, deliverables, variants, executionMemory);
+            setRunDetailHtml(renderRunDetail(run, deliverables, variants, executionMemory));
             setRetryProgressFromRun(run);
             bindTracePayloadToggles();
             requestAnimationFrame(() => scrollTraceToLeft("auto"));

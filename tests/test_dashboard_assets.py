@@ -218,6 +218,13 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "if (!fullRun || !reviewNotificationReady(fullRun)) continue;" in html
     assert "item?.source === \"external_task_pending\"" in html
     assert "showRunNotification(run, \"review\")" in html
+    assert "function setRunDetailHtml(html)" in html
+    assert "run-detail-content" in html
+    assert "execution-memory-card" in html
+    assert "<details class=\"card execution-memory-card\"" in html
+    assert "function renderScorecard(scorecard)" in html
+    assert "scorecard-summary" in html
+    assert "Total Score" in html
     assert "showRunNotification(run, \"completed\")" in html
     assert "setTimeout(() => dismissRunNotification(run.id), 12000)" in html
     assert "openRunNotification(runId)" in html
