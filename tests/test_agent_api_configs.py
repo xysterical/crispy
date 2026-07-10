@@ -291,8 +291,20 @@ def test_data_dashboard_page_loads(client):
     assert resp.status_code == 200
     assert "Data Dashboard" in resp.text
     assert "Creative Decision Attribution" in resp.text
+    assert "CSV Fallback Imports" in resp.text
+    assert "Credentials" not in resp.text
     assert "Chart.js" in resp.text or "chart.js" in resp.text.lower()
     assert "if(!window.Chart) return;" in resp.text
+
+
+def test_configs_page_shows_integration_health(client):
+    resp = client.get("/dashboard/agent-apis")
+    assert resp.status_code == 200
+    assert "Integration Health" in resp.text
+    assert "Shopify" in resp.text
+    assert "Meta" in resp.text
+    assert "Notion" in resp.text
+    assert "/content-schedules/notion-status" in resp.text
 
 
 def test_data_dashboard_summary_endpoint(client):

@@ -114,7 +114,7 @@ class ProductAnalyzer(BaseAnalyzer):
             .where(
                 GmMemory.project_id == self.project_id,
                 GmMemory.memory_scope == "product",
-                GmMemory.source_type.in_(["shopify_sync", "feedback_import"]),
+                GmMemory.source_type.in_(["shopify_sync", "feedback_import", "offline_csv_import"]),
             )
             .order_by(GmMemory.created_at.desc())
         ).all()

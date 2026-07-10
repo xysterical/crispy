@@ -142,6 +142,13 @@
     padding: 2px 8px;
   }
   .badge-missing { border-color: #e2c8c8; background: #fff5f5; color: #925454; }
+  .health-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-top:12px; }
+  .health-card { border:1px solid var(--line); border-radius:12px; padding:12px; background:#f8fafc; }
+  .status-line { display:flex; align-items:center; gap:8px; font-size:13px; font-weight:700; }
+  .status-dot { width:9px; height:9px; border-radius:50%; background:#cbd5e1; }
+  .status-dot.ok { background:#10b981; }
+  .status-dot.warn { background:#f59e0b; }
+  .status-dot.off { background:#cbd5e1; }
   code { font-family: var(--mono); font-size: 12px; }
 
   /* ── Dirty input indicator ── */
@@ -209,10 +216,19 @@
     <header class="hero">
       <div>
         <h1>API &amp; Integration Configs</h1>
-        <div class="subtitle">Manage LLM provider credentials for agents and integration credentials for Shopify / Meta.</div>
+        <div class="subtitle">Manage LLM provider credentials and integration credentials for Shopify / Meta / Notion.</div>
         <div class="subtitle">Security: only env var names are stored. Env var values are read from the runtime environment.</div>
       </div>
     </header>
+    <section class="card" style="margin-bottom: 16px;">
+      <h2>Integration Health</h2>
+      <div class="subtitle">Connection readiness is shown here; Data Dashboard stays focused on data operations.</div>
+      <div class="health-grid">
+        <div class="health-card"><div class="status-line"><span id="health-shopify-dot" class="status-dot off"></span><span>Shopify</span></div><div id="health-shopify-text" class="muted">Checking...</div></div>
+        <div class="health-card"><div class="status-line"><span id="health-meta-dot" class="status-dot off"></span><span>Meta</span></div><div id="health-meta-text" class="muted">Checking...</div></div>
+        <div class="health-card"><div class="status-line"><span id="health-notion-dot" class="status-dot off"></span><span>Notion</span></div><div id="health-notion-text" class="muted">Checking...</div></div>
+      </div>
+    </section>
     <section class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
         <h2 style="margin:0;">Agent LLM Providers</h2>
@@ -245,7 +261,7 @@
   <script>
     const personas = {{ personas_json | safe }};
     const existing = {{ configs_json | safe }};
-    const integrationConfigs = {{ integration_configs_json | safe }};
+    let integrationConfigs = {{ integration_configs_json | safe }};
     let envVars = {{ env_vars_json | safe }};
     let advancedColsVisible = false;
     let toastTimer = null;
@@ -493,7 +509,7 @@
       const seen = new Set();
       const names = [];
       (envVars || []).forEach(function(n) { if (!seen.has(n)) { seen.add(n); names.push(n); } });
-      ["CRISPY_API_KEY_SHOPIFY_DOMAIN", "CRISPY_API_KEY_SHOPIFY", "CRISPY_API_KEY_META", "CRISPY_API_KEY_META_ACCOUNT"].forEach(function(n) { if (!seen.has(n)) { seen.add(n); names.push(n); } });
+      ["CRISPY_API_KEY_SHOPIFY_DOMAIN", "CRISPY_API_KEY_SHOPIFY", "CRISPY_API_KEY_META", "CRISPY_API_KEY_META_ACCOUNT", "CRISPY_API_KEY_NOTION", "CRISPY_API_KEY_NOTION_DATABASE"].forEach(function(n) { if (!seen.has(n)) { seen.add(n); names.push(n); } });
       names.sort();
       var opts = '<option value="">(none)</option>';
       names.forEach(function(name) {
@@ -506,6 +522,7 @@
         await api("/integration-configs/" + encodeURIComponent(platform) + "/" + encodeURIComponent(configKey), { method: "PATCH", body: JSON.stringify({ env_var: envVar }) });
         integrationConfigs = await api("/integration-configs");
         refreshIntegrationTable();
+        refreshIntegrationHealth();
         showSaveToast("Saved: " + platform + " / " + configKey);
       } catch (err) { alert(err.message); }
     }
@@ -513,7 +530,32 @@
       try { envVars = await api("/agent-configs/env-vars"); } catch (_err) {}
       render();
       refreshIntegrationTable();
+      refreshIntegrationHealth();
       document.getElementById("save-fab").addEventListener("click", saveAll);
+    }
+    function configSet(configs, platform, key) {
+      const row = (configs || []).find((c) => c.platform === platform && c.config_key === key);
+      return !!(row && row.is_set);
+    }
+    function setHealth(id, ok, text) {
+      const dot = document.getElementById("health-" + id + "-dot");
+      const label = document.getElementById("health-" + id + "-text");
+      if(dot) dot.className = "status-dot " + (ok ? "ok" : "warn");
+      if(label) label.textContent = text;
+    }
+    async function refreshIntegrationHealth() {
+      let configs = integrationConfigs;
+      try { configs = await api("/integration-configs"); } catch (_e) {}
+      const shopifyReady = configSet(configs, "shopify", "store_domain") && configSet(configs, "shopify", "access_token");
+      const metaReady = configSet(configs, "meta", "access_token") && configSet(configs, "meta", "ad_account_id");
+      setHealth("shopify", shopifyReady, shopifyReady ? "Configured" : "Missing store domain or access token");
+      setHealth("meta", metaReady, metaReady ? "Configured" : "Missing access token or ad account id");
+      try {
+        const status = await api("/content-schedules/notion-status");
+        setHealth("notion", !!status.ok, status.ok ? "Connected" : (status.error || "Not configured"));
+      } catch (err) {
+        setHealth("notion", false, "Connection check failed");
+      }
     }
     init();
   </script>

@@ -89,6 +89,15 @@
   .tag-warn { background: #fff6e6; color: #9a6b00; }
   .tag-rising { background: #e6f7ee; color: #1a6b44; }
   .tag-declining { background: #ffeaea; color: #a04040; }
+  .batch-chip {
+    display:inline-flex; align-items:center; gap:6px; border:1px solid #bae6fd;
+    background:#f0f9ff; color:#075985; border-radius:999px; padding:4px 8px;
+    font-size:11px; font-weight:700; margin:3px 4px 3px 0;
+  }
+  .batch-chip button {
+    width:18px; height:18px; padding:0; border-radius:999px; border:1px solid #7dd3fc;
+    background:#fff; color:#075985; line-height:1;
+  }
   @media (max-width: 900px) {
     .app-body { flex-direction: column; }
     .sidebar { width: 100%; }
@@ -117,19 +126,23 @@
         <div id="product-list" class="muted" style="max-height:320px;overflow-y:auto;">Select a project</div>
       </div>
       <div class="card">
-        <h3>Credentials</h3>
-        <div class="sync-status" style="margin-bottom:4px;"><span class="status-dot off" id="cred-shopify"></span><span class="muted">Shopify <span id="cred-shopify-text">-</span></span></div>
-        <div class="sync-status" style="margin-bottom:10px;"><span class="status-dot off" id="cred-meta"></span><span class="muted">Meta <span id="cred-meta-text">-</span></span></div>
         <h3>Auto Sync</h3>
         <div style="margin-bottom:6px;"><label>Shopify interval</label><select id="shopify-interval" onchange="saveAutoSync()"><option value="0">Off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></div>
         <div style="margin-bottom:6px;"><label>Meta interval</label><select id="meta-interval" onchange="saveAutoSync()"><option value="0">Off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></div>
         <div class="sync-status" style="margin-top:8px;"><span class="status-dot off" id="sync-dot"></span><span class="muted" id="sync-status-text">-</span></div>
       </div>
       <div class="card">
-        <h3>Offline CSV Import</h3>
-        <div class="muted" style="margin-bottom:8px;">Simulate store orders and ad metrics without Shopify or Meta.</div>
-        <input id="offline-csv-file" type="file" accept=".csv,text/csv" style="margin-bottom:8px;" />
-        <button onclick="uploadOfflineCsv()">Import CSV</button>
+        <h3>CSV Fallback Imports</h3>
+        <div class="muted" style="margin-bottom:8px;">Use when APIs are unavailable or for cost-free testing. Required columns are validated server-side.</div>
+        <div class="muted" style="margin-bottom:8px;">Shopify: product_code/sku + revenue or quantity. Meta: creative_key/ad_id + impressions, clicks, spend.</div>
+        <label>Shopify CSV</label>
+        <input id="offline-shopify-file" type="file" accept=".csv,text/csv" style="margin-bottom:6px;" />
+        <button onclick="uploadOfflineCsv('shopify')">Import Shopify CSV</button>
+        <div style="height:10px;"></div>
+        <label>Meta CSV</label>
+        <input id="offline-meta-file" type="file" accept=".csv,text/csv" style="margin-bottom:6px;" />
+        <button onclick="uploadOfflineCsv('meta')">Import Meta CSV</button>
+        <div id="offline-batches" style="margin-top:10px;"></div>
         <div id="offline-csv-msg" class="muted" style="margin-top:8px;min-height:18px;"></div>
       </div>
     </aside>
@@ -211,6 +224,7 @@
       if(!currentProj){ document.getElementById("product-list").innerHTML='<span class="muted">Select a project</span>'; return; }
       await loadProducts();
       await loadAutoSyncConfig();
+      await loadOfflineBatches();
       refreshOverview();
       startPolling();
     }
@@ -269,12 +283,6 @@
       if(!currentProj) return;
       try{
         const data=await api(`/data-dashboard/summary?workspace_name=${encodeURIComponent(currentWs)}&project_name=${encodeURIComponent(currentProj)}`);
-        const cred=data.credentials||{};
-        const sh=cred.shopify||{}; const mt=cred.meta||{};
-        document.getElementById("cred-shopify").className="status-dot "+(sh.ready?"ok":"off");
-        document.getElementById("cred-shopify-text").textContent=sh.ready?"ready":"not configured";
-        document.getElementById("cred-meta").className="status-dot "+(mt.ready?"ok":"off");
-        document.getElementById("cred-meta-text").textContent=mt.ready?"ready":"not configured";
         document.getElementById("kpi-cards").innerHTML=`
           <div class="kpi-card"><div class="kpi-value">$${data.shopify_revenue?.toFixed(0)||0}</div><div class="kpi-label">Shopify Revenue</div></div>
           <div class="kpi-card"><div class="kpi-value">$${data.meta_spend?.toFixed(0)||0}</div><div class="kpi-label">Meta Spend</div></div>
@@ -366,21 +374,44 @@
       el.textContent=msg;
       el.style.color=type==="ok"?"#1a6b44":type==="warn"?"#a04040":"var(--muted)";
     }
-    async function uploadOfflineCsv(){
+    async function loadOfflineBatches(){
+      const box=document.getElementById("offline-batches");
+      if(!box || !currentProj){ if(box) box.innerHTML=""; return; }
+      try{
+        const data=await api(`/data-dashboard/offline-csv-imports?workspace_name=${encodeURIComponent(currentWs)}&project_name=${encodeURIComponent(currentProj)}`);
+        const items=data.items||[];
+        box.innerHTML=items.length?items.map(item=>`<span class="batch-chip" title="${esc(item.batch_id)}">${esc(item.platform)} CSV · $${Number(item.total_revenue||0).toFixed(0)} <button onclick="deleteOfflineBatch('${esc(item.batch_id)}')" title="Remove offline batch">×</button></span>`).join(""):'<div class="muted">No offline CSV data staged.</div>';
+      }catch(e){ box.innerHTML=`<div class="muted">Offline batches unavailable.</div>`; }
+    }
+    async function deleteOfflineBatch(batchId){
+      if(!currentProj || !batchId) return;
+      try{
+        const resp=await fetch(`/data-dashboard/offline-csv-imports/${encodeURIComponent(batchId)}?workspace_name=${encodeURIComponent(currentWs)}&project_name=${encodeURIComponent(currentProj)}`,{method:"DELETE"});
+        const data=await resp.json();
+        if(!resp.ok) throw new Error(data.detail||JSON.stringify(data));
+        showOfflineMsg(`Removed ${data.memory_deleted||0} memories and ${data.snapshots_deleted||0} snapshots`, "ok");
+        await loadOfflineBatches();
+        await refreshOverview();
+        await loadProducts();
+        if(currentTab==="creative") await loadCreativeDecisions();
+      }catch(e){ showOfflineMsg("Remove failed: "+e.message, "warn"); }
+    }
+    async function uploadOfflineCsv(platform){
       if(!currentProj){ showOfflineMsg("Select a project first", "warn"); return; }
-      const input=document.getElementById("offline-csv-file");
+      const input=document.getElementById(platform==="meta"?"offline-meta-file":"offline-shopify-file");
       const file=input?.files?.[0];
       if(!file){ showOfflineMsg("Choose a CSV file first", "warn"); return; }
       const form=new FormData();
       form.append("workspace_name", currentWs);
       form.append("project_name", currentProj);
       form.append("file", file);
-      showOfflineMsg("Importing offline CSV...", "");
+      showOfflineMsg(`Importing ${platform} CSV...`, "");
       try{
-        const resp=await fetch("/data-dashboard/offline-csv-import",{method:"POST",body:form});
+        const resp=await fetch(`/data-dashboard/offline-csv-import/${encodeURIComponent(platform)}`,{method:"POST",body:form});
         const data=await resp.json();
         if(!resp.ok) throw new Error(data.detail||JSON.stringify(data));
-        showOfflineMsg(`Imported ${data.rows||0} rows, ${data.products_seen||0} products, ${data.snapshots_created||0} snapshots`, "ok");
+        showOfflineMsg(`Staged ${platform} CSV: ${data.rows||0} rows, ${data.products_seen||0} products, ${data.snapshots_created||0} snapshots`, "ok");
+        await loadOfflineBatches();
         await refreshOverview();
         await loadProducts();
         if(currentTab==="creative") await loadCreativeDecisions();

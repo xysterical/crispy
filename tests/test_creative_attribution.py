@@ -346,24 +346,47 @@ def test_creative_decision_dashboard_api_and_planning_insight(client, db_session
 def test_offline_store_csv_import_simulates_shop_data_and_creative_metrics(client, db_session):
     _, _, _, _, run, _ = _seed_run(db_session, variant_count=2)
     db_session.commit()
-    csv_content = (
-        "product_code,product_name,date,total_revenue,total_quantity,creative_key,variant_id,run_id,asset_type,impressions,clicks,spend,conversions\n"
-        f"ATTR-001,Pet Brush,2026-07-01,120,4,V1,V1,{run.id},image,2000,100,40,20\n"
-        f"ATTR-001,Pet Brush,2026-07-02,80,2,V2,V2,{run.id},image,2000,20,80,1\n"
+    shopify_csv = (
+        "product_code,product_name,date,total_revenue,total_quantity\n"
+        "ATTR-001,Pet Brush,2026-07-01,120,4\n"
+        "ATTR-001,Pet Brush,2026-07-02,80,2\n"
     ).encode("utf-8")
 
-    resp = client.post(
-        "/data-dashboard/offline-csv-import",
+    shopify_resp = client.post(
+        "/data-dashboard/offline-csv-import/shopify",
         data={"workspace_name": "w-attr", "project_name": "p-attr"},
-        files={"file": ("offline.csv", io.BytesIO(csv_content), "text/csv")},
+        files={"file": ("shopify.csv", io.BytesIO(shopify_csv), "text/csv")},
     )
-    assert resp.status_code == 200
-    payload = resp.json()
+    assert shopify_resp.status_code == 200
+    payload = shopify_resp.json()
+    assert payload["platform"] == "shopify"
     assert payload["rows"] == 2
     assert payload["products_seen"] == 2
     assert payload["product_memory_count"] == 1
     assert payload["shop_memory_count"] == 1
+    assert payload["snapshots_created"] == 0
+
+    meta_csv = (
+        "creative_key,variant_id,run_id,asset_type,impressions,clicks,spend,conversions,attributed_revenue,product_code\n"
+        f"V1,V1,{run.id},image,2000,100,40,20,400,ATTR-001\n"
+        f"V2,V2,{run.id},image,2000,20,80,1,20,ATTR-001\n"
+    ).encode("utf-8")
+    meta_resp = client.post(
+        "/data-dashboard/offline-csv-import/meta",
+        data={"workspace_name": "w-attr", "project_name": "p-attr"},
+        files={"file": ("meta.csv", io.BytesIO(meta_csv), "text/csv")},
+    )
+    assert meta_resp.status_code == 200
+    payload = meta_resp.json()
+    assert payload["platform"] == "meta"
     assert payload["snapshots_created"] == 2
+
+    batches = client.get(
+        "/data-dashboard/offline-csv-imports",
+        params={"workspace_name": "w-attr", "project_name": "p-attr"},
+    )
+    assert batches.status_code == 200
+    assert {item["platform"] for item in batches.json()["items"]} == {"shopify", "meta"}
 
     summary = client.get(
         "/data-dashboard/summary",
@@ -389,6 +412,13 @@ def test_offline_store_csv_import_simulates_shop_data_and_creative_metrics(clien
     assert decisions.json()["promote"]
     assert decisions.json()["retire"]
 
+    delete_resp = client.delete(
+        f"/data-dashboard/offline-csv-imports/{payload['batch_id']}",
+        params={"workspace_name": "w-attr", "project_name": "p-attr"},
+    )
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["snapshots_deleted"] == 2
+
 
 def test_offline_store_csv_without_metrics_does_not_write_memory(client, db_session):
     workspace = Workspace(name="w-empty", industry_code="pet_care")
@@ -399,14 +429,12 @@ def test_offline_store_csv_without_metrics_does_not_write_memory(client, db_sess
 
     csv_content = "product_code,product_name\nEMPTY-1,Empty Product\n".encode("utf-8")
     resp = client.post(
-        "/data-dashboard/offline-csv-import",
+        "/data-dashboard/offline-csv-import/shopify",
         data={"workspace_name": "w-empty", "project_name": "p-empty"},
         files={"file": ("empty.csv", io.BytesIO(csv_content), "text/csv")},
     )
-    assert resp.status_code == 200
-    assert resp.json()["product_memory_count"] == 0
-    assert resp.json()["shop_memory_count"] == 0
-    assert resp.json()["snapshots_created"] == 0
+    assert resp.status_code == 400
+    assert "requires revenue or quantity" in resp.text
 
     memories = db_session.scalars(select(GmMemory).where(GmMemory.source_type == "offline_csv_import")).all()
     assert memories == []

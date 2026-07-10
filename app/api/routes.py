@@ -4429,8 +4429,9 @@ def data_dashboard_summary(
     }
 
 
-@router.post("/data-dashboard/offline-csv-import")
+@router.post("/data-dashboard/offline-csv-import/{platform}")
 async def data_dashboard_offline_csv_import(
+    platform: str,
     workspace_name: str = Form(...),
     project_name: str = Form(...),
     file: UploadFile = File(...),
@@ -4438,16 +4439,56 @@ async def data_dashboard_offline_csv_import(
 ) -> dict:
     from app.services.offline_store_import import import_offline_store_csv
 
-    filename = file.filename or "offline_store.csv"
+    filename = file.filename or f"{platform}_fallback.csv"
     if not filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Only CSV files are supported for offline store import")
+        raise HTTPException(status_code=400, detail="Only CSV files are supported for offline CSV fallback import")
     content = await file.read()
-    result = import_offline_store_csv(
+    try:
+        result = import_offline_store_csv(
+            db,
+            workspace_name=workspace_name,
+            project_name=project_name,
+            platform=platform,
+            file_name=filename,
+            content=content,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return result
+
+
+@router.get("/data-dashboard/offline-csv-imports")
+def data_dashboard_offline_csv_imports(
+    workspace_name: str = Query(...),
+    project_name: str = Query(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.offline_store_import import list_offline_csv_batches
+
+    return {
+        "items": list_offline_csv_batches(
+            db,
+            workspace_name=workspace_name,
+            project_name=project_name,
+        )
+    }
+
+
+@router.delete("/data-dashboard/offline-csv-imports/{batch_id}")
+def data_dashboard_delete_offline_csv_import(
+    batch_id: str,
+    workspace_name: str = Query(...),
+    project_name: str = Query(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.offline_store_import import delete_offline_csv_batch
+
+    result = delete_offline_csv_batch(
         db,
         workspace_name=workspace_name,
         project_name=project_name,
-        file_name=filename,
-        content=content,
+        batch_id=batch_id,
     )
     db.commit()
     return result
