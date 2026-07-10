@@ -107,7 +107,8 @@ class CreativeDecisionAnalyzer:
         weighted_scores = [snapshot.weighted_score or 0 for snapshot in snapshots]
         attribution = metrics_list[0].get("attribution") or {}
         variant = self.db.get(RunVariant, attribution.get("run_variant_id"))
-        asset = self.db.get(VariantAsset, attribution.get("variant_asset_id"))
+        asset_id = attribution.get("variant_asset_id")
+        asset = self.db.get(VariantAsset, asset_id) if asset_id else None
         run = self.db.get(PipelineRun, attribution.get("run_id") or (variant.run_id if variant else None))
         quality = self._quality(variant, asset)
         evidence = self._evidence(metrics_list)
