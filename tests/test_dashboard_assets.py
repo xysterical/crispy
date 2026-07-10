@@ -56,13 +56,14 @@ def test_media_view_has_exit_controls(client):
     media_path.parent.mkdir(parents=True, exist_ok=True)
     media_path.write_bytes(b"not-real-png")
 
-    resp = client.get("/media/view", params={"path": str(media_path)})
+    resp = client.get("/media/view", params={"path": str(media_path), "return_to": "/dashboard#run=abc123"})
 
     assert resp.status_code == 200
     assert 'class="close-btn"' in resp.text
     assert 'onclick="if (event.target === this) leaveViewer()"' in resp.text
     assert 'event.key === "Escape"' in resp.text
-    assert 'window.location.href = "/dashboard"' in resp.text
+    assert 'const returnTo = "/dashboard#run=abc123";' in resp.text
+    assert "window.location.href = returnTo" in resp.text
 
 
 def test_dashboard_data_source_switch(client):
@@ -203,6 +204,8 @@ def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     assert "currentStageTask(run)?.metadata_json?.resolved_api" in html
     assert "run fallback:" in html
     assert "provider/model: ${esc(providerSummary(run))}" in html
+    assert "return_to=${encodeURIComponent(returnTo)}" in html
+    assert "`/dashboard#run=${encodeURIComponent(currentRunId)}`" in html
     assert "function failedMediaAsset(asset)" in html
     assert "winner?.recommended_action" in html
     assert "source === \"generation_error\"" in html

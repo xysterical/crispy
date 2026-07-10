@@ -716,7 +716,10 @@ def _dashboard_shared_js() -> str:
             try { return JSON.parse(raw); } catch (_e) { throw new Error("Advanced Business Context JSON is invalid."); }
           }
           function mediaUrl(path){ return `/media?path=${encodeURIComponent(path || "")}`; }
-          function mediaViewUrl(path){ return `/media/view?path=${encodeURIComponent(path || "")}`; }
+          function mediaViewUrl(path){
+            const returnTo = currentRunId ? `/dashboard#run=${encodeURIComponent(currentRunId)}` : "/dashboard";
+            return `/media/view?path=${encodeURIComponent(path || "")}&return_to=${encodeURIComponent(returnTo)}`;
+          }
           function loadVariantBoardCollapsedState() {
             try {
               variantBoardCollapsed = localStorage.getItem(variantBoardCollapsedStorageKey) === "true";
@@ -2390,11 +2393,12 @@ def media_file(path: str = Query(..., min_length=1)) -> FileResponse:
 
 
 @router.get("/media/view", response_class=HTMLResponse)
-def media_view(request: Request, path: str = Query(..., min_length=1)) -> str:
+def media_view(request: Request, path: str = Query(..., min_length=1), return_to: str = Query("/dashboard")) -> str:
     requested = _resolve_media_path(path)
     media_type = mimetypes.guess_type(str(requested))[0] or "application/octet-stream"
     media_src = f"/media?path={quote(str(requested), safe='')}"
     title = requested.name
+    safe_return_to = return_to if return_to.startswith("/") and not return_to.startswith("//") else "/dashboard"
     if media_type.startswith("image/"):
         body = f'<img class="viewer-media image" src="{media_src}" alt="{title}" />'
     elif media_type.startswith("video/"):
@@ -2405,6 +2409,7 @@ def media_view(request: Request, path: str = Query(..., min_length=1)) -> str:
         "title": title,
         "body": body,
         "media_src": media_src,
+        "return_to": safe_return_to,
     })
 
 

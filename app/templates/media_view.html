@@ -69,12 +69,13 @@
       <div class="stage" onclick="if (event.target === this) leaveViewer()">{{ body | safe }}</div>
     </main>
     <script>
+      const returnTo = {{ return_to | tojson }};
       function leaveViewer() {
         if (window.history.length > 1) {
           window.history.back();
         } else {
           window.close();
-          setTimeout(() => { window.location.href = "/dashboard"; }, 100);
+          setTimeout(() => { window.location.href = returnTo; }, 100);
         }
       }
       document.addEventListener("keydown", (event) => {
