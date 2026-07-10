@@ -378,16 +378,20 @@ async def sync_meta(
             rows = await provider.fetch_ad_performance()
             feedback_rows: list[FeedbackRow] = []
             for ir in rows:
-                campaign = db.scalar(
-                    select(Campaign).where(
-                        Campaign.project_id == project.id,
-                        Campaign.platform_campaign_id == ir.ad_id,
+                campaign = (
+                    db.scalar(
+                        select(Campaign).where(
+                            Campaign.project_id == project.id,
+                            Campaign.platform_campaign_id == ir.campaign_id,
+                        )
                     )
+                    if ir.campaign_id
+                    else None
                 )
                 campaign = campaign or db.scalar(
                     select(Campaign).where(
                         Campaign.project_id == project.id,
-                        Campaign.name == ir.ad_name,
+                        Campaign.name == (ir.campaign_name or ir.ad_name),
                     )
                 )
 
@@ -401,8 +405,9 @@ async def sync_meta(
                 feedback_rows.append(FeedbackRow(
                     project_name=project_name,
                     creative_key=ir.creative_id or ir.ad_id,
+                    asset_type="creative",
                     variant_id=None,
-                    campaign_name=ir.ad_name,
+                    campaign_name=ir.campaign_name or ir.ad_name,
                     run_id=None,
                     impressions=ir.impressions,
                     clicks=ir.clicks,
@@ -415,8 +420,11 @@ async def sync_meta(
                     platform_campaign_id=(
                         campaign.platform_campaign_id if campaign else None
                     ),
+                    platform_ad_id=ir.ad_id,
+                    platform_creative_id=ir.creative_id,
                     product_code=product_code or None,
                     industry_code=workspace.industry_code or None,
+                    extra_metrics={"ad_name": ir.ad_name},
                 ))
 
             if feedback_rows:

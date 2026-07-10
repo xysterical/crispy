@@ -6,7 +6,6 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.data.models import (
-    Campaign,
     FeedbackImport,
     GmMemory,
     GmInstructionVersion,
@@ -19,6 +18,11 @@ from app.data.models import (
     Workspace,
 )
 from app.schemas.contracts import FeedbackRow
+from app.services.creative_attribution import (
+    resolve_campaign_id,
+    resolve_performance_attribution,
+    product_code_from_campaign,
+)
 
 
 def utcnow() -> datetime:
@@ -134,56 +138,51 @@ def import_feedback_rows(
     memory_by_product: dict[str, list[tuple[str, float, dict]]] = {}
     memory_by_industry: dict[str, list[tuple[str, float, dict]]] = {}
     for row in rows:
-        resolved_variant_id = row.variant_id or row.creative_key
         ctr = _safe_div(row.clicks, row.impressions)
         cpc = _safe_div(row.spend, row.clicks)
         cpa = _safe_div(row.spend, row.conversions)
         roas = _safe_div(row.revenue, row.spend)
         weighted = _weighted_score(ctr=ctr, cpc=cpc, cpa=cpa, roas=roas, weights=project.metric_weights)
-        run_variant = (
-            db.scalar(
-                select(RunVariant).where(
-                    RunVariant.run_id == row.run_id,
-                    RunVariant.variant_id == resolved_variant_id,
-                )
-            )
-            if row.run_id and resolved_variant_id
-            else None
-        )
-        pattern_payload = _variant_pattern_payload(db, run_variant)
-        scored_rows.append((resolved_variant_id, weighted, pattern_payload))
         run_model = db.get(PipelineRun, row.run_id) if row.run_id else None
-        product_code = run_model.product_code if run_model else (row.product_code or "")
-        industry_code = run_model.industry_code if run_model else (row.industry_code or "")
         campaign_id = run_model.campaign_id if run_model else None
-        if not campaign_id and row.platform_campaign_id:
-            camp = db.scalar(
-                select(Campaign).where(
-                    Campaign.project_id == project.id,
-                    Campaign.platform_campaign_id == row.platform_campaign_id,
-                )
-            )
-            if camp:
-                campaign_id = camp.id
-        if not campaign_id and row.campaign_name:
-            camp = db.scalar(
-                select(Campaign).where(
-                    Campaign.project_id == project.id,
-                    Campaign.name == row.campaign_name,
-                )
-            )
-            if camp:
-                campaign_id = camp.id
-        if product_code:
-            memory_by_product.setdefault(product_code, []).append((resolved_variant_id, weighted, pattern_payload))
-        if industry_code:
-            memory_by_industry.setdefault(industry_code, []).append((resolved_variant_id, weighted, pattern_payload))
+        campaign_id = campaign_id or resolve_campaign_id(
+            db,
+            project_id=project.id,
+            campaign_name=row.campaign_name,
+            platform_campaign_id=row.platform_campaign_id,
+        )
+        product_code = run_model.product_code if run_model else (row.product_code or "")
+        product_code = product_code or (product_code_from_campaign(db, campaign_id) or "")
+        industry_code = run_model.industry_code if run_model else (row.industry_code or "")
+        attribution = resolve_performance_attribution(
+            db,
+            project_id=project.id,
+            creative_key=row.creative_key,
+            run_id=row.run_id,
+            variant_id=row.variant_id,
+            asset_type=row.asset_type,
+            platform_ad_id=row.platform_ad_id,
+            platform_creative_id=row.platform_creative_id,
+            campaign_id=campaign_id,
+            product_code=product_code or None,
+            period_start=row.period_start,
+            period_end=row.period_end,
+        )
+        resolved_creative_key = attribution.creative_key or row.creative_key
+        resolved_run_id = attribution.run_id or row.run_id
+        pattern_payload = _variant_pattern_payload(db, attribution.run_variant)
+        if attribution.strategy_safe:
+            scored_rows.append((resolved_creative_key, weighted, pattern_payload))
+            if product_code:
+                memory_by_product.setdefault(product_code, []).append((resolved_creative_key, weighted, pattern_payload))
+            if industry_code:
+                memory_by_industry.setdefault(industry_code, []).append((resolved_creative_key, weighted, pattern_payload))
 
         snapshot = PerformanceSnapshot(
             project_id=project.id,
             campaign_id=campaign_id,
-            run_id=row.run_id,
-            creative_key=resolved_variant_id,
+            run_id=resolved_run_id,
+            creative_key=resolved_creative_key,
             metrics={
                 "impressions": row.impressions,
                 "clicks": row.clicks,
@@ -194,6 +193,13 @@ def import_feedback_rows(
                 "cpc": cpc,
                 "cpa": cpa,
                 "roas": roas,
+                "asset_type": attribution.asset_type or row.asset_type,
+                "platform": row.platform,
+                "platform_campaign_id": row.platform_campaign_id,
+                "platform_ad_id": row.platform_ad_id,
+                "platform_creative_id": row.platform_creative_id,
+                "extra_metrics": row.extra_metrics,
+                "attribution": attribution.metadata(),
             },
             weighted_score=weighted,
             period_start=row.period_start,

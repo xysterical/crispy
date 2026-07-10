@@ -126,6 +126,7 @@ class FeedbackRow(BaseModel):
     project_name: str
     creative_key: str
     variant_id: str | None = None
+    asset_type: str | None = None
     campaign_name: str | None = None
     run_id: str | None = None
     impressions: int = 0
@@ -137,8 +138,11 @@ class FeedbackRow(BaseModel):
     period_end: date | None = None
     platform: str | None = None
     platform_campaign_id: str | None = None
+    platform_ad_id: str | None = None
+    platform_creative_id: str | None = None
     product_code: str | None = None
     industry_code: str | None = None
+    extra_metrics: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("impressions", "clicks", "conversions")
     @classmethod

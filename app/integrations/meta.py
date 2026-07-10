@@ -81,7 +81,7 @@ class MetaProvider(BaseIntegrationProvider):
         params: dict = {
             "access_token": self.access_token,
             "fields": (
-                "ad_id,ad_name,creative,"
+                "campaign_id,campaign_name,ad_id,ad_name,creative,"
                 "impressions,clicks,spend,"
                 "actions,action_values,"
                 "date_start,date_stop"
@@ -131,6 +131,8 @@ class MetaProvider(BaseIntegrationProvider):
                 all_rows.append(MetaInsightsRow(
                     date_start=insight.get("date_start", ""),
                     date_stop=insight.get("date_stop", ""),
+                    campaign_id=str(insight.get("campaign_id", "")) or None,
+                    campaign_name=insight.get("campaign_name"),
                     ad_id=str(insight.get("ad_id", "")),
                     ad_name=insight.get("ad_name", ""),
                     creative_id=creative_id,

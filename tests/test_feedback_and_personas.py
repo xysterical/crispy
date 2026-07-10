@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from app.data.models import GmInstructionVersion, GmMemory
 from app.data.session import SessionLocal
+from app.services.creative_attribution import canonical_creative_key
 from app.services.runs import execute_next_queued_stage
 
 
@@ -97,7 +98,7 @@ def test_feedback_import_updates_leaderboard(client):
     assert leaderboard.status_code == 200
     ranking = leaderboard.json()["ranking"]
     assert ranking[0]["weighted_score"] >= ranking[-1]["weighted_score"]
-    assert ranking[0]["creative_key"] == "V1"
+    assert ranking[0]["creative_key"] == canonical_creative_key(run_id, "V1", "creative")
 
     gm_view = client.get("/gm-memory", params={"scope": "product", "product_code": "FB-001"})
     assert gm_view.status_code == 200

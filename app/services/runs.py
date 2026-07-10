@@ -60,6 +60,7 @@ from app.services.creative_specs import (
     get_social_review_contract,
     resolve_creative_specs,
 )
+from app.services.creative_attribution import canonical_creative_key
 from app.services.execution_memory import (
     append_execution_memory_payload,
     build_variant_execution_summary,
@@ -1236,6 +1237,9 @@ def _upsert_variant_asset(
     error_message: str | None = None,
 ) -> VariantAsset:
     payload = dict(payload or {})
+    creative_key = canonical_creative_key(run_id, variant.variant_id, asset_type)
+    payload["creative_key"] = creative_key
+    payload["canonical_creative_key"] = creative_key
     if asset_type in {"image", "storyboard_frame", "video"}:
         expected_ratio = None
         if asset_type == "video":

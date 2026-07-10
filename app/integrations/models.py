@@ -44,6 +44,8 @@ class MetaCampaignData(BaseModel):
 class MetaInsightsRow(BaseModel):
     date_start: str
     date_stop: str
+    campaign_id: str | None = None
+    campaign_name: str | None = None
     ad_id: str
     ad_name: str
     creative_id: str | None = None
