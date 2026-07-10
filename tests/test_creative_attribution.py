@@ -266,3 +266,76 @@ def test_creative_decision_analyzer_classifies_direction_and_refreshes_memory(db
     assert len(content["avoid_patterns"]) == 1
     assert content["winning_patterns"][0]["decision"] == "promote"
     assert content["avoid_patterns"][0]["decision"] == "retire"
+
+
+def test_creative_decision_dashboard_api_and_planning_insight(client, db_session):
+    _, project, _, _, run, _ = _seed_run(db_session, variant_count=2)
+    import_feedback_rows(
+        db_session,
+        workspace_name="w-attr",
+        project_name="p-attr",
+        file_name="api_decisions.csv",
+        rows=[
+            FeedbackRow(
+                project_name="p-attr",
+                creative_key="V1",
+                variant_id="V1",
+                run_id=run.id,
+                asset_type="image",
+                impressions=2000,
+                clicks=100,
+                spend=40,
+                conversions=20,
+                revenue=400,
+            ),
+            FeedbackRow(
+                project_name="p-attr",
+                creative_key="V2",
+                variant_id="V2",
+                run_id=run.id,
+                asset_type="image",
+                impressions=2000,
+                clicks=20,
+                spend=80,
+                conversions=1,
+                revenue=20,
+            ),
+            FeedbackRow(
+                project_name="p-attr",
+                creative_key="unmatched",
+                impressions=2000,
+                clicks=50,
+                spend=50,
+                conversions=5,
+                revenue=100,
+            ),
+        ],
+    )
+    db_session.commit()
+
+    resp = client.get(
+        "/data-dashboard/creative-decisions",
+        params={"workspace_name": "w-attr", "project_name": "p-attr"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert canonical_creative_key(run.id, "V1", "image") in {item["creative_key"] for item in payload["promote"]}
+    assert canonical_creative_key(run.id, "V2", "image") in {item["creative_key"] for item in payload["retire"]}
+    assert payload["unmatched"][0]["status"] == "unmatched"
+
+    refresh_resp = client.post(
+        "/data-dashboard/creative-decisions/refresh",
+        params={"workspace_name": "w-attr", "project_name": "p-attr"},
+    )
+    assert refresh_resp.status_code == 200
+    assert refresh_resp.json()["memories_created"] == 1
+
+    from app.services.runs import _analytics_insights
+
+    insights = _analytics_insights(db_session, run)
+    decision = [item for item in insights if item["source_type"] == "creative_decision_attribution"][0]
+    content = decision["content"]
+    assert content["promote"]
+    assert content["retire"]
+    assert "unmatched" not in content
+    assert content["unmatched_count"] == 1

@@ -131,6 +131,7 @@
         <div class="tab-bar">
           <button class="tab-btn active" onclick="switchTab('overview')">Overview</button>
           <button class="tab-btn" onclick="switchTab('products')">Products</button>
+          <button class="tab-btn" onclick="switchTab('creative')">Creative Decisions</button>
           <button class="tab-btn" onclick="switchTab('store')">Store</button>
         </div>
         <div class="tab-content active" id="tab-overview">
@@ -144,6 +145,16 @@
         </div>
         <div class="tab-content" id="tab-products">
           <div id="product-detail">Select a product from the sidebar.</div>
+        </div>
+        <div class="tab-content" id="tab-creative">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;">
+            <div>
+              <h2>Creative Decision Attribution</h2>
+              <div class="subtitle">Promote, retire, or keep testing attributed creative directions.</div>
+            </div>
+            <button class="primary" onclick="refreshCreativeMemory()">Refresh Memory</button>
+          </div>
+          <div id="creative-decisions"><div class="muted">Select a project.</div></div>
         </div>
         <div class="tab-content" id="tab-store">
           <div class="chart-wrap"><canvas id="store-chart"></canvas></div>
@@ -163,7 +174,7 @@
     const charts = {};
     function esc(v){ return String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;"); }
     async function api(path, opts){ const r=await fetch(path,{headers:{"Content-Type":"application/json"},...opts}); if(!r.ok) throw new Error(await r.text()); return r.json(); }
-    function switchTab(t){ currentTab=t; document.querySelectorAll(".tab-btn").forEach(b=>b.classList.toggle("active",b.textContent.toLowerCase().includes(t))); document.querySelectorAll(".tab-content").forEach(c=>c.classList.toggle("active",c.id==="tab-"+t)); if(t==="store") refreshStoreTab(); if(t==="overview"||t==="products") refreshOverview(); }
+    function switchTab(t){ currentTab=t; document.querySelectorAll(".tab-btn").forEach(b=>b.classList.toggle("active",b.textContent.toLowerCase().includes(t))); document.querySelectorAll(".tab-content").forEach(c=>c.classList.toggle("active",c.id==="tab-"+t)); if(t==="store") refreshStoreTab(); if(t==="creative") loadCreativeDecisions(); if(t==="overview"||t==="products") refreshOverview(); }
     function destroyChart(key){ if(charts[key]){ charts[key].destroy(); delete charts[key]; } }
     function renderChart(key, canvasId, config){
       destroyChart(key);
@@ -277,6 +288,48 @@
         tbody.innerHTML=products.map(p=>`<tr><td><a href="#" onclick="selectProduct('${esc(p.product_code)}');return false;">${esc(p.product_code)}</a></td><td>$${p.revenue.toFixed(0)}</td><td>${p.quantity}</td><td>${p.revenue_share_pct}%</td><td>${p.score_hint.toFixed(1)}</td></tr>`).join("");
         renderChart("store","store-chart",{type:"bar",data:{labels:products.slice(0,10).map(p=>p.product_code),datasets:[{label:"Revenue",data:products.slice(0,10).map(p=>p.revenue),backgroundColor:"rgba(31,122,98,0.6)"}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
       }catch(e){ console.error(e); }
+    }
+    function decisionRows(items, emptyText){
+      if(!items || !items.length) return `<div class="muted">${emptyText}</div>`;
+      return `<div class="table-wrap"><table><thead><tr><th>Creative</th><th>Direction</th><th>Hook</th><th>CTR</th><th>CVR</th><th>Score</th><th>Reasons</th></tr></thead><tbody>${items.map(item=>{
+        const m=item.metrics||{}; const d=item.dimensions||{};
+        const cls=item.decision==="promote"?"ok":item.decision==="retire"?"declining":"warn";
+        return `<tr><td><code>${esc(item.creative_key||"")}</code></td><td><span class="tag tag-${cls}">${esc(item.decision||"needs_test")}</span></td><td>${esc(d.hook||d.angle||"-")}</td><td>${((m.ctr||0)*100).toFixed(2)}%</td><td>${((m.cvr||0)*100).toFixed(2)}%</td><td>${(m.weighted_score||0).toFixed(1)}</td><td>${esc((item.reasons||[]).join(", ")||"-")}</td></tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function unmatchedRows(items){
+      if(!items || !items.length) return '<div class="muted">No unmatched rows.</div>';
+      return `<div class="table-wrap"><table><thead><tr><th>Creative</th><th>Status</th><th>Method</th><th>Warnings</th></tr></thead><tbody>${items.slice(0,25).map(item=>`<tr><td><code>${esc(item.creative_key||"")}</code></td><td><span class="tag tag-warn">${esc(item.status||"unmatched")}</span></td><td>${esc(item.method||"-")}</td><td>${esc((item.warnings||[]).join(", ")||"-")}</td></tr>`).join("")}</tbody></table></div>`;
+    }
+    async function loadCreativeDecisions(){
+      const div=document.getElementById("creative-decisions");
+      if(!currentProj){ div.innerHTML='<div class="muted">Select a project.</div>'; return; }
+      div.innerHTML='<div class="muted">Loading...</div>';
+      const productParam=currentProduct?`&product_code=${encodeURIComponent(currentProduct)}`:"";
+      try{
+        const data=await api(`/data-dashboard/creative-decisions?workspace_name=${encodeURIComponent(currentWs)}&project_name=${encodeURIComponent(currentProj)}${productParam}`);
+        div.innerHTML=`
+          <div class="kpi-grid">
+            <div class="kpi-card"><div class="kpi-value">${(data.promote||[]).length}</div><div class="kpi-label">Promote</div></div>
+            <div class="kpi-card"><div class="kpi-value">${(data.retire||[]).length}</div><div class="kpi-label">Retire</div></div>
+            <div class="kpi-card"><div class="kpi-value">${(data.needs_test||[]).length}</div><div class="kpi-label">Needs Test</div></div>
+            <div class="kpi-card"><div class="kpi-value">${(data.unmatched||[]).length}</div><div class="kpi-label">Unmatched</div></div>
+          </div>
+          <h3>Promote</h3>${decisionRows(data.promote,"No promoted directions yet.")}
+          <h3 style="margin-top:14px;">Retire</h3>${decisionRows(data.retire,"No retired directions yet.")}
+          <h3 style="margin-top:14px;">Needs Test</h3>${decisionRows(data.needs_test,"No directions need more testing.")}
+          <h3 style="margin-top:14px;">Unmatched / Unsafe Attribution</h3>${unmatchedRows(data.unmatched)}
+        `;
+      }catch(e){ div.innerHTML=`<div class="muted">Error: ${esc(e.message)}</div>`; }
+    }
+    async function refreshCreativeMemory(){
+      if(!currentProj){ showSyncMsg("Select a project first", "warn"); return; }
+      const productParam=currentProduct?`&product_code=${encodeURIComponent(currentProduct)}`:"";
+      try{
+        const data=await api(`/data-dashboard/creative-decisions/refresh?workspace_name=${encodeURIComponent(currentWs)}&project_name=${encodeURIComponent(currentProj)}${productParam}`,{method:"POST"});
+        showSyncMsg(`Creative memory refreshed: ${data.memories_created||0} entries`, "ok");
+        await loadCreativeDecisions();
+      }catch(e){ showSyncMsg("Creative memory refresh failed: "+e.message, "warn"); }
     }
     async function manualSync(platform){
       if(!currentProj){ showSyncMsg("Select a project first", "warn"); return; }

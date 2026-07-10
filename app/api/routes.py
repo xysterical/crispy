@@ -4471,6 +4471,62 @@ def data_dashboard_product_analytics(
     }
 
 
+@router.get("/data-dashboard/creative-decisions")
+def data_dashboard_creative_decisions(
+    workspace_name: str = Query(...),
+    project_name: str = Query(...),
+    product_code: str | None = Query(None),
+    window_days: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.analytics.creative_decisions import CreativeDecisionAnalyzer
+
+    workspace = db.scalar(select(Workspace).where(Workspace.name == workspace_name))
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    project = db.scalar(
+        select(Project).where(Project.workspace_id == workspace.id, Project.name == project_name)
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return CreativeDecisionAnalyzer(db, project.id).decision_report(
+        product_code=product_code,
+        window_days=window_days,
+    )
+
+
+@router.post("/data-dashboard/creative-decisions/refresh")
+def data_dashboard_refresh_creative_decisions(
+    workspace_name: str = Query(...),
+    project_name: str = Query(...),
+    product_code: str | None = Query(None),
+    window_days: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.analytics.creative_decisions import refresh_creative_decision_memory
+
+    workspace = db.scalar(select(Workspace).where(Workspace.name == workspace_name))
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    project = db.scalar(
+        select(Project).where(Project.workspace_id == workspace.id, Project.name == project_name)
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    report, memories = refresh_creative_decision_memory(
+        db,
+        project_id=project.id,
+        product_code=product_code,
+        window_days=window_days,
+    )
+    db.commit()
+    return {
+        "memories_created": len(memories),
+        "memory_ids": [memory.id for memory in memories],
+        "report": report,
+    }
+
+
 @router.get("/data-dashboard/store-analytics")
 def data_dashboard_store_analytics(
     workspace_name: str = Query(...),

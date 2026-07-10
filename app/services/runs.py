@@ -815,11 +815,11 @@ def _gm_memory_trace_payload(gm_lessons: list[dict]) -> dict:
 
 
 def _analytics_insights(db: Session, run: PipelineRun) -> list[dict]:
-    try:
-        from app.analytics import ProductAnalyzer, AdAnalyzer
+    from app.analytics import ProductAnalyzer, AdAnalyzer, CreativeDecisionAnalyzer
 
-        insights: list[dict] = []
-        if run.product_code:
+    insights: list[dict] = []
+    if run.product_code:
+        try:
             pa = ProductAnalyzer(db, run.project_id)
             vel = pa.analyze_product_sales_velocity(run.product_code)
             if not vel.insufficient_data:
@@ -837,7 +837,10 @@ def _analytics_insights(db: Session, run: PipelineRun) -> list[dict]:
                     "product_code": run.product_code,
                     "content": contrib.model_dump(),
                 })
+        except Exception as exc:
+            logger.debug("product analytics insight skipped: %s", exc)
 
+    try:
         aa = AdAnalyzer(db, run.project_id)
         snapshots = db.scalars(
             select(PerformanceSnapshot)
@@ -865,10 +868,33 @@ def _analytics_insights(db: Session, run: PipelineRun) -> list[dict]:
                     "product_code": run.product_code,
                     "content": comp.model_dump(),
                 })
+    except Exception as exc:
+        logger.debug("ad analytics insight skipped: %s", exc)
 
-        return insights
-    except Exception:
-        return []
+    try:
+        creative_decisions = CreativeDecisionAnalyzer(db, run.project_id).decision_report(
+            product_code=run.product_code or None,
+            window_days=30,
+        )
+        decision_content = {
+            "baseline": creative_decisions.get("baseline") or {},
+            "promote": creative_decisions.get("promote", [])[:3],
+            "retire": creative_decisions.get("retire", [])[:3],
+            "needs_test": creative_decisions.get("needs_test", [])[:3],
+            "unmatched_count": len(creative_decisions.get("unmatched", [])),
+            "summary": "Creative decision attribution suggests which ideas to promote, retire, or test further.",
+        }
+        if decision_content["promote"] or decision_content["retire"] or decision_content["needs_test"]:
+            insights.append({
+                "memory_scope": "analytics",
+                "source_type": "creative_decision_attribution",
+                "product_code": run.product_code,
+                "content": decision_content,
+            })
+    except Exception as exc:
+        logger.debug("creative decision insight skipped: %s", exc)
+
+    return insights
 
 
 def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
