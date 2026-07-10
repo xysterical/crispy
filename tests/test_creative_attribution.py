@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+
 from sqlalchemy import select
 
 from app.data.models import (
@@ -339,3 +341,72 @@ def test_creative_decision_dashboard_api_and_planning_insight(client, db_session
     assert content["retire"]
     assert "unmatched" not in content
     assert content["unmatched_count"] == 1
+
+
+def test_offline_store_csv_import_simulates_shop_data_and_creative_metrics(client, db_session):
+    _, _, _, _, run, _ = _seed_run(db_session, variant_count=2)
+    db_session.commit()
+    csv_content = (
+        "product_code,product_name,date,total_revenue,total_quantity,creative_key,variant_id,run_id,asset_type,impressions,clicks,spend,conversions\n"
+        f"ATTR-001,Pet Brush,2026-07-01,120,4,V1,V1,{run.id},image,2000,100,40,20\n"
+        f"ATTR-001,Pet Brush,2026-07-02,80,2,V2,V2,{run.id},image,2000,20,80,1\n"
+    ).encode("utf-8")
+
+    resp = client.post(
+        "/data-dashboard/offline-csv-import",
+        data={"workspace_name": "w-attr", "project_name": "p-attr"},
+        files={"file": ("offline.csv", io.BytesIO(csv_content), "text/csv")},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["rows"] == 2
+    assert payload["products_seen"] == 2
+    assert payload["product_memory_count"] == 1
+    assert payload["shop_memory_count"] == 1
+    assert payload["snapshots_created"] == 2
+
+    summary = client.get(
+        "/data-dashboard/summary",
+        params={"workspace_name": "w-attr", "project_name": "p-attr"},
+    )
+    assert summary.status_code == 200
+    assert summary.json()["store_data_source"] == "offline_csv_import"
+    assert summary.json()["shopify_revenue"] == 200
+
+    store = client.get(
+        "/data-dashboard/store-analytics",
+        params={"workspace_name": "w-attr", "project_name": "p-attr"},
+    )
+    assert store.status_code == 200
+    assert store.json()["products"][0]["product_code"] == "ATTR-001"
+    assert store.json()["products"][0]["revenue"] == 200
+
+    decisions = client.get(
+        "/data-dashboard/creative-decisions",
+        params={"workspace_name": "w-attr", "project_name": "p-attr"},
+    )
+    assert decisions.status_code == 200
+    assert decisions.json()["promote"]
+    assert decisions.json()["retire"]
+
+
+def test_offline_store_csv_without_metrics_does_not_write_memory(client, db_session):
+    workspace = Workspace(name="w-empty", industry_code="pet_care")
+    db_session.add(workspace)
+    db_session.flush()
+    db_session.add(Project(workspace_id=workspace.id, name="p-empty"))
+    db_session.commit()
+
+    csv_content = "product_code,product_name\nEMPTY-1,Empty Product\n".encode("utf-8")
+    resp = client.post(
+        "/data-dashboard/offline-csv-import",
+        data={"workspace_name": "w-empty", "project_name": "p-empty"},
+        files={"file": ("empty.csv", io.BytesIO(csv_content), "text/csv")},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["product_memory_count"] == 0
+    assert resp.json()["shop_memory_count"] == 0
+    assert resp.json()["snapshots_created"] == 0
+
+    memories = db_session.scalars(select(GmMemory).where(GmMemory.source_type == "offline_csv_import")).all()
+    assert memories == []

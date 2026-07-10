@@ -3818,19 +3818,20 @@ async def trigger_integration_sync(
     sync_type: str = Query("all"),
     db: Session = Depends(get_db),
 ) -> IntegrationSyncResult:
-    from app.integrations.sync_service import sync_shopify, sync_meta
+    from app.integrations.sync_service import supported_integration_platforms, sync_integration
 
-    if platform not in ("shopify", "meta"):
-        raise HTTPException(status_code=400, detail="Platform must be 'shopify' or 'meta'")
+    platform = platform.lower().strip()
+    if platform not in supported_integration_platforms():
+        supported = ", ".join(supported_integration_platforms())
+        raise HTTPException(status_code=400, detail=f"Platform must be one of: {supported}")
 
-    if platform == "shopify":
-        result = await sync_shopify(
-            db, workspace_name=workspace_name, project_name=project_name, sync_type=sync_type,
-        )
-    else:
-        result = await sync_meta(
-            db, workspace_name=workspace_name, project_name=project_name, sync_type=sync_type,
-        )
+    result = await sync_integration(
+        platform,
+        db,
+        workspace_name=workspace_name,
+        project_name=project_name,
+        sync_type=sync_type,
+    )
     db.commit()
     return IntegrationSyncResult(**result.model_dump())
 
@@ -4364,13 +4365,15 @@ def data_dashboard_summary(
         .where(
             GmMemory.project_id == project.id,
             GmMemory.memory_scope == "shop",
-            GmMemory.source_type.in_(["shopify_sync", "meta_sync"]),
+            GmMemory.source_type.in_(["shopify_sync", "meta_sync", "offline_csv_import"]),
         )
         .order_by(desc(GmMemory.created_at))
         .limit(10)
     ).all()
 
     latest_shopify = next((m for m in store_memories if m.source_type == "shopify_sync"), None)
+    latest_offline = next((m for m in store_memories if m.source_type == "offline_csv_import"), None)
+    latest_store = latest_shopify or latest_offline
     latest_meta = next((m for m in store_memories if m.source_type == "meta_sync"), None)
 
     product_count = db.scalar(
@@ -4407,8 +4410,9 @@ def data_dashboard_summary(
             },
         },
         "product_count": product_count,
-        "shopify_revenue": (latest_shopify.content or {}).get("total_revenue", 0) if latest_shopify else 0,
-        "shopify_quantity": (latest_shopify.content or {}).get("total_quantity", 0) if latest_shopify else 0,
+        "shopify_revenue": (latest_store.content or {}).get("total_revenue", 0) if latest_store else 0,
+        "shopify_quantity": (latest_store.content or {}).get("total_quantity", 0) if latest_store else 0,
+        "store_data_source": latest_store.source_type if latest_store else None,
         "meta_spend": round(total_spend, 2),
         "meta_revenue": round(total_revenue, 2),
         "overall_roas": round(total_revenue / total_spend, 4) if total_spend > 0 else 0,
@@ -4423,6 +4427,30 @@ def data_dashboard_summary(
         },
         "daily_trend": _daily_revenue_trend(recent_snapshots),
     }
+
+
+@router.post("/data-dashboard/offline-csv-import")
+async def data_dashboard_offline_csv_import(
+    workspace_name: str = Form(...),
+    project_name: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.offline_store_import import import_offline_store_csv
+
+    filename = file.filename or "offline_store.csv"
+    if not filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are supported for offline store import")
+    content = await file.read()
+    result = import_offline_store_csv(
+        db,
+        workspace_name=workspace_name,
+        project_name=project_name,
+        file_name=filename,
+        content=content,
+    )
+    db.commit()
+    return result
 
 
 @router.get("/data-dashboard/product-analytics")
@@ -4549,7 +4577,7 @@ def data_dashboard_store_analytics(
         .where(
             GmMemory.project_id == project.id,
             GmMemory.memory_scope == "product",
-            GmMemory.source_type.in_(["shopify_sync", "feedback_import"]),
+            GmMemory.source_type.in_(["shopify_sync", "feedback_import", "offline_csv_import"]),
         )
         .order_by(desc(GmMemory.created_at))
         .limit(200)

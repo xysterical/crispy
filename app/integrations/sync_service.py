@@ -513,3 +513,33 @@ async def sync_meta(
         )
     finally:
         await provider.close()
+
+
+INTEGRATION_SYNC_HANDLERS = {
+    "shopify": sync_shopify,
+    "meta": sync_meta,
+}
+
+
+def supported_integration_platforms() -> tuple[str, ...]:
+    return tuple(sorted(INTEGRATION_SYNC_HANDLERS))
+
+
+async def sync_integration(
+    platform: str,
+    db: Session,
+    *,
+    workspace_name: str,
+    project_name: str,
+    sync_type: str = "all",
+) -> SyncResult:
+    handler = INTEGRATION_SYNC_HANDLERS.get(platform)
+    if not handler:
+        supported = ", ".join(supported_integration_platforms())
+        raise ValueError(f"Unsupported integration platform '{platform}'. Supported platforms: {supported}")
+    return await handler(
+        db,
+        workspace_name=workspace_name,
+        project_name=project_name,
+        sync_type=sync_type,
+    )

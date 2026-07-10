@@ -125,6 +125,13 @@
         <div style="margin-bottom:6px;"><label>Meta interval</label><select id="meta-interval" onchange="saveAutoSync()"><option value="0">Off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></div>
         <div class="sync-status" style="margin-top:8px;"><span class="status-dot off" id="sync-dot"></span><span class="muted" id="sync-status-text">-</span></div>
       </div>
+      <div class="card">
+        <h3>Offline CSV Import</h3>
+        <div class="muted" style="margin-bottom:8px;">Simulate store orders and ad metrics without Shopify or Meta.</div>
+        <input id="offline-csv-file" type="file" accept=".csv,text/csv" style="margin-bottom:8px;" />
+        <button onclick="uploadOfflineCsv()">Import CSV</button>
+        <div id="offline-csv-msg" class="muted" style="margin-top:8px;min-height:18px;"></div>
+      </div>
     </aside>
     <div class="main-panel">
       <div class="card">
@@ -352,6 +359,32 @@
       el.textContent=msg;
       el.style.color=type==="ok"?"#1a6b44":type==="warn"?"#a04040":"var(--muted)";
       setTimeout(()=>{ el.textContent=""; }, 8000);
+    }
+    function showOfflineMsg(msg, type){
+      const el=document.getElementById("offline-csv-msg");
+      if(!el) return;
+      el.textContent=msg;
+      el.style.color=type==="ok"?"#1a6b44":type==="warn"?"#a04040":"var(--muted)";
+    }
+    async function uploadOfflineCsv(){
+      if(!currentProj){ showOfflineMsg("Select a project first", "warn"); return; }
+      const input=document.getElementById("offline-csv-file");
+      const file=input?.files?.[0];
+      if(!file){ showOfflineMsg("Choose a CSV file first", "warn"); return; }
+      const form=new FormData();
+      form.append("workspace_name", currentWs);
+      form.append("project_name", currentProj);
+      form.append("file", file);
+      showOfflineMsg("Importing offline CSV...", "");
+      try{
+        const resp=await fetch("/data-dashboard/offline-csv-import",{method:"POST",body:form});
+        const data=await resp.json();
+        if(!resp.ok) throw new Error(data.detail||JSON.stringify(data));
+        showOfflineMsg(`Imported ${data.rows||0} rows, ${data.products_seen||0} products, ${data.snapshots_created||0} snapshots`, "ok");
+        await refreshOverview();
+        await loadProducts();
+        if(currentTab==="creative") await loadCreativeDecisions();
+      }catch(e){ showOfflineMsg("Import failed: "+e.message, "warn"); }
     }
     async function loadAutoSyncConfig(){
       if(!currentWs) return;

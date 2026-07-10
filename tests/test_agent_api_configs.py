@@ -304,3 +304,32 @@ def test_data_dashboard_summary_endpoint(client):
 def test_auto_sync_config_endpoint(client):
     resp = client.get("/data-dashboard/auto-sync-config?workspace_name=nonexistent")
     assert resp.status_code == 404
+
+
+def test_integration_sync_uses_registry(client):
+    from app.integrations.sync_service import supported_integration_platforms, sync_integration
+
+    assert set(supported_integration_platforms()) >= {"shopify", "meta"}
+
+    import pytest
+
+    with pytest.raises(ValueError, match="Unsupported integration platform"):
+        import asyncio
+        from app.data.session import SessionLocal
+
+        with SessionLocal() as db:
+            asyncio.run(
+                sync_integration(
+                    "unknown",
+                    db,
+                    workspace_name="w",
+                    project_name="p",
+                )
+            )
+
+    resp = client.post(
+        "/integrations/unknown/sync",
+        params={"workspace_name": "w", "project_name": "p"},
+    )
+    assert resp.status_code == 400
+    assert "shopify" in resp.text and "meta" in resp.text
