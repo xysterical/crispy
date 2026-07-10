@@ -14,6 +14,7 @@ from app.data.models import (
     Workspace,
 )
 from app.schemas.contracts import FeedbackRow
+from app.analytics.creative_decisions import CreativeDecisionAnalyzer, refresh_creative_decision_memory
 from app.services.creative_attribution import canonical_creative_key, parse_creative_key, resolve_performance_attribution
 from app.services.feedback import import_feedback_rows
 
@@ -176,3 +177,92 @@ def test_feedback_import_records_attribution_and_blocks_fallback_memory(db_sessi
     content = memories[0].content or {}
     all_memory_keys = [item["variant_id"] for item in content.get("top_variants", [])]
     assert all_memory_keys == [canonical_creative_key(run.id, "V1", "image")]
+
+
+def test_creative_decision_analyzer_classifies_direction_and_refreshes_memory(db_session):
+    _, project, _, _, run, variants = _seed_run(db_session, variant_count=4)
+    v3_asset = db_session.scalar(
+        select(VariantAsset).where(VariantAsset.run_variant_id == variants[2].id)
+    )
+    v3_asset.payload = {
+        **(v3_asset.payload or {}),
+        "visual_qa": {"status": "fail", "flags": ["visual_qa_placeholder"]},
+    }
+
+    rows = [
+        FeedbackRow(
+            project_name="p-attr",
+            creative_key="V1",
+            variant_id="V1",
+            run_id=run.id,
+            asset_type="image",
+            impressions=2000,
+            clicks=100,
+            spend=40,
+            conversions=20,
+            revenue=400,
+        ),
+        FeedbackRow(
+            project_name="p-attr",
+            creative_key="V2",
+            variant_id="V2",
+            run_id=run.id,
+            asset_type="image",
+            impressions=2000,
+            clicks=20,
+            spend=80,
+            conversions=1,
+            revenue=20,
+        ),
+        FeedbackRow(
+            project_name="p-attr",
+            creative_key="V3",
+            variant_id="V3",
+            run_id=run.id,
+            asset_type="image",
+            impressions=2000,
+            clicks=100,
+            spend=40,
+            conversions=20,
+            revenue=400,
+        ),
+        FeedbackRow(
+            project_name="p-attr",
+            creative_key="V4",
+            variant_id="V4",
+            run_id=run.id,
+            asset_type="image",
+            impressions=2000,
+            clicks=100,
+            spend=40,
+            conversions=1,
+            revenue=20,
+        ),
+    ]
+    import_feedback_rows(
+        db_session,
+        workspace_name="w-attr",
+        project_name="p-attr",
+        file_name="creative_decisions.csv",
+        rows=rows,
+    )
+
+    report = CreativeDecisionAnalyzer(db_session, project.id).decision_report()
+    promote_keys = {item["creative_key"] for item in report["promote"]}
+    retire_keys = {item["creative_key"] for item in report["retire"]}
+    needs_test = {item["creative_key"]: item for item in report["needs_test"]}
+
+    assert canonical_creative_key(run.id, "V1", "image") in promote_keys
+    assert canonical_creative_key(run.id, "V2", "image") in retire_keys
+    assert "production_quality_blocked" in needs_test[canonical_creative_key(run.id, "V3", "image")]["reasons"]
+    assert "high_attention_low_intent" in needs_test[canonical_creative_key(run.id, "V4", "image")]["reasons"]
+
+    _, memories = refresh_creative_decision_memory(db_session, project_id=project.id)
+    assert len(memories) == 1
+    memory = memories[0]
+    assert memory.source_type == "creative_decision_attribution"
+    content = memory.content or {}
+    assert len(content["winning_patterns"]) == 1
+    assert len(content["avoid_patterns"]) == 1
+    assert content["winning_patterns"][0]["decision"] == "promote"
+    assert content["avoid_patterns"][0]["decision"] == "retire"
