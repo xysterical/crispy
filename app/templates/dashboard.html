@@ -2,11 +2,143 @@
 {% block title %}Crispy Dashboard{% endblock %}
 {% block styles %}
   {{ super() }}
+  .app-shell.dashboard-shell { --runs-panel-expanded-width: 480px; --runs-panel-collapsed-width: 58px; }
   .dashboard-hero { margin-bottom: 18px; }
+  .dashboard-shell.is-hero-hidden .dashboard-hero { display: none; }
   .dashboard-kicker { color: var(--accent-dark); font-size: 12px; font-weight: 750; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
-  .dashboard-layout { display:flex; gap:16px; flex-wrap:wrap; }
+  .dashboard-layout { display:flex; gap:16px; align-items:flex-start; }
+  .runs-dock {
+    position: sticky;
+    top: 16px;
+    align-self: flex-start;
+    flex: 0 0 var(--runs-panel-expanded-width);
+    width: var(--runs-panel-expanded-width);
+    height: calc(100vh - 144px);
+    min-height: 620px;
+    z-index: 20;
+  }
+  .runs-dock-inner {
+    position: relative;
+    height: 100%;
+    overflow: hidden;
+    border-radius: var(--radius-xl);
+  }
   .runs-panel {
-    background: rgba(255, 255, 255, 0.96);
+    position: absolute;
+    inset: 0;
+    background: #fff;
+    box-shadow: var(--shadow-xs);
+    transition: transform 220ms ease, opacity 180ms ease;
+  }
+  .runs-panel-shell {
+    height: 100%;
+    position: relative;
+  }
+  .runs-panel-topbar {
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap: 10px;
+    margin-bottom:10px;
+    padding-right: 42px;
+  }
+  .runs-panel-title {
+    margin-bottom:0;
+    display:flex;
+    align-items:center;
+    gap:6px;
+  }
+  .runs-panel-toggle {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    z-index: 2;
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+  }
+  .runs-panel-compact-rail {
+    position: fixed;
+    top: 12px;
+    bottom: 12px;
+    left: var(--runs-panel-compact-left, 82px);
+    width: var(--runs-panel-collapsed-width);
+    padding: 18px 10px 16px;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: var(--radius-xl);
+    background: #fff;
+    box-shadow: var(--shadow-xs);
+    z-index: 30;
+  }
+  .runs-panel-compact-toggle {
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+  }
+  .runs-panel-compact-head,
+  .runs-panel-compact-status {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .runs-panel-compact-status {
+    margin-top: auto;
+  }
+  .runs-panel-compact-label {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent-dark);
+  }
+  .runs-panel-compact-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--accent);
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.12);
+  }
+  .runs-panel-compact-dot.active {
+    animation: statusPulse 1.6s ease-in-out infinite;
+  }
+  .runs-panel-compact-text {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .runs-dock.is-collapsed {
+    flex-basis: var(--runs-panel-collapsed-width);
+    width: var(--runs-panel-collapsed-width);
+  }
+  .runs-dock.is-collapsed .runs-panel {
+    transform: translateX(calc(-100% + var(--runs-panel-collapsed-width)));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .runs-dock.is-collapsed .runs-panel-compact-rail {
+    display: flex;
   }
   #run-detail-panel {
     background: rgba(255, 255, 255, 0.96);
@@ -23,21 +155,73 @@
   }
   .execution-memory-card[open] summary::after { content: "Hide"; }
   .execution-memory-card summary span span { display: block; margin-top: 3px; font-size: 12px; font-weight: 400; }
-  .scorecard-summary { border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; background: #fff; }
-  .scorecard-total { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 12px; }
-  .scorecard-total strong { font-size: 30px; color: var(--accent); }
-  .scorecard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
-  .scorecard-grid h4 { margin-bottom: 8px; color: var(--text); }
-  .metric-row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid rgba(15,23,42,0.07); color: var(--text-secondary); text-transform: capitalize; }
-  .metric-row b { color: var(--text); }
-  .scorecard-note { margin-top: 12px; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
+  .scorecard-summary { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px 16px; background: #fff; }
+  .scorecard-hero { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom: 12px; }
+  .scorecard-kicker { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+  .scorecard-total-line { display:flex; align-items:baseline; gap:8px; margin-top: 2px; }
+  .scorecard-total-value { font-size: 28px; line-height: 1; font-weight: 800; color: var(--accent); }
+  .scorecard-total-caption { color: var(--text); font-size: 14px; font-weight: 700; }
+  .scorecard-top-metrics { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+  .scorecard-badge { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; border:1px solid var(--line); background: var(--gray-50); color: var(--text-secondary); font-size:12px; }
+  .scorecard-badge b { color: var(--text); font-size: 12px; }
+  .scorecard-grid { display:grid; grid-template-columns: repeat(2, minmax(280px, 520px)); gap: 12px; justify-content: center; }
+  .scorecard-panel { border: 1px solid rgba(15,23,42,0.08); border-radius: var(--radius); background: var(--gray-50); padding: 12px; }
+  .scorecard-panel-title { margin: 0 0 8px; color: var(--text); font-size: 13px; font-weight: 700; }
+  .scorecard-list { display:grid; gap: 6px; }
+  .scorecard-item { display:flex; justify-content:space-between; align-items:center; gap: 10px; padding: 7px 0; border-bottom: 1px solid rgba(15,23,42,0.07); color: var(--text-secondary); }
+  .scorecard-item:last-child { border-bottom: none; padding-bottom: 0; }
+  .scorecard-item:first-child { padding-top: 0; }
+  .scorecard-item-value { color: var(--text); font-weight: 700; white-space: nowrap; }
+  .scorecard-note { margin-top: 10px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+  .status-scorecard { margin-top: 14px; text-align: left; }
+  .status-scorecard-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom: 10px; }
+  .status-scorecard-total { display:flex; align-items:baseline; gap:8px; }
+  .status-scorecard-total strong { font-size: 26px; line-height: 1; color: var(--accent); }
+  .status-scorecard-badges { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+  .status-scorecard-grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .status-scorecard-panel { padding: 12px; border: 1px solid rgba(15,23,42,0.08); border-radius: var(--radius); background: rgba(255,255,255,0.68); }
+  .status-scorecard-panel h4 { margin: 0 0 8px; font-size: 13px; }
+  .status-scorecard-note { margin-top: 10px; font-size: 12px; line-height: 1.5; color: var(--text-secondary); }
+  @media (max-width: 1100px) {
+    .dashboard-layout { flex-wrap: wrap; }
+    .runs-dock {
+      position: static;
+      width: 100%;
+      flex-basis: 100%;
+      height: auto;
+      min-height: 0;
+    }
+    .runs-dock-inner {
+      overflow: visible;
+      border-radius: 0;
+    }
+    .runs-panel {
+      position: static;
+      inset: auto;
+      transform: none !important;
+      opacity: 1 !important;
+      pointer-events: auto !important;
+      box-shadow: none;
+      backdrop-filter: none;
+    }
+    .runs-panel-toggle,
+    .runs-panel-compact-rail {
+      display: none !important;
+    }
+    .scorecard-hero { flex-direction: column; }
+    .scorecard-top-metrics { justify-content: flex-start; }
+    .scorecard-grid { grid-template-columns: 1fr; }
+    .status-scorecard-head { flex-direction: column; }
+    .status-scorecard-badges { justify-content: flex-start; }
+    .status-scorecard-grid { grid-template-columns: 1fr; }
+  }
 {% endblock %}
 {% block body %}
 <body class="has-global-rail">
   {% set rail_active = 'dashboard' %}
   {% set rail_show_database_actions = true %}
   {% include "_global_rail.html" %}
-  <div class="app-shell">
+  <div class="app-shell dashboard-shell">
     <header class="hero dashboard-hero">
       <div>
         <div class="dashboard-kicker">Product creative operations</div>
@@ -46,25 +230,42 @@
       </div>
     </header>
     <div class="dashboard-layout">
-      <div style="flex:0 0 480px;min-width:0;">
-        <section class="card runs-panel" style="position:sticky;top:12px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-            <h2 style="margin-bottom:0;display:flex;align-items:center;gap:6px;">Runs <span class="refresh-indicator active" id="runs-refresh-indicator" title="Auto-refreshing every 5s"><span class="dot"></span> live</span></h2>
-            <button onclick="refreshRuns()" style="font-size:12px;padding:6px 10px;">Refresh</button>
+      <aside class="runs-dock" id="runs-dock">
+        <div class="runs-dock-inner">
+          <section class="card runs-panel runs-panel-shell">
+            <button class="runs-panel-toggle" id="runs-panel-toggle" type="button" onclick="toggleRunsPanel()" aria-expanded="true" aria-controls="runs-dock" title="Collapse runs list">
+              <span id="runs-panel-toggle-icon">←</span>
+            </button>
+            <div class="runs-panel-topbar">
+              <h2 class="runs-panel-title">Runs <span class="refresh-indicator active" id="runs-refresh-indicator" title="Auto-refreshing every 5s"><span class="dot"></span> live</span></h2>
+              <button onclick="refreshRuns()" style="font-size:12px;padding:6px 10px;">Refresh</button>
+            </div>
+            <div class="data-source-block">
+              <label style="margin-bottom:0;white-space:nowrap;">Shop</label>
+              <select id="data-source-select" onchange="switchDataSource()" style="width:auto;min-width:160px;font-size:12px;padding:5px 8px;"></select>
+              <div id="data-source-path" class="muted mono" style="font-size:11px;"></div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th style="width:18%">Run ID</th><th style="width:30%">Status</th><th style="width:28%">Mode</th><th style="width:24%">Updated</th></tr></thead>
+                <tbody id="runs-body"></tbody>
+              </table>
+            </div>
+          </section>
+          <div class="runs-panel-compact-rail" id="runs-panel-compact-rail" aria-hidden="true">
+            <div class="runs-panel-compact-head">
+              <button class="runs-panel-compact-toggle" type="button" onclick="toggleRunsPanel(false)" aria-label="Expand runs list" title="Expand runs list">
+                <span>→</span>
+              </button>
+              <span class="runs-panel-compact-label">Runs</span>
+            </div>
+            <div class="runs-panel-compact-status">
+              <span class="runs-panel-compact-dot active" id="runs-compact-live-dot"></span>
+              <span class="runs-panel-compact-text">Live</span>
+            </div>
           </div>
-          <div class="data-source-block">
-            <label style="margin-bottom:0;white-space:nowrap;">Shop</label>
-            <select id="data-source-select" onchange="switchDataSource()" style="width:auto;min-width:160px;font-size:12px;padding:5px 8px;"></select>
-            <div id="data-source-path" class="muted mono" style="font-size:11px;"></div>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th style="width:18%">Run ID</th><th style="width:30%">Status</th><th style="width:28%">Mode</th><th style="width:24%">Updated</th></tr></thead>
-              <tbody id="runs-body"></tbody>
-            </table>
-          </div>
-        </section>
-      </div>
+        </div>
+      </aside>
       <div style="flex:1 1 480px;min-width:0;">
         <section class="card" id="run-detail-panel">
           <h2>Run Detail</h2>

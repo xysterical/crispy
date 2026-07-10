@@ -695,7 +695,10 @@ def _dashboard_shared_js() -> str:
           let runListInterval = null;
           let runNotificationState = null;
           const runNotificationTimers = new Map();
+          const runsPanelCollapsedStorageKey = "dashboard_runs_panel_collapsed";
           const variantBoardCollapsedStorageKey = "variant_board_collapsed";
+          let runsPanelCollapsed = false;
+          let runsCompactRailPositionFrame = null;
           let variantBoardCollapsed = false;
           let expandedVariantId = null;
 
@@ -719,6 +722,99 @@ def _dashboard_shared_js() -> str:
           function mediaViewUrl(path){
             const returnTo = currentRunId ? `/dashboard#run=${encodeURIComponent(currentRunId)}` : "/dashboard";
             return `/media/view?path=${encodeURIComponent(path || "")}&return_to=${encodeURIComponent(returnTo)}`;
+          }
+          function loadRunsPanelCollapsedState() {
+            try {
+              runsPanelCollapsed = localStorage.getItem(runsPanelCollapsedStorageKey) === "true";
+            } catch (_err) {
+              runsPanelCollapsed = false;
+            }
+          }
+          function persistRunsPanelCollapsedState() {
+            try {
+              localStorage.setItem(runsPanelCollapsedStorageKey, runsPanelCollapsed ? "true" : "false");
+            } catch (_err) {}
+          }
+          function canCollapseRunsPanel() {
+            return window.matchMedia("(min-width: 1101px)").matches;
+          }
+          function updateRunsCompactRailPosition() {
+            const compactRail = document.getElementById("runs-panel-compact-rail");
+            const globalRail = document.querySelector(".global-rail");
+            const detailPanel = document.getElementById("run-detail-panel");
+            if (!compactRail || !globalRail || !detailPanel || !canCollapseRunsPanel()) {
+              if (compactRail) compactRail.style.removeProperty("--runs-panel-compact-left");
+              return;
+            }
+            const railRect = globalRail.getBoundingClientRect();
+            const detailRect = detailPanel.getBoundingClientRect();
+            const compactWidth = compactRail.getBoundingClientRect().width || 58;
+            const gap = detailRect.left - railRect.right;
+            if (!Number.isFinite(gap) || gap <= compactWidth) {
+              compactRail.style.removeProperty("--runs-panel-compact-left");
+              return;
+            }
+            const sideGap = (gap - compactWidth) / 2;
+            const left = railRect.right + sideGap;
+            compactRail.style.setProperty("--runs-panel-compact-left", `${Math.round(left)}px`);
+          }
+          function queueRunsCompactRailPosition() {
+            if (runsCompactRailPositionFrame) cancelAnimationFrame(runsCompactRailPositionFrame);
+            runsCompactRailPositionFrame = requestAnimationFrame(() => {
+              runsCompactRailPositionFrame = requestAnimationFrame(() => {
+                runsCompactRailPositionFrame = null;
+                updateRunsCompactRailPosition();
+              });
+            });
+          }
+          function syncRunsPanelState() {
+            const dock = document.getElementById("runs-dock");
+            const toggle = document.getElementById("runs-panel-toggle");
+            const icon = document.getElementById("runs-panel-toggle-icon");
+            const compactRail = document.getElementById("runs-panel-compact-rail");
+            const shell = document.querySelector(".dashboard-shell");
+            if (!dock) return;
+            const canCollapse = canCollapseRunsPanel() && !!currentRunId;
+            const collapsed = canCollapse && runsPanelCollapsed;
+            if (!currentRunId && runsPanelCollapsed) {
+              runsPanelCollapsed = false;
+              persistRunsPanelCollapsedState();
+            }
+            dock.classList.toggle("is-collapsed", collapsed);
+            if (toggle) {
+              toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+              toggle.title = !currentRunId
+                ? "Select a run before collapsing the runs list"
+                : collapsed
+                  ? "Expand runs list"
+                  : "Collapse runs list";
+              toggle.disabled = !currentRunId;
+            }
+            if (icon) icon.textContent = collapsed ? "→" : "←";
+            if (compactRail) compactRail.setAttribute("aria-hidden", collapsed ? "false" : "true");
+            if (shell) shell.classList.toggle("is-hero-hidden", collapsed);
+            queueRunsCompactRailPosition();
+          }
+          function toggleRunsPanel(forceState) {
+            if (!canCollapseRunsPanel()) {
+              runsPanelCollapsed = false;
+              syncRunsPanelState();
+              return;
+            }
+            if (!currentRunId) {
+              runsPanelCollapsed = false;
+              syncRunsPanelState();
+              return;
+            }
+            runsPanelCollapsed = typeof forceState === "boolean" ? forceState : !runsPanelCollapsed;
+            persistRunsPanelCollapsedState();
+            syncRunsPanelState();
+          }
+          function autoCollapseRunsPanel() {
+            if (!canCollapseRunsPanel() || runsPanelCollapsed) return;
+            runsPanelCollapsed = true;
+            persistRunsPanelCollapsedState();
+            syncRunsPanelState();
           }
           function loadVariantBoardCollapsedState() {
             try {
@@ -828,7 +924,14 @@ def _dashboard_shared_js() -> str:
               await loadDataSources();
               await refreshRuns();
               if (currentRunId) {
-                try { await selectRun(currentRunId); } catch (_err) { document.getElementById("run-detail").innerHTML = "Select a run."; }
+                try { await selectRun(currentRunId); } catch (_err) {
+                  currentRunId = null;
+                  const detail = document.getElementById("run-detail");
+                  detail.classList.add("run-detail-empty");
+                  detail.classList.remove("run-detail-content");
+                  detail.innerHTML = "Select a run.";
+                  syncRunsPanelState();
+                }
               }
             } finally {
               dataSourceSelectInFlight = false;
@@ -1525,7 +1628,12 @@ def _dashboard_shared_js() -> str:
           }
 
           function renderTimeline(run) {
-            const stages = run.stage_tasks || [];
+            const stages = [...(run.stage_tasks || [])].sort((a, b) => {
+              const ta = Date.parse(a.started_at || a.updated_at || a.created_at || "") || 0;
+              const tb = Date.parse(b.started_at || b.updated_at || b.created_at || "") || 0;
+              if (ta !== tb) return tb - ta;
+              return String(b.id || "").localeCompare(String(a.id || ""));
+            });
             if (!stages.length) return '<div class="run-detail-empty">No stage logs yet.</div>';
             return `
               <div id="timeline-board" class="agent-trace">
@@ -1633,30 +1741,96 @@ def _dashboard_shared_js() -> str:
             if (!scorecard) return `<span class="muted">No score yet.</span>`;
             const subScores = scorecard.sub_scores || {};
             const subScoreRows = Object.entries(subScores).map(([key, value]) => `
-              <div class="metric-row"><span>${esc(key.replaceAll("_", " "))}</span><b>${esc(value)}</b></div>
+              <div class="scorecard-item">
+                <span>${esc(key.replaceAll("_", " "))}</span>
+                <span class="scorecard-item-value">${esc(value)}</span>
+              </div>
             `).join("");
-            const risks = (scorecard.risk_labels || []).length
-              ? `<div class="pill-row">${scorecard.risk_labels.map((label) => `<span class="pill">${esc(label)}</span>`).join("")}</div>`
-              : "";
+            const riskRows = [
+              ["Compliance", scorecard.compliance_level || "-"],
+              ["AI artifact score", scorecard.ai_artifact_score ?? "-"],
+              ...((scorecard.risk_labels || []).map((label, index) => [`Risk ${index + 1}`, label]))
+            ].map(([label, value]) => `
+              <div class="scorecard-item">
+                <span>${esc(label)}</span>
+                <span class="scorecard-item-value">${esc(value)}</span>
+              </div>
+            `).join("");
             return `
               <div class="scorecard-summary">
-                <div class="scorecard-total">
-                  <span class="muted">Total Score</span>
-                  <strong>${esc(scorecard.total_score ?? "-")}</strong>
+                <div class="scorecard-hero">
+                  <div>
+                    <div class="scorecard-kicker">Latest Scorecard</div>
+                    <div class="scorecard-total-line">
+                      <span class="scorecard-total-caption">Total Score</span>
+                      <span class="scorecard-total-value">${esc(scorecard.total_score ?? "-")}</span>
+                    </div>
+                  </div>
+                  <div class="scorecard-top-metrics">
+                    <span class="scorecard-badge">Compliance <b>${esc(scorecard.compliance_level || "-")}</b></span>
+                    <span class="scorecard-badge">AI Artifact <b>${esc(scorecard.ai_artifact_score ?? "-")}</b></span>
+                  </div>
                 </div>
                 <div class="scorecard-grid">
-                  <section>
-                    <h4>Sub Scores</h4>
-                    ${subScoreRows || `<div class="muted">No sub scores.</div>`}
+                  <section class="scorecard-panel">
+                    <h4 class="scorecard-panel-title">Sub Scores</h4>
+                    ${subScoreRows
+                      ? `<div class="scorecard-list">${subScoreRows}</div>`
+                      : `<div class="muted">No sub scores.</div>`}
                   </section>
-                  <section>
-                    <h4>Risk & Compliance</h4>
-                    ${risks}
-                    <div class="metric-row"><span>Compliance</span><b>${esc(scorecard.compliance_level || "-")}</b></div>
-                    <div class="metric-row"><span>AI artifact score</span><b>${esc(scorecard.ai_artifact_score ?? "-")}</b></div>
+                  <section class="scorecard-panel">
+                    <h4 class="scorecard-panel-title">Risk & Compliance</h4>
+                    <div class="scorecard-list">${riskRows}</div>
                   </section>
                 </div>
                 <div class="scorecard-note">${esc(scorecard.explanation?.selection || scorecard.explanation || "No explanation.")}</div>
+              </div>
+            `;
+          }
+          function renderScorecardStatusSummary(scorecard){
+            if (!scorecard) return "";
+            const topSubScores = Object.entries(scorecard.sub_scores || {}).slice(0, 4).map(([key, value]) => `
+              <div class="scorecard-item">
+                <span>${esc(key.replaceAll("_", " "))}</span>
+                <span class="scorecard-item-value">${esc(value)}</span>
+              </div>
+            `).join("");
+            const riskRows = [
+              ["Compliance", scorecard.compliance_level || "-"],
+              ["AI artifact score", scorecard.ai_artifact_score ?? "-"],
+              ...((scorecard.risk_labels || []).slice(0, 2).map((label, index) => [`Risk ${index + 1}`, label]))
+            ].map(([label, value]) => `
+              <div class="scorecard-item">
+                <span>${esc(label)}</span>
+                <span class="scorecard-item-value">${esc(value)}</span>
+              </div>
+            `).join("");
+            return `
+              <div class="status-scorecard">
+                <div class="status-scorecard-head">
+                  <div>
+                    <div class="status-explainer-kicker">Outcome Scorecard</div>
+                    <div class="status-scorecard-total">
+                      <span>Total score</span>
+                      <strong>${esc(scorecard.total_score ?? "-")}</strong>
+                    </div>
+                  </div>
+                  <div class="status-scorecard-badges">
+                    <span class="scorecard-badge">Compliance <b>${esc(scorecard.compliance_level || "-")}</b></span>
+                    <span class="scorecard-badge">AI Artifact <b>${esc(scorecard.ai_artifact_score ?? "-")}</b></span>
+                  </div>
+                </div>
+                <div class="status-scorecard-grid">
+                  <section class="status-scorecard-panel">
+                    <h4>Top Sub Scores</h4>
+                    <div class="scorecard-list">${topSubScores || '<div class="muted">No sub scores.</div>'}</div>
+                  </section>
+                  <section class="status-scorecard-panel">
+                    <h4>Risk & Compliance</h4>
+                    <div class="scorecard-list">${riskRows}</div>
+                  </section>
+                </div>
+                <div class="status-scorecard-note">${esc(scorecard.explanation?.selection || scorecard.explanation || "No explanation.")}</div>
               </div>
             `;
           }
@@ -1941,6 +2115,7 @@ def _dashboard_shared_js() -> str:
           function renderStatusExplanation(run){
             const info = run.status_explanation || {};
             const actions = (info.next_actions || []).map((item) => `<li>${esc(item)}</li>`).join("");
+            const scorecardSummary = run.status === "completed" ? renderScorecardStatusSummary(run.latest_scorecard) : "";
             return `
               <section class="${statusExplanationClass(info.tone)}">
                 <div class="status-explainer-main">
@@ -1952,6 +2127,7 @@ def _dashboard_shared_js() -> str:
                   <div class="status-explainer-action">${esc(info.primary_action || "Review run")}</div>
                 </div>
                 ${renderFailureReasons(info)}
+                ${scorecardSummary}
                 ${actions ? `<ol>${actions}</ol>` : ""}
               </section>
             `;
@@ -2087,6 +2263,9 @@ def _dashboard_shared_js() -> str:
 
           function renderRunDetail(run, deliverables, variants, executionMemory){
             const score = renderScorecard(run.latest_scorecard);
+            const scoreSection = run.status === "completed" && run.latest_scorecard
+              ? ""
+              : `<h3 style="margin-top:14px;">Latest Scorecard</h3>${score}`;
             return `
               <div class="run-meta-compact">
                 <div><b>Run:</b> ${esc(run.id)}</div>
@@ -2104,8 +2283,7 @@ def _dashboard_shared_js() -> str:
               <div id="agent-trace-container">${renderAgentTrace(run)}</div>
               <h3 style="margin-top:14px;">Stage Timeline</h3>
               ${renderTimeline(run)}
-              <h3 style="margin-top:14px;">Latest Scorecard</h3>
-              ${score}
+              ${scoreSection}
             `;
           }
 
@@ -2129,6 +2307,7 @@ def _dashboard_shared_js() -> str:
             connectRunEvents(runId);
             startRunDetailPolling(runId);
             setTimeout(loadScheduleIndicators, 300);
+            autoCollapseRunsPanel();
           }
 
           async function loadPipelineModes(){
@@ -2216,13 +2395,16 @@ def _dashboard_shared_js() -> str:
 
           function updateRefreshIndicator(active) {
             const indicator = document.getElementById("runs-refresh-indicator");
+            const compactDot = document.getElementById("runs-compact-live-dot");
             if (!indicator) return;
             if (active) {
               indicator.classList.add("active");
               indicator.title = "Auto-refreshing every 5s";
+              if (compactDot) compactDot.classList.add("active");
             } else {
               indicator.classList.remove("active");
               indicator.title = "Auto-refresh paused (tab hidden)";
+              if (compactDot) compactDot.classList.remove("active");
             }
           }
 
@@ -2239,9 +2421,19 @@ def _dashboard_shared_js() -> str:
             }
           });
 
+          window.addEventListener("resize", () => {
+            if (!canCollapseRunsPanel() && runsPanelCollapsed) {
+              runsPanelCollapsed = false;
+              persistRunsPanelCollapsedState();
+            }
+            syncRunsPanelState();
+          });
+
           refreshResearchHint();
+          loadRunsPanelCollapsedState();
           loadVariantBoardCollapsedState();
           loadPipelineModes();
+          syncRunsPanelState();
           loadDataSources().then(async () => {
             await refreshRuns();
             const hash = window.location.hash || "";
