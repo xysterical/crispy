@@ -2463,6 +2463,7 @@ def test_visual_quality_assessment_blocks_failed_visual_proof_review():
             {
               "variant_id": "V1",
               "status": "fail",
+              "visual_score": 42,
               "evidence": "Dog is lunging forward with taut leash.",
               "failed_conditions": ["image communicates active pulling instead of controlled anti-pull redirection"]
             }
@@ -2599,8 +2600,67 @@ def test_visual_quality_assessment_marks_unavailable_model_review_for_manual_rev
     assert output.payload["model_summary"].startswith("model_review_unavailable:")
     assert summary["qa_status"] == "warn"
     assert summary["recommended_action"] == "manual_review"
+    assert summary["visual_score"] is None
     assert "visual_qa_model_review_unavailable" in summary["issues"]
     assert report["model_review_status"] == "unavailable"
+    assert report["visual_score"] is None
+
+
+def test_visual_quality_assessment_rejects_model_review_without_scores():
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: (
+        """
+        {
+          "model_summary": "The image looks acceptable.",
+          "visual_proof_reviews": [
+            {
+              "variant_id": "V1",
+              "status": "pass",
+              "evidence": "Product is visible.",
+              "failed_conditions": []
+            }
+          ]
+        }
+        """,
+        "stub-model",
+        0.0,
+    )
+
+    output = runtime.run_visual_quality_assessment(
+        run_id="runtime-visual-model-missing-score",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="secure fit",
+                    hook="Clip in confidence",
+                    message="Show a clear product image.",
+                )
+            ]
+        ),
+        copy_images={
+            "image_assets": [
+                {
+                    "variant_id": "V1",
+                    "uri": "assets/nonexistent.png",
+                    "visual_qa": {"status": "pass", "score": 95, "flags": [], "checks": []},
+                }
+            ]
+        },
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    summary = output.payload["variant_summaries"][0]
+    report = output.payload["reports"][0]
+    assert output.payload["model_review_status"] == "unavailable"
+    assert output.payload["model_summary"].startswith("model_review_unavailable: parse_error:")
+    assert summary["qa_status"] == "warn"
+    assert summary["recommended_action"] == "manual_review"
+    assert summary["visual_score"] is None
+    assert "visual_qa_model_review_unavailable" in summary["issues"]
+    assert report["model_review_status"] == "unavailable"
+    assert report["visual_score"] is None
 
 
 def test_visual_quality_assessment_blocks_image_asset_contract_failure():
@@ -3039,6 +3099,64 @@ def test_evaluation_selection_rejects_unscored_model_response(tmp_path):
             provider="kimi",
             model="kimi-k2.6",
         )
+
+
+def test_evaluation_selection_gates_unavailable_visual_model_review(tmp_path):
+    image_path = tmp_path / "variant.png"
+    image_path.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    ) * 40)
+
+    runtime = AgentsRuntime()
+    runtime._chat_complete = lambda *args, **kwargs: (
+        '{"variants":[{"variant_id":"V1","hook_appeal":86,"copy_clarity":84,'
+        '"brand_alignment":82,"visual_execution":80,"compliance_safety":90,'
+        '"total_score":88,"compliance_level":"low","recommended_action":"approve_variant",'
+        '"compliance_block":{"level":"low","score":90,"risks":[],"reasons":["No prohibited claim."],"recommendation":"approve_variant"},'
+        '"brief_reason":"Strong candidate."}]}',
+        "kimi-k2.6",
+        0.0,
+    )
+
+    output = runtime.run_evaluation_selection(
+        run_id="eval-visual-model-unavailable",
+        variant_set=VariantSet(variants=[
+            VariantCandidate(variant_id="V1", angle="comfort", hook="Walk calmer", message="Padded harness.")
+        ]),
+        copy_bundle=CopyImageBundle(
+            copy_variants=[
+                CopyVariant(
+                    variant_id="V1",
+                    primary_text="Walk calmer with padded support.",
+                    headline="Calmer Walks",
+                    description="Padded harness.",
+                    call_to_action="Shop Now",
+                )
+            ],
+            image_assets=[ImageAssetRef(variant_id="V1", uri=str(image_path), prompt="dog harness ad")],
+        ),
+        script_pack=VideoScriptPack(scripts=[]),
+        video_bundle=VideoBundle(videos=[]),
+        visual_quality={
+            "variant_summaries": [
+                {
+                    "variant_id": "V1",
+                    "qa_status": "warn",
+                    "visual_score": None,
+                    "recommended_action": "manual_review",
+                    "issues": ["visual_qa_model_review_unavailable"],
+                }
+            ]
+        },
+        provider="kimi",
+        model="kimi-k2.6",
+    )
+
+    ranked = output.payload["evaluation_result"]["ranked_variants"][0]
+    assert ranked["total_score"] == 59.0
+    assert ranked["recommended_action"] == "manual_review"
+    assert ranked["sub_scores"]["visual_qa"] == 50.0
+    assert "Visual QA model review unavailable." in ranked["reasons"]
 
 
 # ---------------------------------------------------------------------------

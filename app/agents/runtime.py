@@ -1793,12 +1793,19 @@ class AgentsRuntime:
         parsed = self._parse_llm_json(model_summary, schema_key="visual_proof_reviews")
         reviews = parsed.get("visual_proof_reviews") or []
         if not isinstance(reviews, list):
-            return str(parsed.get("model_summary") or model_summary)
+            raise ValueError("visual_proof_reviews must be a list")
         by_variant = {
             str(item.get("variant_id") or ""): item
             for item in reviews
             if isinstance(item, dict) and str(item.get("variant_id") or "").strip()
         }
+        missing_scores = [
+            str(report.get("variant_id") or "")
+            for report in reports
+            if not isinstance((by_variant.get(str(report.get("variant_id") or "")) or {}).get("visual_score"), (int, float))
+        ]
+        if missing_scores:
+            raise ValueError(f"visual_score missing for variants: {', '.join(missing_scores)}")
         for report in reports:
             review = by_variant.get(str(report.get("variant_id") or ""))
             if not review:
@@ -1835,6 +1842,28 @@ class AgentsRuntime:
                 summary["recommended_action"] = "request_regeneration"
                 summary["blocking_issue_count"] = max(int(summary.get("blocking_issue_count") or 0), len(issues))
         return str(parsed.get("model_summary") or model_summary)
+
+    def _mark_visual_model_review_unavailable(
+        self,
+        *,
+        reports: list[dict],
+        summaries: list[dict],
+    ) -> None:
+        for report in reports:
+            report["model_review_status"] = "unavailable"
+            report["visual_score"] = None
+            if report.get("qa_status") == "pass":
+                report["qa_status"] = "warn"
+                report["recommended_action"] = "manual_review"
+                report["review_notes"] = f"{report.get('variant_id')} visual QA warn; model review unavailable."
+        for summary in summaries:
+            summary["visual_score"] = None
+            if summary.get("qa_status") == "pass":
+                summary["qa_status"] = "warn"
+                summary["recommended_action"] = "manual_review"
+            issues = list(summary.get("issues") or [])
+            issues.append("visual_qa_model_review_unavailable")
+            summary["issues"] = sorted(set(issues))
 
     def _compose_stage_prompt(
         self,
@@ -4196,20 +4225,7 @@ class AgentsRuntime:
             )
         except Exception as exc:
             model_summary = f"model_review_unavailable: {str(exc)[:240]}"
-            for report in reports:
-                if report.get("qa_status") == "pass":
-                    report["qa_status"] = "warn"
-                    report["recommended_action"] = "manual_review"
-                    report["review_notes"] = f"{report.get('variant_id')} visual QA warn; model review unavailable."
-                report["model_review_status"] = "unavailable"
-            for summary in summaries:
-                if summary.get("qa_status") == "pass":
-                    summary["qa_status"] = "warn"
-                    summary["recommended_action"] = "manual_review"
-                issues = list(summary.get("issues") or [])
-                if "visual_qa_model_review_unavailable" not in issues:
-                    issues.append("visual_qa_model_review_unavailable")
-                summary["issues"] = sorted(set(issues))
+            self._mark_visual_model_review_unavailable(reports=reports, summaries=summaries)
         else:
             try:
                 model_summary = self._apply_visual_proof_reviews(
@@ -4219,18 +4235,7 @@ class AgentsRuntime:
                 )
             except ValueError as exc:
                 model_summary = f"model_review_unavailable: parse_error: {str(exc)[:200]}"
-                for report in reports:
-                    report["model_review_status"] = "unavailable"
-                    if report.get("qa_status") == "pass":
-                        report["qa_status"] = "warn"
-                        report["recommended_action"] = "manual_review"
-                for summary in summaries:
-                    issues = list(summary.get("issues") or [])
-                    issues.append("visual_qa_model_review_unavailable")
-                    summary["issues"] = sorted(set(issues))
-                    if summary.get("qa_status") == "pass":
-                        summary["qa_status"] = "warn"
-                        summary["recommended_action"] = "manual_review"
+                self._mark_visual_model_review_unavailable(reports=reports, summaries=summaries)
 
         payload = {
             "reports": reports,
@@ -4378,6 +4383,10 @@ class AgentsRuntime:
         if qa_status == "pending" or qa_action == "wait_for_asset":
             return min(total, 59.0), "manual_review", risks, reasons + ["Video generation still in progress."]
 
+        # Gate 4: model visual review was required but unavailable
+        if "visual_qa_model_review_unavailable" in qa_issues:
+            return min(total, 59.0), "manual_review", risks, reasons + ["Visual QA model review unavailable."]
+
         return total, action, risks, reasons
 
     def _evaluation_compliance_block(self, llm_scores: dict) -> dict:
@@ -4512,7 +4521,7 @@ class AgentsRuntime:
                 val = llm.get(k)
                 sub_scores[k] = round(float(val), 2) if isinstance(val, (int, float)) else 50.0
             vq_score = ctx.get("visual_qa_score")
-            sub_scores["visual_qa"] = round(float(vq_score), 2) if isinstance(vq_score, (int, float)) else 100.0
+            sub_scores["visual_qa"] = round(float(vq_score), 2) if isinstance(vq_score, (int, float)) else 50.0
             compliance_block = self._evaluation_compliance_block(llm)
 
             level_raw = str(compliance_block.get("level") or "low").lower()
