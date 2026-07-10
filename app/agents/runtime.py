@@ -4437,10 +4437,15 @@ class AgentsRuntime:
         )
         evaluation_runtime_config = dict(runtime_config or {})
         evaluation_extra = dict(evaluation_runtime_config.get("extra") or {})
-        evaluation_extra.setdefault("request_timeout_seconds", 180)
+        current_timeout = int(evaluation_runtime_config.get("request_timeout_seconds") or evaluation_extra.get("request_timeout_seconds") or 0)
+        evaluation_extra["request_timeout_seconds"] = max(current_timeout, 180)
+        evaluation_runtime_config["request_timeout_seconds"] = evaluation_extra["request_timeout_seconds"]
         if provider == "kimi" or model.startswith("kimi-k"):
-            evaluation_extra.setdefault("thinking_mode", "disabled")
-            evaluation_extra.setdefault("max_output_tokens", 2400)
+            evaluation_extra["thinking_mode"] = "disabled"
+            evaluation_runtime_config["thinking_mode"] = "disabled"
+            current_max_tokens = int(evaluation_runtime_config.get("max_output_tokens") or evaluation_extra.get("max_output_tokens") or 0)
+            evaluation_extra["max_output_tokens"] = max(current_max_tokens, 6000)
+            evaluation_runtime_config["max_output_tokens"] = evaluation_extra["max_output_tokens"]
         evaluation_runtime_config["extra"] = evaluation_extra
 
         model_image_inputs: list[str] = []

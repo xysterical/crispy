@@ -3141,7 +3141,7 @@ def test_evaluation_selection_sends_compressed_images_to_kimi(tmp_path):
     assert captured["image_urls"][0].startswith("data:image/jpeg;base64,")
     assert captured["runtime_config"]["extra"]["request_timeout_seconds"] == 180
     assert captured["runtime_config"]["extra"]["thinking_mode"] == "disabled"
-    assert captured["runtime_config"]["extra"]["max_output_tokens"] == 2400
+    assert captured["runtime_config"]["extra"]["max_output_tokens"] == 6000
     assert "Attached images map to variants" in captured["prompt"]
     assert "Include a compliance_block object per variant" in captured["prompt"]
     assert output.payload["model_media_inputs"]["image_count"] == 1
@@ -3151,6 +3151,66 @@ def test_evaluation_selection_sends_compressed_images_to_kimi(tmp_path):
     assert ranked["compliance_block"]["reasons"] == ["No prohibited claim."]
     assert output.payload["compliance_block"]["V1"]["score"] == 90
     assert runtime_config == {"extra": {}}
+
+
+def test_evaluation_selection_forces_kimi_review_budget(tmp_path):
+    image_path = tmp_path / "variant.png"
+    image_path.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    ) * 40)
+    captured = {}
+
+    def fake_chat_complete(provider, model, prompt, runtime_config, **kwargs):
+        captured["runtime_config"] = runtime_config
+        return (
+            '{"variants":[{"variant_id":"V1","hook_appeal":80,"copy_clarity":79,'
+            '"brand_alignment":78,"visual_execution":77,"compliance_safety":90,'
+            '"total_score":81,"compliance_level":"low","recommended_action":"approve_variant",'
+            '"compliance_block":{"level":"low","score":90,"risks":[],"reasons":["No prohibited claim."],"recommendation":"approve_variant"},'
+            '"brief_reason":"Best image."}]}',
+            "kimi-k2.6",
+            0.0,
+        )
+
+    runtime = AgentsRuntime()
+    runtime._chat_complete = fake_chat_complete
+    runtime.run_evaluation_selection(
+        run_id="eval-kimi-budget",
+        variant_set=VariantSet(variants=[
+            VariantCandidate(variant_id="V1", angle="comfort", hook="Walk calmer", message="Padded harness.")
+        ]),
+        copy_bundle=CopyImageBundle(
+            copy_variants=[
+                CopyVariant(
+                    variant_id="V1",
+                    primary_text="Walk calmer with padded support.",
+                    headline="Calmer Walks",
+                    description="Padded harness.",
+                    call_to_action="Shop Now",
+                )
+            ],
+            image_assets=[ImageAssetRef(variant_id="V1", uri=str(image_path), prompt="dog harness ad")],
+        ),
+        script_pack=VideoScriptPack(scripts=[]),
+        video_bundle=VideoBundle(videos=[]),
+        visual_quality={"variant_summaries": [{"variant_id": "V1", "qa_status": "pass", "visual_score": 88}]},
+        provider="kimi",
+        model="kimi-k2.6",
+        runtime_config={
+            "thinking_mode": "auto",
+            "max_output_tokens": 1800,
+            "request_timeout_seconds": 90,
+            "extra": {},
+        },
+    )
+
+    runtime_config = captured["runtime_config"]
+    assert runtime_config["thinking_mode"] == "disabled"
+    assert runtime_config["max_output_tokens"] == 6000
+    assert runtime_config["request_timeout_seconds"] == 180
+    assert runtime_config["extra"]["thinking_mode"] == "disabled"
+    assert runtime_config["extra"]["max_output_tokens"] == 6000
+    assert runtime_config["extra"]["request_timeout_seconds"] == 180
 
 
 def test_evaluation_selection_rejects_unscored_model_response(tmp_path):

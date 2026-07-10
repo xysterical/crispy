@@ -85,6 +85,7 @@ logger = logging.getLogger(__name__)
 
 RETRYABLE_FAILURES = {
     TaskFailureCategory.PROVIDER_ERROR.value,
+    TaskFailureCategory.SCHEMA_ERROR.value,
     TaskFailureCategory.TIMEOUT.value,
 }
 
@@ -1025,12 +1026,23 @@ def _persona_snapshots(db: Session, agent_names: list[str]) -> dict:
 
 
 def _classify_failure(exc: Exception) -> str:
+    if isinstance(exc, json.JSONDecodeError):
+        return TaskFailureCategory.SCHEMA_ERROR.value
     message = str(exc).lower()
     if "timeout" in message:
         return TaskFailureCategory.TIMEOUT.value
     if "compliance" in message and "block" in message:
         return TaskFailureCategory.COMPLIANCE_BLOCK.value
-    if "validation" in message or "pydantic" in message or "schema" in message:
+    if (
+        "validation" in message
+        or "pydantic" in message
+        or "schema" in message
+        or "json" in message
+        or "expecting" in message
+        or "missing total_score" in message
+        or "missing sub-scores" in message
+        or "evaluation response" in message
+    ):
         return TaskFailureCategory.SCHEMA_ERROR.value
     if "provider" in message or "request failed" in message or "endpoint" in message or "api" in message:
         return TaskFailureCategory.PROVIDER_ERROR.value

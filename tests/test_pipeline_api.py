@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,7 +10,7 @@ from app.data.models import VariantAsset
 from app.data.session import SessionLocal
 from app.providers.llm import GeneratedImage, GeneratedVideo, ImageGenResult, VideoGenResult
 from app.orchestrator.state_machine import STAGE_ORDER, stage_plan_for
-from app.services.runs import _build_task_input, _generated_asset_failure, _qa_repair_context, _retry_delay, _submit_next_video_segment, execute_next_queued_stage
+from app.services.runs import RETRYABLE_FAILURES, _build_task_input, _classify_failure, _generated_asset_failure, _qa_repair_context, _retry_delay, _submit_next_video_segment, execute_next_queued_stage
 
 
 def _run_worker_once() -> None:
@@ -87,6 +88,16 @@ def test_retryable_stage_failure_waits_in_queue(client, monkeypatch):
     assert _retry_delay(2) == 300.0
     assert _retry_delay(3) == 480.0
     assert _retry_delay(99) == 480.0
+
+
+def test_malformed_model_json_is_retryable_schema_error():
+    try:
+        json.loads('{"variants": [')
+    except json.JSONDecodeError as exc:
+        assert _classify_failure(exc) == "schema_error"
+
+    assert _classify_failure(ValueError("Evaluation response missing total_score for V1")) == "schema_error"
+    assert "schema_error" in RETRYABLE_FAILURES
 
 
 def test_qa_repair_context_maps_visual_qa_flags_to_actions():
