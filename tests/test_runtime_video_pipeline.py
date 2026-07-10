@@ -2991,6 +2991,99 @@ def test_parse_llm_json_non_string_input_raises():
         runtime._parse_llm_json(None, "scripts")  # type: ignore[arg-type]
 
 
+def test_chat_complete_stage_extra_overrides_agent_defaults():
+    captured: dict[str, object] = {}
+
+    class CapturingProvider:
+        def chat_complete(self, request, *, api_base_url=None, api_key=None, extra=None):
+            captured["extra"] = dict(extra or {})
+            return type("Response", (), {"text": "ok", "model_used": request.model, "estimated_cost": 0.0})()
+
+    class CapturingRegistry:
+        def get(self, provider):
+            return CapturingProvider()
+
+    runtime = AgentsRuntime()
+    runtime.providers = CapturingRegistry()
+    runtime._chat_complete(
+        "kimi",
+        "kimi-k2.6",
+        "ping",
+        {
+            "thinking_mode": "auto",
+            "max_output_tokens": 1800,
+            "request_timeout_seconds": 90,
+            "extra": {
+                "thinking_mode": "disabled",
+                "max_output_tokens": 2400,
+                "request_timeout_seconds": 180,
+            },
+        },
+    )
+
+    assert captured["extra"] == {
+        "thinking_mode": "disabled",
+        "max_output_tokens": 2400,
+        "request_timeout_seconds": 180,
+    }
+
+
+def test_visual_quality_assessment_disables_kimi_thinking_for_model_review():
+    runtime = AgentsRuntime()
+    captured: dict[str, object] = {}
+
+    def fake_chat_complete(provider, model, prompt, runtime_config, **kwargs):
+        captured["provider"] = provider
+        captured["model"] = model
+        captured["runtime_config"] = runtime_config
+        return (
+            '{"model_summary":"ok","visual_proof_reviews":[{"variant_id":"V1","status":"pass","visual_score":84,"evidence":"product visible","failed_conditions":[]}]}',
+            "stub-model",
+            0.0,
+        )
+
+    runtime._chat_complete = fake_chat_complete
+    runtime.run_visual_quality_assessment(
+        run_id="runtime-visual-kimi-review-config",
+        variant_set=VariantSet(
+            variants=[
+                VariantCandidate(
+                    variant_id="V1",
+                    angle="secure fit",
+                    hook="Clip in confidence",
+                    message="Show a clear product image.",
+                )
+            ]
+        ),
+        copy_images={
+            "image_assets": [
+                {
+                    "variant_id": "V1",
+                    "uri": "assets/nonexistent.png",
+                    "visual_qa": {"status": "pass", "score": 95, "flags": [], "checks": []},
+                }
+            ]
+        },
+        provider="kimi",
+        model="kimi-k2.6",
+        runtime_config={
+            "thinking_mode": "auto",
+            "max_output_tokens": 1800,
+            "request_timeout_seconds": 90,
+            "extra": {},
+        },
+    )
+
+    runtime_config = captured["runtime_config"]
+    assert isinstance(runtime_config, dict)
+    assert runtime_config["thinking_mode"] == "disabled"
+    assert runtime_config["max_output_tokens"] == 2400
+    assert runtime_config["request_timeout_seconds"] == 180
+    assert runtime_config["extra"]["thinking_mode"] == "disabled"
+    assert runtime_config["extra"]["max_output_tokens"] == 2400
+    assert runtime_config["extra"]["request_timeout_seconds"] == 180
+
+
 def test_evaluation_selection_sends_compressed_images_to_kimi(tmp_path):
     image_path = tmp_path / "variant.png"
     image_path.write_bytes(base64.b64decode(

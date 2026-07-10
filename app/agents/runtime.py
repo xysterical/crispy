@@ -204,7 +204,7 @@ class AgentsRuntime:
         runtime = runtime_config or {}
         extra = dict(runtime.get("extra") or {})
         for key in ("thinking_mode", "thinking_budget_tokens", "max_output_tokens", "request_timeout_seconds"):
-            if runtime.get(key) is not None:
+            if runtime.get(key) is not None and key not in extra:
                 extra[key] = runtime.get(key)
         streaming_enabled = bool(runtime.get("streaming_enabled") or extra.get("streaming_enabled"))
         trace_callback = runtime.get("trace_callback")
@@ -4212,7 +4212,15 @@ class AgentsRuntime:
         estimated_cost = 0.0
         review_runtime_config = dict(runtime_config or {})
         review_extra = dict(review_runtime_config.get("extra") or {})
-        review_extra.setdefault("request_timeout_seconds", 180)
+        current_timeout = int(review_runtime_config.get("request_timeout_seconds") or review_extra.get("request_timeout_seconds") or 0)
+        review_extra["request_timeout_seconds"] = max(current_timeout, 180)
+        review_runtime_config["request_timeout_seconds"] = review_extra["request_timeout_seconds"]
+        if provider == "kimi" or model.startswith("kimi-k"):
+            review_extra["thinking_mode"] = "disabled"
+            review_runtime_config["thinking_mode"] = "disabled"
+            current_max_tokens = int(review_runtime_config.get("max_output_tokens") or review_extra.get("max_output_tokens") or 0)
+            review_extra["max_output_tokens"] = max(current_max_tokens, 2400)
+            review_runtime_config["max_output_tokens"] = review_extra["max_output_tokens"]
         review_runtime_config["extra"] = review_extra
         try:
             model_summary, model_used, estimated_cost = self._chat_complete(
