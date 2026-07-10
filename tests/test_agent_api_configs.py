@@ -293,6 +293,8 @@ def test_data_dashboard_page_loads(client):
     assert "Creative Decision Attribution" in resp.text
     assert "CSV Fallback Imports" in resp.text
     assert "csv-stager" in resp.text
+    assert "csv-upload-actions" in resp.text
+    assert "csv-upload-btn" in resp.text
     assert "No CSV files staged" in resp.text
     assert "Use Shopify CSV with product_code/sku" in resp.text
     assert "chooseOfflineCsv" in resp.text

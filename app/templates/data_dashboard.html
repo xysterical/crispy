@@ -89,6 +89,12 @@
   .tag-warn { background: #fff6e6; color: #9a6b00; }
   .tag-rising { background: #e6f7ee; color: #1a6b44; }
   .tag-declining { background: #ffeaea; color: #a04040; }
+  .csv-upload-actions {
+    display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 8px;
+  }
+  .csv-upload-btn {
+    width: 148px; justify-content: center;
+  }
   .csv-stager {
     border: 1px dashed #9ac7ad; border-radius: 10px; background: #f8fbf9;
     min-height: 86px; padding: 10px; margin-top: 10px;
@@ -149,8 +155,10 @@
         <h3>CSV Fallback Imports</h3>
         <input id="offline-shopify-file" type="file" accept=".csv,text/csv" style="display:none;" onchange="uploadOfflineCsv('shopify')" />
         <input id="offline-meta-file" type="file" accept=".csv,text/csv" style="display:none;" onchange="uploadOfflineCsv('meta')" />
-        <button onclick="chooseOfflineCsv('shopify')">Import Shopify CSV</button>
-        <button onclick="chooseOfflineCsv('meta')" class="secondary-btn" style="margin-left:6px;">Import Meta CSV</button>
+        <div class="csv-upload-actions">
+          <button class="csv-upload-btn" onclick="chooseOfflineCsv('shopify')">Import Shopify CSV</button>
+          <button class="csv-upload-btn secondary-btn" onclick="chooseOfflineCsv('meta')">Import Meta CSV</button>
+        </div>
         <div id="offline-batches" class="csv-stager"></div>
         <div id="offline-csv-msg" class="muted" style="margin-top:8px;min-height:18px;"></div>
       </div>
