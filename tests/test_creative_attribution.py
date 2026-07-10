@@ -386,7 +386,10 @@ def test_offline_store_csv_import_simulates_shop_data_and_creative_metrics(clien
         params={"workspace_name": "w-attr", "project_name": "p-attr"},
     )
     assert batches.status_code == 200
-    assert {item["platform"] for item in batches.json()["items"]} == {"shopify", "meta"}
+    batch_items = batches.json()["items"]
+    assert {item["platform"] for item in batch_items} == {"shopify", "meta"}
+    assert {item["file_name"] for item in batch_items} == {"shopify.csv", "meta.csv"}
+    assert all(item["file_size_bytes"] > 0 for item in batch_items)
 
     summary = client.get(
         "/data-dashboard/summary",

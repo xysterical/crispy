@@ -30,6 +30,7 @@ def import_offline_store_csv(
     rows = _parse_csv(content)
     _validate_platform_rows(platform, rows)
     batch_id = f"offline-{platform}-{uuid.uuid4()}"
+    file_size_bytes = len(content)
     products_seen = 0
     product_metrics: dict[str, dict] = {}
     feedback_rows: list[FeedbackRow] = []
@@ -87,6 +88,7 @@ def import_offline_store_csv(
                         "offline_platform": platform,
                         "offline_batch_id": batch_id,
                         "file_name": file_name,
+                        "file_size_bytes": file_size_bytes,
                         "thumbstop_rate": _float(_first(row, "thumbstop_rate", "three_second_view_rate")),
                     },
                 )
@@ -101,6 +103,7 @@ def import_offline_store_csv(
         platform=platform,
         batch_id=batch_id,
         file_name=file_name,
+        file_size_bytes=file_size_bytes,
     )
 
     snapshots_created = 0
@@ -126,11 +129,15 @@ def import_offline_store_csv(
                 metrics["offline_batch_id"] = batch_id
                 metrics["offline_platform"] = platform
                 metrics["source_type"] = "offline_csv_import"
+                metrics["file_name"] = file_name
+                metrics["file_size_bytes"] = file_size_bytes
                 snapshot.metrics = metrics
 
     return {
         "batch_id": batch_id,
         "platform": platform,
+        "file_name": file_name,
+        "file_size_bytes": file_size_bytes,
         "rows": len(rows),
         "products_seen": products_seen,
         "product_memory_count": memory_count["product"],
@@ -238,6 +245,7 @@ def _write_store_memories(
     platform: str,
     batch_id: str,
     file_name: str,
+    file_size_bytes: int,
 ) -> dict[str, int]:
     product_count = 0
     all_dates: set[str] = set()
@@ -263,6 +271,8 @@ def _write_store_memories(
                     "source": "offline_csv_import",
                     "offline_platform": platform,
                     "offline_batch_id": batch_id,
+                    "file_name": file_name,
+                    "file_size_bytes": file_size_bytes,
                     "scope": "product",
                     "product_code": product_code,
                     "total_revenue": round(revenue, 2),
@@ -274,7 +284,7 @@ def _write_store_memories(
                     "summary": f"Offline CSV product {product_code}: ${revenue:.2f} uploaded revenue, {quantity} units.",
                     "winning_patterns": [],
                     "avoid_patterns": [],
-                    "evidence": [{"source": "offline_csv_import", "platform": platform, "file_name": file_name, "batch_id": batch_id}],
+                    "evidence": [{"source": "offline_csv_import", "platform": platform, "file_name": file_name, "file_size_bytes": file_size_bytes, "batch_id": batch_id}],
                     "metric_window": {"start": dates[0] if dates else None, "end": dates[-1] if dates else None},
                     "confidence": round(min(0.9, 0.5 + 0.05 * active_days), 2),
                 },
@@ -298,6 +308,8 @@ def _write_store_memories(
                 "source": "offline_csv_import",
                 "offline_platform": platform,
                 "offline_batch_id": batch_id,
+                "file_name": file_name,
+                "file_size_bytes": file_size_bytes,
                 "scope": "shop",
                 "shop_id": workspace_id,
                 "shop_name": workspace_name,
@@ -310,7 +322,7 @@ def _write_store_memories(
                 "summary": f"Offline CSV store: ${total_revenue:.2f} uploaded revenue across {len(product_metrics)} products.",
                 "winning_patterns": [],
                 "avoid_patterns": [],
-                "evidence": [{"source": "offline_csv_import", "platform": platform, "file_name": file_name, "product_count": len(product_metrics), "batch_id": batch_id}],
+                "evidence": [{"source": "offline_csv_import", "platform": platform, "file_name": file_name, "file_size_bytes": file_size_bytes, "product_count": len(product_metrics), "batch_id": batch_id}],
                 "metric_window": {"start": sorted_dates[0] if sorted_dates else None, "end": sorted_dates[-1] if sorted_dates else None},
                 "confidence": round(min(0.9, 0.5 + 0.05 * active_days), 2),
             },
@@ -342,11 +354,17 @@ def list_offline_csv_batches(db: Session, *, workspace_name: str, project_name: 
                 "project_name": project.name,
                 "memory_count": 0,
                 "total_revenue": 0.0,
+                "file_name": content.get("file_name") or f"{content.get('offline_platform') or 'offline'} CSV",
+                "file_size_bytes": int(content.get("file_size_bytes") or 0),
                 "created_at": row.created_at.isoformat() if row.created_at else None,
             },
         )
         item["memory_count"] += 1
         item["total_revenue"] = max(item["total_revenue"], float(content.get("total_revenue") or 0))
+        if content.get("file_name"):
+            item["file_name"] = content.get("file_name")
+        if content.get("file_size_bytes"):
+            item["file_size_bytes"] = int(content.get("file_size_bytes") or 0)
     snapshots = db.scalars(
         select(PerformanceSnapshot)
         .where(PerformanceSnapshot.project_id == project.id)
@@ -369,13 +387,23 @@ def list_offline_csv_batches(db: Session, *, workspace_name: str, project_name: 
                 "memory_count": 0,
                 "snapshot_count": 0,
                 "total_revenue": 0.0,
+                "file_name": metrics.get("file_name") or extra.get("file_name") or f"{metrics.get('offline_platform') or extra.get('offline_platform') or 'offline'} CSV",
+                "file_size_bytes": int(metrics.get("file_size_bytes") or extra.get("file_size_bytes") or 0),
                 "created_at": snapshot.created_at.isoformat() if snapshot.created_at else None,
             },
         )
         item["snapshot_count"] = int(item.get("snapshot_count") or 0) + 1
         item["total_revenue"] = max(item["total_revenue"], float(metrics.get("revenue") or 0))
+        file_name = metrics.get("file_name") or extra.get("file_name")
+        if file_name:
+            item["file_name"] = file_name
+        file_size_bytes = metrics.get("file_size_bytes") or extra.get("file_size_bytes")
+        if file_size_bytes:
+            item["file_size_bytes"] = int(file_size_bytes or 0)
     for item in batches.values():
         item.setdefault("snapshot_count", 0)
+        item.setdefault("file_name", f"{item.get('platform') or 'offline'} CSV")
+        item.setdefault("file_size_bytes", 0)
     return list(batches.values())
 
 

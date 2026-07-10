@@ -89,14 +89,28 @@
   .tag-warn { background: #fff6e6; color: #9a6b00; }
   .tag-rising { background: #e6f7ee; color: #1a6b44; }
   .tag-declining { background: #ffeaea; color: #a04040; }
-  .batch-chip {
-    display:inline-flex; align-items:center; gap:6px; border:1px solid #bae6fd;
-    background:#f0f9ff; color:#075985; border-radius:999px; padding:4px 8px;
-    font-size:11px; font-weight:700; margin:3px 4px 3px 0;
+  .csv-stager {
+    border: 1px dashed #9ac7ad; border-radius: 10px; background: #f8fbf9;
+    min-height: 86px; padding: 10px; margin-top: 10px;
   }
-  .batch-chip button {
-    width:18px; height:18px; padding:0; border-radius:999px; border:1px solid #7dd3fc;
-    background:#fff; color:#075985; line-height:1;
+  .csv-stager-empty {
+    min-height: 64px; display: flex; flex-direction: column; justify-content: center;
+    gap: 3px; color: var(--muted); font-size: 12px; text-align: center;
+  }
+  .csv-file-list { display: flex; flex-direction: column; gap: 8px; }
+  .csv-file-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    border: 1px solid #dbe8df; border-radius: 8px; background: #fff; padding: 8px 8px 8px 10px;
+  }
+  .csv-file-main { min-width: 0; }
+  .csv-file-name { font-size: 12px; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .csv-file-meta { margin-top: 2px; font-size: 11px; color: var(--muted); }
+  .csv-remove-btn {
+    width: 24px; height: 24px; padding: 0; border-radius: 999px; border: 1px solid #d7e3dc;
+    background: #fff; color: #6b7a70; line-height: 1; flex-shrink: 0; font-size: 16px;
+  }
+  .csv-file-row:hover .csv-remove-btn, .csv-remove-btn:focus {
+    border-color: #ef9a9a; background: #fff5f5; color: #a04040;
   }
   @media (max-width: 900px) {
     .app-body { flex-direction: column; }
@@ -142,7 +156,7 @@
         <label>Meta CSV</label>
         <input id="offline-meta-file" type="file" accept=".csv,text/csv" style="margin-bottom:6px;" />
         <button onclick="uploadOfflineCsv('meta')">Import Meta CSV</button>
-        <div id="offline-batches" style="margin-top:10px;"></div>
+        <div id="offline-batches" class="csv-stager"></div>
         <div id="offline-csv-msg" class="muted" style="margin-top:8px;min-height:18px;"></div>
       </div>
     </aside>
@@ -374,14 +388,36 @@
       el.textContent=msg;
       el.style.color=type==="ok"?"#1a6b44":type==="warn"?"#a04040":"var(--muted)";
     }
+    function formatBytes(bytes){
+      const value=Number(bytes||0);
+      if(!value) return "size unknown";
+      if(value<1024) return `${value} B`;
+      if(value<1024*1024) return `${(value/1024).toFixed(1)} KB`;
+      return `${(value/1024/1024).toFixed(1)} MB`;
+    }
+    function renderOfflineEmpty(){
+      return '<div class="csv-stager-empty"><strong>No CSV files staged</strong><span>Upload Shopify or Meta CSV fallback files here. They stay temporary until removed.</span></div>';
+    }
+    function renderOfflineRows(items){
+      if(!items.length) return renderOfflineEmpty();
+      return '<div class="csv-file-list">'+items.map(item=>{
+        const platform=esc(item.platform||"offline");
+        const fileName=esc(item.file_name||`${platform} CSV`);
+        const size=formatBytes(item.file_size_bytes);
+        const rows=[`${platform} CSV`, size];
+        if(Number(item.snapshot_count||0)>0) rows.push(`${Number(item.snapshot_count||0)} snapshots`);
+        if(Number(item.memory_count||0)>0) rows.push(`${Number(item.memory_count||0)} memories`);
+        return `<div class="csv-file-row" title="${esc(item.batch_id)}"><div class="csv-file-main"><div class="csv-file-name">${fileName}</div><div class="csv-file-meta">${rows.map(esc).join(" · ")}</div></div><button class="csv-remove-btn" onclick="deleteOfflineBatch('${esc(item.batch_id)}')" title="Remove staged CSV" aria-label="Remove staged CSV">×</button></div>`;
+      }).join("")+'</div>';
+    }
     async function loadOfflineBatches(){
       const box=document.getElementById("offline-batches");
       if(!box || !currentProj){ if(box) box.innerHTML=""; return; }
       try{
         const data=await api(`/data-dashboard/offline-csv-imports?workspace_name=${encodeURIComponent(currentWs)}&project_name=${encodeURIComponent(currentProj)}`);
         const items=data.items||[];
-        box.innerHTML=items.length?items.map(item=>`<span class="batch-chip" title="${esc(item.batch_id)}">${esc(item.platform)} CSV · $${Number(item.total_revenue||0).toFixed(0)} <button onclick="deleteOfflineBatch('${esc(item.batch_id)}')" title="Remove offline batch">×</button></span>`).join(""):'<div class="muted">No offline CSV data staged.</div>';
-      }catch(e){ box.innerHTML=`<div class="muted">Offline batches unavailable.</div>`; }
+        box.innerHTML=renderOfflineRows(items);
+      }catch(e){ box.innerHTML='<div class="csv-stager-empty"><strong>CSV staging unavailable</strong><span>Refresh the dashboard or check the data API.</span></div>'; }
     }
     async function deleteOfflineBatch(batchId){
       if(!currentProj || !batchId) return;

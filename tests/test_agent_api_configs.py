@@ -292,6 +292,9 @@ def test_data_dashboard_page_loads(client):
     assert "Data Dashboard" in resp.text
     assert "Creative Decision Attribution" in resp.text
     assert "CSV Fallback Imports" in resp.text
+    assert "csv-stager" in resp.text
+    assert "No CSV files staged" in resp.text
+    assert "csv-file-row" in resp.text
     assert "Credentials" not in resp.text
     assert "Chart.js" in resp.text or "chart.js" in resp.text.lower()
     assert "if(!window.Chart) return;" in resp.text
