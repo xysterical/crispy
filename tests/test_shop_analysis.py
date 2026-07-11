@@ -186,6 +186,110 @@ def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monk
     assert tasks.json()["items"][0]["id"] == task.id
 
 
+def test_shop_analysis_can_queue_and_execute_research_task(client, db_session, monkeypatch):
+    from app.agents.runtime import AgentsRuntime
+    from app.data.models import GmMemory, ResearchTask
+    from sqlalchemy import select
+
+    def fake_profile(self, **kwargs):
+        return {
+            "profile": {
+                "positioning": "Queued premium pet utility",
+                "target_audience": "Urban dog owners",
+            },
+            "evidence": [
+                {
+                    "source": "firecrawl",
+                    "url": "https://queued-shop.example",
+                    "title": "Queued Shop",
+                    "summary": "Premium dog walking accessories.",
+                    "status": "ok",
+                },
+                {
+                    "source": "tavily",
+                    "url": "https://queued-review.example",
+                    "title": "Queued Review",
+                    "summary": "Urban dog owners compare durable accessories.",
+                    "score": 0.8,
+                    "status": "ok",
+                },
+            ],
+            "source_queries": ["queued shop target audience"],
+            "search_errors": [],
+        }
+
+    def fake_competitors(self, **kwargs):
+        return {
+            "report": "## Competitive Landscape Overview\nQueued competitor context.",
+            "evidence": [
+                {
+                    "source": "tavily",
+                    "url": "https://queued-competitor.example",
+                    "title": "Queued Competitor",
+                    "summary": "Comparable pet accessory store.",
+                    "status": "ok",
+                }
+            ],
+            "source_queries": ["queued competitor"],
+            "search_errors": [],
+        }
+
+    monkeypatch.setattr(AgentsRuntime, "run_shop_profile_analysis", fake_profile)
+    monkeypatch.setattr(AgentsRuntime, "run_competitor_analysis", fake_competitors)
+
+    shop = client.post(
+        "/shops",
+        json={
+            "name": "queued-shop",
+            "industry_code": "pet_accessories",
+            "store_url": "https://queued-shop.example",
+        },
+    ).json()
+    queued = client.post(
+        "/shop-analysis/run",
+        json={
+            "shop_id": shop["id"],
+            "store_url": "https://queued-shop.example",
+            "description": "Queued pet accessories shop.",
+            "industry_code": "pet_accessories",
+            "research_focus": "full_intelligence",
+            "execution_mode": "queued",
+        },
+    )
+
+    assert queued.status_code == 200
+    queued_body = queued.json()
+    assert queued_body["status"] == "queued"
+    assert queued_body["task"]["status"] == "queued"
+    assert queued_body["task"]["memory_ids"] == []
+
+    task_id = queued_body["task"]["id"]
+    task_resp = client.get(f"/shop-analysis/tasks/{task_id}")
+    assert task_resp.status_code == 200
+    assert task_resp.json()["status"] == "queued"
+    queue_status = client.get("/shop-analysis/queue/status")
+    assert queue_status.status_code == 200
+    assert queue_status.json()["status_counts"]["queued"] == 1
+
+    executed = client.post(f"/shop-analysis/tasks/{task_id}/execute")
+    assert executed.status_code == 200
+    body = executed.json()
+    assert body["status"] == "completed"
+    assert body["task"]["status"] == "completed"
+    assert len(body["task"]["memory_ids"]) == 5
+    assert {item["source_type"] for item in body["extended_results"]} == {
+        "industry_baseline",
+        "audience_pain_points",
+        "compliance_scan",
+    }
+
+    task = db_session.get(ResearchTask, task_id)
+    assert task is not None
+    assert task.status == "completed"
+    rows = db_session.scalars(select(GmMemory).where(GmMemory.id.in_(task.memory_ids))).all()
+    assert len(rows) == 5
+
+
 def test_shop_analysis_preflight_reports_search_tool_status(client, monkeypatch):
     monkeypatch.setenv("CRISPY_API_KEY_TEST_LLM", "llm")
     monkeypatch.setenv("CRISPY_API_KEY_TEST_TAVILY", "tavily")

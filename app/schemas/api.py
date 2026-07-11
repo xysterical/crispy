@@ -661,6 +661,7 @@ class ShopAnalysisRequest(BaseModel):
         "audience_pain_points",
         "compliance_scan",
     ] = "full_intelligence"
+    execution_mode: Literal["sync", "queued"] = "sync"
 
 
 class ShopAnalysisResult(BaseModel):
@@ -702,7 +703,7 @@ class ShopAnalysisResponse(BaseModel):
     profile: ShopAnalysisResult | None = None
     competitor_analysis: ShopAnalysisResult | None = None
     extended_results: list[ShopAnalysisResult] = Field(default_factory=list)
-    status: str  # "running", "completed", "failed"
+    status: str  # "queued", "running", "completed", "failed"
     research_focus: str = "full_intelligence"
     task: ResearchTaskItem | None = None
     tool_status: dict = Field(default_factory=dict)

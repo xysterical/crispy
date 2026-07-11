@@ -86,6 +86,7 @@ from app.schemas.api import (
     ShopAnalysisListItem,
     ShopAnalysisHistoryResponse,
     ResearchTaskHistoryResponse,
+    ResearchTaskItem,
     ShopItem,
     ShopListResponse,
     ShopPatchRequest,
@@ -2903,17 +2904,9 @@ def delete_shop(shop_name: str, db: Session = Depends(get_db)):
 # ── Shop Analysis ─────────────────────────────────────────────────
 
 def _shop_analysis_tool_status(config: dict) -> dict:
-    extra = config.get("extra") or {}
-    tavily_cfg = extra.get("tavily_config") or {}
-    firecrawl_cfg = extra.get("firecrawl_config") or {}
-    llm_env = config.get("api_key_env")
-    tavily_env = tavily_cfg.get("api_key_env")
-    firecrawl_env = firecrawl_cfg.get("api_key_env")
-    return {
-        "llm": {"configured": bool(llm_env), "available": api_key_available(llm_env), "api_key_env": llm_env},
-        "tavily": {"configured": bool(tavily_env), "available": api_key_available(tavily_env), "api_key_env": tavily_env},
-        "firecrawl": {"configured": bool(firecrawl_env), "available": api_key_available(firecrawl_env), "api_key_env": firecrawl_env},
-    }
+    from app.services.shop_analysis import shop_analysis_tool_status
+
+    return shop_analysis_tool_status(config)
 
 
 @router.get("/shop-analysis/preflight", response_model=ShopAnalysisPreflightResponse)
@@ -2938,21 +2931,13 @@ def run_shop_analysis(
     payload: ShopAnalysisRequest,
     db: Session = Depends(get_db),
 ) -> dict:
-    from app.agents.runtime import AgentsRuntime
-    from app.services.agent_api_configs import resolve_agent_config, resolve_agent_runtime
+    from app.services.agent_api_configs import resolve_agent_config
     from app.services.shop_analysis import (
         _get_or_create_workspace_project,
-        build_audience_pain_points_brief,
-        build_compliance_scan_brief,
-        build_industry_baseline_brief,
         create_research_task,
-        mark_research_task_completed,
-        mark_research_task_failed,
-        mark_research_task_running,
+        execute_research_task,
         research_task_to_dict,
-        save_shop_profile,
-        save_competitor_analysis,
-        save_research_brief,
+        shop_analysis_tool_status,
     )
     from app.data.models import Workspace
 
@@ -2974,23 +2959,8 @@ def run_shop_analysis(
             db, payload.workspace_name, payload.project_name
         )
         shop = workspace
-    runtime = AgentsRuntime()
     config = resolve_agent_config(db, agent_name="shop_analyst", run_provider="", run_model="")
-    provider = config["provider_name"]
-    model = config["model_name"]
-    runtime_config = resolve_agent_runtime(config)
-    tool_status = _shop_analysis_tool_status(config)
-
-    # Extract search tool API keys from config extra
-    extra = config.get("extra") or {}
-    tavily_cfg = extra.get("tavily_config") or {}
-    firecrawl_cfg = extra.get("firecrawl_config") or {}
-    import os
-    tavily_api_key = os.getenv(tavily_cfg.get("api_key_env", "")) if tavily_cfg.get("api_key_env") else None
-    firecrawl_api_key = os.getenv(firecrawl_cfg.get("api_key_env", "")) if firecrawl_cfg.get("api_key_env") else None
-
-    analysis_id = str(uuid.uuid4())
-    errors: list[str] = []
+    tool_status = shop_analysis_tool_status(config)
     task = create_research_task(
         db,
         project_id=project.id,
@@ -3003,195 +2973,25 @@ def run_shop_analysis(
         refresh_reason=payload.refresh_reason,
         payload=payload.model_dump(mode="json"),
     )
-    mark_research_task_running(task)
-    db.flush()
-    memory_ids: list[str] = []
-    focus = payload.research_focus
-    should_save_profile = focus in {"full_intelligence", "store_context"}
-    should_run_competitor = focus in {
-        "full_intelligence",
-        "competitive_landscape",
-        "industry_baseline",
-        "audience_pain_points",
-        "compliance_scan",
-    }
-    should_save_competitor = focus in {"full_intelligence", "competitive_landscape"}
-
-    # Phase 1: Store profile
-    profile_result = None
-    profile_data: dict = {}
-    profile_evidence: list[dict] = []
-    profile_queries: list[str] = []
-    profile_errors: list[str] = []
-    try:
-        result = runtime.run_shop_profile_analysis(
-            store_url=payload.store_url,
-            description=payload.description,
-            provider=provider,
-            model=model,
-            runtime_config=runtime_config,
-            tavily_api_key=tavily_api_key,
-            firecrawl_api_key=firecrawl_api_key,
-        )
-        profile_data = result["profile"]
-        profile_evidence = result.get("evidence") or []
-        profile_queries = result.get("source_queries") or []
-        profile_errors = result.get("search_errors") or []
-        if should_save_profile:
-            entry = save_shop_profile(
-                db,
-                project_id=project.id,
-                industry_code=payload.industry_code,
-                store_url=payload.store_url,
-                profile_data=profile_data,
-                evidence=profile_evidence,
-                source_queries=profile_queries,
-                search_errors=profile_errors,
-                shop_id=shop.id if shop else None,
-                shop_name=shop.name if shop else None,
-                research_focus=payload.research_focus,
-            )
-            memory_ids.append(entry.id)
-            profile_result = {
-                "source_type": "shop_profile",
-                "content": entry.content,
-                "summary": profile_data.get("positioning", payload.store_url),
-                "research_status": entry.content.get("research_status", "unknown"),
-                "evidence_count": len(entry.content.get("evidence") or []),
-                "evidence_quality": entry.content.get("evidence_quality") or {},
-                "conflict_count": len(entry.content.get("conflicts") or []),
-                "research_focus": payload.research_focus,
-            }
-    except Exception as exc:
-        errors.append(f"shop_profile: {exc}")
-
-    # Phase 2: Competitor analysis (depends on profile success)
-    competitor_result = None
-    competitor_report = ""
-    competitor_evidence: list[dict] = []
-    competitor_queries: list[str] = []
-    competitor_errors: list[str] = []
-    if profile_data and should_run_competitor:
-        try:
-            result = runtime.run_competitor_analysis(
-                store_url=payload.store_url,
-                description=payload.description,
-                store_profile=profile_data,
-                provider=provider,
-                model=model,
-                runtime_config=runtime_config,
-                tavily_api_key=tavily_api_key,
-                firecrawl_api_key=firecrawl_api_key,
-            )
-            competitor_report = result["report"]
-            competitor_evidence = result.get("evidence") or []
-            competitor_queries = result.get("source_queries") or []
-            competitor_errors = result.get("search_errors") or []
-            if should_save_competitor:
-                entry = save_competitor_analysis(
-                    db,
-                    project_id=project.id,
-                    industry_code=payload.industry_code,
-                    store_url=payload.store_url,
-                    analysis_markdown=competitor_report,
-                    evidence=competitor_evidence,
-                    source_queries=competitor_queries,
-                    search_errors=competitor_errors,
-                    shop_id=shop.id if shop else None,
-                    shop_name=shop.name if shop else None,
-                    research_focus=payload.research_focus,
-                )
-                memory_ids.append(entry.id)
-                competitor_result = {
-                    "source_type": "competitor_analysis",
-                    "content": entry.content,
-                    "summary": competitor_report[:120] + "..." if len(competitor_report) > 120 else competitor_report,
-                    "research_status": entry.content.get("research_status", "unknown"),
-                    "evidence_count": len(entry.content.get("evidence") or []),
-                    "evidence_quality": entry.content.get("evidence_quality") or {},
-                    "conflict_count": len(entry.content.get("conflicts") or []),
-                    "research_focus": payload.research_focus,
-                }
-        except Exception as exc:
-            errors.append(f"competitor_analysis: {exc}")
-
-    derived_results: list[dict] = []
-    derived_plan = []
-    if profile_data and focus in {"full_intelligence", "industry_baseline"}:
-        derived_plan.append(("industry_baseline", build_industry_baseline_brief(
-            industry_code=payload.industry_code,
-            store_url=payload.store_url,
-            profile_data=profile_data,
-            competitor_report=competitor_report,
-        )))
-    if profile_data and focus in {"full_intelligence", "audience_pain_points"}:
-        derived_plan.append(("audience_pain_points", build_audience_pain_points_brief(
-            store_url=payload.store_url,
-            profile_data=profile_data,
-            competitor_report=competitor_report,
-        )))
-    if profile_data and focus in {"full_intelligence", "compliance_scan"}:
-        derived_plan.append(("compliance_scan", build_compliance_scan_brief(
-            store_url=payload.store_url,
-            profile_data=profile_data,
-            competitor_report=competitor_report,
-        )))
-    combined_evidence = [*profile_evidence, *competitor_evidence]
-    combined_queries = [*profile_queries, *competitor_queries]
-    combined_errors = [*profile_errors, *competitor_errors]
-    for source_type, brief in derived_plan:
-        try:
-            entry = save_research_brief(
-                db,
-                project_id=project.id,
-                industry_code=payload.industry_code,
-                store_url=payload.store_url,
-                source_type=source_type,
-                brief=brief,
-                evidence=combined_evidence,
-                source_queries=combined_queries,
-                search_errors=combined_errors,
-                shop_id=shop.id if shop else None,
-                shop_name=shop.name if shop else None,
-                research_focus=payload.research_focus,
-            )
-            memory_ids.append(entry.id)
-            derived_results.append({
-                "source_type": source_type,
-                "content": entry.content,
-                "summary": entry.content.get("summary", ""),
-                "research_status": entry.content.get("research_status", "unknown"),
-                "evidence_count": len(entry.content.get("evidence") or []),
-                "evidence_quality": entry.content.get("evidence_quality") or {},
-                "conflict_count": len(entry.content.get("conflicts") or []),
-                "research_focus": payload.research_focus,
-            })
-        except Exception as exc:
-            errors.append(f"{source_type}: {exc}")
-
-    if shop and memory_ids:
-        shop.last_analyzed_at = datetime.now(UTC)
-    status = "failed" if not memory_ids else "completed"
-    if status == "failed":
-        mark_research_task_failed(task, "; ".join(errors) if errors else "research failed")
-    else:
-        mark_research_task_completed(task, memory_ids)
     db.commit()
 
+    if payload.execution_mode == "sync":
+        return execute_research_task(db, task.id)
+
     return ShopAnalysisResponse(
-        id=analysis_id,
+        id=task.id,
         shop_id=shop.id if shop else None,
         shop_name=shop.name if shop else None,
         store_url=payload.store_url,
         industry_code=payload.industry_code,
-        profile=profile_result,
-        competitor_analysis=competitor_result,
-        extended_results=derived_results,
-        status=status,
+        profile=None,
+        competitor_analysis=None,
+        extended_results=[],
+        status="queued",
         research_focus=payload.research_focus,
         task=research_task_to_dict(task),
         tool_status=tool_status,
-        error_message="; ".join(errors) if errors else None,
+        error_message=None,
         created_at=datetime.now(UTC),
     ).model_dump(mode="json")
 
@@ -3237,6 +3037,44 @@ def shop_analysis_tasks(
         _, project = _get_or_create_workspace_project(db, workspace_name, project_name)
         items = list_research_tasks(db, project_id=project.id, limit=limit)
     return {"items": items}
+
+
+@router.get("/shop-analysis/queue/status")
+def shop_analysis_queue_status() -> dict:
+    from app.orchestrator.research_worker import research_worker
+
+    return research_worker.get_status()
+
+
+@router.get("/shop-analysis/tasks/{task_id}", response_model=ResearchTaskItem)
+def get_shop_analysis_task(
+    task_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.shop_analysis import get_research_task, research_task_to_dict
+
+    task = get_research_task(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"research task not found: {task_id}")
+    return research_task_to_dict(task)
+
+
+@router.post("/shop-analysis/tasks/{task_id}/execute", response_model=ShopAnalysisResponse)
+def execute_shop_analysis_task(
+    task_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.shop_analysis import execute_research_task, get_research_task
+
+    task = get_research_task(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"research task not found: {task_id}")
+    if task.status not in {"queued", "failed", "running", "completed"}:
+        raise HTTPException(status_code=409, detail=f"research task cannot be executed from status={task.status}")
+    try:
+        return execute_research_task(db, task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 # ── Creative Preset CRUD ──────────────────────────────────────────

@@ -992,6 +992,25 @@
       return analysisShops.find(s => s.id === shopId) || null;
     }
 
+    async function pollResearchTask(taskId) {
+      const status = document.getElementById("run-status");
+      for (let i = 0; i < 90; i++) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const task = await api("/shop-analysis/tasks/" + encodeURIComponent(taskId));
+        status.textContent = task.status === "running" ? "Research running..." : "Queued research...";
+        renderResultOverview({ research_focus: selectedResearchFocus, task: task }, task.status);
+        loadHistory();
+        if (task.status === "completed") {
+          status.textContent = "Loading completed research...";
+          return await api("/shop-analysis/tasks/" + encodeURIComponent(taskId) + "/execute", { method: "POST" });
+        }
+        if (task.status === "failed") {
+          throw new Error(task.error_message || "Research task failed.");
+        }
+      }
+      throw new Error("Research task is still queued. Check worker status and try refreshing history.");
+    }
+
     async function runAnalysis() {
       const storeUrl = document.getElementById("store-url").value.trim();
       if (!storeUrl) { alert("Please enter a store URL."); return; }
@@ -1015,7 +1034,7 @@
       document.getElementById("competitor-error").style.display = "none";
 
       try {
-        const data = await api("/shop-analysis/run", {
+        let data = await api("/shop-analysis/run", {
           method: "POST",
           body: JSON.stringify({
             shop_id: document.getElementById("shop-id").value || null,
@@ -1026,8 +1045,14 @@
             project_name: "shop_analysis",
             research_focus: selectedResearchFocus,
             refresh_reason: pendingRefreshReason,
+            execution_mode: "queued",
           }),
         });
+        if (data.status === "queued" && data.task && data.task.id) {
+          status.textContent = "Queued research...";
+          renderResultOverview(data, "queued");
+          data = await pollResearchTask(data.task.id);
+        }
         renderResultOverview(data);
         renderSummary(data);
         renderEvidence(data);
