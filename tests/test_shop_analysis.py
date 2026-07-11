@@ -66,6 +66,7 @@ def test_shop_analysis_run_stores_gm_memory(client):
 def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monkeypatch):
     from app.agents.runtime import AgentsRuntime
     from app.data.models import GmMemory, ResearchTask
+    from app.services.shop_analysis import RESEARCH_SOURCE_TYPES
     from sqlalchemy import select
 
     def fake_profile(self, **kwargs):
@@ -129,7 +130,7 @@ def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monk
             "store_url": "https://shop-memory.example",
             "description": "Pet accessories shop.",
             "industry_code": "pet_accessories",
-            "research_focus": "competitive_landscape",
+            "research_focus": "full_intelligence",
             "refresh_reason": "operator_refresh",
         },
     )
@@ -138,17 +139,22 @@ def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monk
     body = resp.json()
     assert body["shop_id"] == shop["id"]
     assert body["task"]["status"] == "completed"
-    assert body["task"]["task_type"] == "competitive_landscape"
+    assert body["task"]["task_type"] == "full_intelligence"
     assert body["task"]["refresh_reason"] == "operator_refresh"
-    assert len(body["task"]["memory_ids"]) == 2
+    assert len(body["task"]["memory_ids"]) == 5
     assert body["profile"]["evidence_quality"]["aggregate_score"] >= 0.55
     assert body["profile"]["content"]["evidence"][0]["quality_tier"] in {"medium", "high"}
+    assert {item["source_type"] for item in body["extended_results"]} == {
+        "industry_baseline",
+        "audience_pain_points",
+        "compliance_scan",
+    }
     rows = db_session.scalars(
         select(GmMemory).where(GmMemory.memory_scope == "shop")
     ).all()
-    assert {row.source_type for row in rows} >= {"shop_profile", "competitor_analysis"}
+    assert {row.source_type for row in rows} >= set(RESEARCH_SOURCE_TYPES)
     assert all((row.content or {}).get("shop_id") == shop["id"] for row in rows)
-    research_rows = [row for row in rows if row.source_type in {"shop_profile", "competitor_analysis"}]
+    research_rows = [row for row in rows if row.source_type in set(RESEARCH_SOURCE_TYPES)]
     assert all(row.memory_type == "research_intelligence" for row in research_rows)
     for row in research_rows:
         content = row.content or {}
@@ -157,7 +163,7 @@ def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monk
         assert content["expires_at"]
         assert content["source_queries"]
         assert content["research_status"] == "complete"
-        assert content["research_focus"] == "competitive_landscape"
+        assert content["research_focus"] == "full_intelligence"
         assert content["evidence_quality"]["aggregate_score"] >= 0.55
         assert content["evidence"][0]["quality_score"] >= 0.5
         assert content["evidence"][0]["source"] in {"firecrawl", "tavily"}
@@ -205,6 +211,83 @@ def test_shop_analysis_preflight_reports_search_tool_status(client, monkeypatch)
     assert checks["shop_analyst.llm"]["available"] is True
     assert checks["shop_analyst.tavily"]["available"] is True
     assert checks["shop_analyst.firecrawl"]["available"] is True
+
+
+def test_focused_audience_research_writes_single_task_output(client, db_session, monkeypatch):
+    from app.agents.runtime import AgentsRuntime
+    from app.data.models import GmMemory
+    from sqlalchemy import select
+
+    monkeypatch.setattr(
+        AgentsRuntime,
+        "run_shop_profile_analysis",
+        lambda self, **kwargs: {
+            "profile": {
+                "positioning": "Premium urban pet utility",
+                "target_audience": "Urban dog owners",
+                "content_gaps": ["Need more objection handling around daily walking convenience."],
+            },
+            "evidence": [
+                {
+                    "source": "tavily",
+                    "url": "https://audience.example",
+                    "summary": "Urban dog owners ask about convenience and daily walking routines.",
+                    "status": "ok",
+                }
+            ],
+            "source_queries": ["audience pet utility"],
+            "search_errors": [],
+        },
+    )
+    monkeypatch.setattr(
+        AgentsRuntime,
+        "run_competitor_analysis",
+        lambda self, **kwargs: {
+            "report": "Competitors emphasize convenience and hands-free routines.",
+            "evidence": [
+                {
+                    "source": "firecrawl",
+                    "url": "https://audience-competitor.example",
+                    "summary": "Competitor messaging emphasizes daily routine convenience.",
+                    "status": "ok",
+                }
+            ],
+            "source_queries": ["competitor audience convenience"],
+            "search_errors": [],
+        },
+    )
+
+    shop = client.post(
+        "/shops",
+        json={
+            "name": "audience-focus-shop",
+            "industry_code": "pet_accessories",
+            "store_url": "https://audience-focus.example",
+        },
+    ).json()
+    resp = client.post(
+        "/shop-analysis/run",
+        json={
+            "shop_id": shop["id"],
+            "store_url": "https://audience-focus.example",
+            "description": "Pet accessories shop.",
+            "industry_code": "pet_accessories",
+            "research_focus": "audience_pain_points",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["profile"] is None
+    assert body["competitor_analysis"] is None
+    assert [item["source_type"] for item in body["extended_results"]] == ["audience_pain_points"]
+    assert body["task"]["task_type"] == "audience_pain_points"
+    assert len(body["task"]["memory_ids"]) == 1
+    rows = db_session.scalars(select(GmMemory).where(GmMemory.memory_scope == "shop")).all()
+    assert {row.source_type for row in rows} == {"audience_pain_points"}
+    content = rows[0].content or {}
+    assert content["findings"]["pain_points"]
+    assert content["research_focus"] == "audience_pain_points"
 
 
 def test_create_run_planning_input_includes_shop_memory(client, db_session):
@@ -983,6 +1066,9 @@ def test_v2_page_loads_with_three_mode_rows(client):
     assert "store-url" in html
     assert "Research Type" in html
     assert "Full intelligence" in html
+    assert "Industry" in html
+    assert "Audience" in html
+    assert "Compliance" in html
     assert "Store Context Detail" in html
     assert "Competitive Landscape Detail" in html
     assert "Quality" in html

@@ -449,6 +449,9 @@
             <button type="button" class="active" data-focus="full_intelligence">Full</button>
             <button type="button" data-focus="store_context">Store</button>
             <button type="button" data-focus="competitive_landscape">Competitors</button>
+            <button type="button" data-focus="industry_baseline">Industry</button>
+            <button type="button" data-focus="audience_pain_points">Audience</button>
+            <button type="button" data-focus="compliance_scan">Compliance</button>
           </div>
         </div>
         <div class="focus-hint" id="research-focus-hint">
@@ -587,7 +590,12 @@
       audience_pain_points: {
         label: "Audience pain points",
         short: "Audience",
-        copy: "Reserved for review and community evidence about buyer anxieties, objections, and jobs to be done."
+        copy: "Turns audience objections, content gaps, and jobs to be done into GM memory."
+      },
+      compliance_scan: {
+        label: "Compliance scan",
+        short: "Compliance",
+        copy: "Flags claim-heavy language and review-sensitive promises before planning."
       },
     };
     function escHtml(v) {
@@ -614,6 +622,14 @@
         + '<div class="focus-hint-copy">' + escHtml(meta.copy) + '</div>';
     }
 
+    function researchResults(data) {
+      const results = [];
+      if (data?.profile) results.push(data.profile);
+      if (data?.competitor_analysis) results.push(data.competitor_analysis);
+      (data?.extended_results || []).forEach(item => results.push(item));
+      return results;
+    }
+
     function resultContent(result) {
       return result && result.content ? result.content : {};
     }
@@ -625,19 +641,18 @@
 
     function collectEvidence(data) {
       const items = [];
-      ["profile", "competitor_analysis"].forEach(key => {
-        const result = data && data[key];
+      researchResults(data).forEach(result => {
         const content = resultContent(result);
         (content.evidence || []).forEach((item) => {
-          items.push({ ...item, source_type: result?.source_type || key });
+          items.push({ ...item, source_type: result?.source_type || "research" });
         });
       });
       return items;
     }
 
     function aggregateEvidenceQuality(data) {
-      const summaries = ["profile", "competitor_analysis"].map(key => {
-        const quality = resultContent(data && data[key]).evidence_quality || {};
+      const summaries = researchResults(data).map(result => {
+        const quality = resultContent(result).evidence_quality || result.evidence_quality || {};
         return typeof quality.aggregate_score === "number" ? quality : null;
       }).filter(Boolean);
       if (!summaries.length) return { aggregate_score: null, quality_tier: "unknown" };
@@ -650,15 +665,15 @@
     }
 
     function conflictCount(data) {
-      return ["profile", "competitor_analysis"].reduce((total, key) => {
-        const content = resultContent(data && data[key]);
-        const direct = typeof data?.[key]?.conflict_count === "number" ? data[key].conflict_count : null;
+      return researchResults(data).reduce((total, result) => {
+        const content = resultContent(result);
+        const direct = typeof result?.conflict_count === "number" ? result.conflict_count : null;
         return total + Number(direct ?? content.conflict_count ?? ((content.conflicts || []).length) ?? 0);
       }, 0);
     }
 
     function combinedResearchStatus(data) {
-      const statuses = [resultResearchStatus(data?.profile), resultResearchStatus(data?.competitor_analysis)].filter(s => s !== "unknown");
+      const statuses = researchResults(data).map(resultResearchStatus).filter(s => s !== "unknown");
       if (!statuses.length) return "unknown";
       if (statuses.includes("complete")) return "complete";
       if (statuses.includes("fallback")) return "fallback";
@@ -682,12 +697,15 @@
     function renderSummary(data) {
       const profile = resultContent(data?.profile);
       const competitor = resultContent(data?.competitor_analysis);
+      const extended = data?.extended_results || [];
       const profileSummary = profile.summary || data?.profile?.summary || profile.profile?.positioning || data?.store_url || "";
       const competitorSummary = competitor.summary || data?.competitor_analysis?.summary || "";
+      const extendedSummary = extended.map(item => '<div style="margin-top:6px;"><b>' + escHtml(item.source_type || "Research") + ':</b> ' + escHtml(item.summary || resultContent(item).summary || "No summary returned.") + '</div>').join("");
       document.getElementById("summary-section").style.display = "block";
       document.getElementById("summary-content").innerHTML =
         '<div><b>Store:</b> ' + escHtml(profileSummary || "No store summary returned.") + '</div>'
-        + '<div style="margin-top:6px;"><b>Competition:</b> ' + escHtml(competitorSummary || "No competitor summary returned.") + '</div>';
+        + '<div style="margin-top:6px;"><b>Competition:</b> ' + escHtml(competitorSummary || "No competitor summary returned.") + '</div>'
+        + extendedSummary;
     }
 
     function renderEvidence(data) {
@@ -1019,6 +1037,9 @@
         if (data.profile) {
           document.getElementById("profile-content").style.display = "block";
           document.getElementById("profile-content").textContent = JSON.stringify(data.profile.content, null, 2);
+        } else if ((data.extended_results || []).length) {
+          document.getElementById("profile-error").style.display = "block";
+          document.getElementById("profile-error").textContent = "Store context was used internally for this focused research task.";
         } else {
           document.getElementById("profile-error").style.display = "block";
           document.getElementById("profile-error").textContent = data.error_message || "Profile analysis failed.";
@@ -1034,6 +1055,9 @@
             .replace(/## (.+)/g, "<h3>$1</h3>")
             .replace(/### (.+)/g, "<h4>$1</h4>")
             .replace(/\\*\\*(.+?)\\*\\*/g, "<b>$1</b>");
+        } else if ((data.extended_results || []).length) {
+          document.getElementById("competitor-error").style.display = "block";
+          document.getElementById("competitor-error").textContent = "Competitive research was used only as supporting context for this focused task.";
         } else {
           document.getElementById("competitor-error").style.display = "block";
           document.getElementById("competitor-error").textContent = data.error_message || "Competitor analysis failed.";

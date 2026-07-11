@@ -653,6 +653,7 @@ class ShopAnalysisRequest(BaseModel):
         "competitive_landscape",
         "industry_baseline",
         "audience_pain_points",
+        "compliance_scan",
     ] = "full_intelligence"
 
 
@@ -694,6 +695,7 @@ class ShopAnalysisResponse(BaseModel):
     industry_code: str
     profile: ShopAnalysisResult | None = None
     competitor_analysis: ShopAnalysisResult | None = None
+    extended_results: list[ShopAnalysisResult] = Field(default_factory=list)
     status: str  # "running", "completed", "failed"
     research_focus: str = "full_intelligence"
     task: ResearchTaskItem | None = None

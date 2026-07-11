@@ -72,6 +72,7 @@ from app.services.execution_memory import (
     write_variant_review_memory,
 )
 from app.services.gm_memory import memory_dirty_reasons, memory_is_strategy_safe
+from app.services.shop_analysis import RESEARCH_SOURCE_TYPES
 from app.services.marketplace_qa import MARKETPLACE_REVIEW_TAGS, is_marketplace_main_image
 from app.services.personas import get_persona
 from app.services.gm_evolution import compile_run_outcome_reflection, resolve_active_gm_policy
@@ -743,7 +744,7 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
         select(GmMemory)
         .where(
             GmMemory.memory_scope == "shop",
-            GmMemory.source_type.in_(["shop_profile", "competitor_analysis", "shopify_sync", "meta_sync"]),
+            GmMemory.source_type.in_([*RESEARCH_SOURCE_TYPES, "shopify_sync", "meta_sync"]),
             GmMemory.status == "active",
         )
         .order_by(desc(GmMemory.score_hint), desc(GmMemory.created_at))

@@ -20,6 +20,13 @@ RESEARCH_REFRESH_SOON_DAYS = 14
 MIN_RESEARCH_SOURCE_QUALITY = 0.5
 MIN_RESEARCH_AGGREGATE_QUALITY = 0.55
 RESEARCH_CONFLICT_SIMILARITY_THRESHOLD = 0.72
+RESEARCH_SOURCE_TYPES = [
+    "shop_profile",
+    "competitor_analysis",
+    "industry_baseline",
+    "audience_pain_points",
+    "compliance_scan",
+]
 
 
 def _research_expires_at(generated_at: datetime) -> str:
@@ -167,7 +174,7 @@ def _source_type_score(source: str) -> float:
         return 0.72
     if source == "tavily":
         return 0.66
-    if source in {"shop_profile", "competitor_analysis"}:
+    if source in set(RESEARCH_SOURCE_TYPES):
         return 0.28
     return 0.36
 
@@ -440,6 +447,100 @@ def _detect_competitor_conflicts(
     return [conflict] if conflict else []
 
 
+def _detect_brief_conflicts(
+    db: Session,
+    *,
+    project_id: str,
+    source_type: str,
+    store_url: str,
+    shop_id: str | None,
+    summary: str,
+) -> list[dict]:
+    prior = _latest_prior_research_memory(
+        db,
+        project_id=project_id,
+        source_type=source_type,
+        store_url=store_url,
+        shop_id=shop_id,
+    )
+    if not prior:
+        return []
+    conflict = _research_conflict(
+        field=f"{source_type}.summary",
+        previous_value=(prior.content or {}).get("summary"),
+        current_value=summary,
+        previous_memory_id=prior.id,
+        reason=f"New {source_type} research materially differs from previous active research.",
+    )
+    return [conflict] if conflict else []
+
+
+def build_industry_baseline_brief(*, industry_code: str, store_url: str, profile_data: dict, competitor_report: str) -> dict:
+    categories = profile_data.get("product_categories") if isinstance(profile_data, dict) else []
+    categories = categories if isinstance(categories, list) else []
+    positioning = profile_data.get("positioning") if isinstance(profile_data, dict) else ""
+    summary = f"{industry_code or 'general'} baseline for {store_url}: {positioning or 'category context'}"
+    category_text = ", ".join(str(item) for item in categories[:5]) or "unknown category"
+    return {
+        "summary": summary,
+        "findings": {
+            "industry_code": industry_code or "general",
+            "category_context": category_text,
+            "positioning_reference": positioning,
+            "competitive_context": _report_summary(store_url, competitor_report),
+        },
+        "strategic_implications": [
+            f"Benchmark creative angles against {category_text}.",
+            "Separate store-specific claims from broader category assumptions.",
+            "Refresh this baseline when category, pricing, or competitor set changes.",
+        ],
+    }
+
+
+def build_audience_pain_points_brief(*, store_url: str, profile_data: dict, competitor_report: str) -> dict:
+    target = profile_data.get("target_audience") if isinstance(profile_data, dict) else ""
+    gaps = profile_data.get("content_gaps") if isinstance(profile_data, dict) else []
+    gaps = gaps if isinstance(gaps, list) else []
+    summary = f"Audience pain point research for {target or store_url}."
+    pain_points = [str(item) for item in gaps[:5]] or [
+        "Need stronger proof for the primary promise.",
+        "Need clearer objection handling before conversion.",
+    ]
+    return {
+        "summary": summary,
+        "findings": {
+            "target_audience": target,
+            "pain_points": pain_points,
+            "competitive_context": _report_summary(store_url, competitor_report),
+        },
+        "strategic_implications": [
+            f"Turn audience objection into hook: {pain_points[0]}",
+            "Use review/community evidence before treating pain points as proven.",
+        ],
+    }
+
+
+def build_compliance_scan_brief(*, store_url: str, profile_data: dict, competitor_report: str) -> dict:
+    usps = profile_data.get("unique_selling_points") if isinstance(profile_data, dict) else []
+    usps = usps if isinstance(usps, list) else []
+    sensitive_terms = ["guarantee", "cure", "prevent", "medical", "safe", "best", "only", "never"]
+    text = " ".join([str(item) for item in usps] + [competitor_report]).lower()
+    flagged_terms = sorted({term for term in sensitive_terms if term in text})
+    summary = f"Compliance scan for {store_url}: {'review required' if flagged_terms else 'no obvious high-risk terms'}."
+    return {
+        "summary": summary,
+        "findings": {
+            "flagged_terms": flagged_terms,
+            "claims_to_verify": [str(item) for item in usps[:8]],
+            "scan_scope": "store profile claims and competitor research summary",
+        },
+        "strategic_implications": [
+            "Keep claim-heavy hooks behind evidence review before generation.",
+            "Use softer comparative language unless the claim is backed by product proof.",
+        ],
+    }
+
+
 def _get_or_create_workspace_project(
     db: Session, workspace_name: str, project_name: str
 ) -> tuple[Workspace, Project]:
@@ -582,6 +683,69 @@ def save_competitor_analysis(
     return entry
 
 
+def save_research_brief(
+    db: Session,
+    *,
+    project_id: str,
+    industry_code: str,
+    store_url: str,
+    source_type: str,
+    brief: dict,
+    evidence: list[dict] | None = None,
+    source_queries: list[str] | None = None,
+    search_errors: list[str] | None = None,
+    shop_id: str | None = None,
+    shop_name: str | None = None,
+    research_focus: str = "full_intelligence",
+) -> GmMemory:
+    generated_at = utcnow()
+    normalized_evidence = _normalize_evidence(store_url, source_type=source_type, evidence=evidence)
+    _, evidence_quality = _apply_evidence_quality(normalized_evidence)
+    status = _research_status(normalized_evidence, search_errors)
+    summary = str(brief.get("summary") or f"{source_type} research for {store_url}.")
+    conflicts = _detect_brief_conflicts(
+        db,
+        project_id=project_id,
+        source_type=source_type,
+        store_url=store_url,
+        shop_id=shop_id,
+        summary=summary,
+    )
+    entry = GmMemory(
+        project_id=project_id,
+        memory_scope="shop" if shop_id else "industry",
+        industry_code=industry_code,
+        source_type=source_type,
+        memory_type="research_intelligence",
+        score_hint=0.66 if status == "complete" else 0.56,
+        content={
+            "source": source_type,
+            "research_focus": research_focus,
+            "scope": "shop" if shop_id else "industry",
+            "shop_id": shop_id,
+            "shop_name": shop_name,
+            "store_url": store_url,
+            "summary": summary,
+            "findings": brief.get("findings") or {},
+            "strategic_implications": brief.get("strategic_implications") or [],
+            "evidence": normalized_evidence,
+            "evidence_quality": evidence_quality,
+            "conflicts": conflicts,
+            "conflict_count": len(conflicts),
+            "source_queries": source_queries or [f"{source_type} research for {store_url}"],
+            "search_errors": search_errors or [],
+            "research_status": status,
+            "metric_window": {"start": generated_at.date().isoformat(), "end": generated_at.date().isoformat()},
+            "confidence": 0.66 if status == "complete" else 0.56,
+            "generated_at": generated_at.isoformat(),
+            "expires_at": _research_expires_at(generated_at),
+        },
+    )
+    db.add(entry)
+    db.flush()
+    return entry
+
+
 def list_shop_analyses(
     db: Session,
     project_id: str,
@@ -590,7 +754,7 @@ def list_shop_analyses(
 ) -> list[dict]:
     stmt = (
         select(GmMemory)
-        .where(GmMemory.source_type.in_(["shop_profile", "competitor_analysis"]))
+        .where(GmMemory.source_type.in_(RESEARCH_SOURCE_TYPES))
         .order_by(desc(GmMemory.created_at))
         .limit(limit * 3 if shop_id else limit)
     )
@@ -614,9 +778,11 @@ def list_shop_analyses(
         if row.source_type == "shop_profile":
             profile = (row.content or {}).get("profile", {})
             summary = profile.get("positioning", store_url) if isinstance(profile, dict) else store_url
-        else:
+        elif row.source_type == "competitor_analysis":
             report = (row.content or {}).get("report", "")
             summary = (report[:80] + "...") if len(report) > 80 else report
+        else:
+            summary = str((row.content or {}).get("summary") or row.source_type)
         latest_task = latest_research_task(
             db,
             project_id=project_id,
