@@ -144,6 +144,9 @@ def _has_actionable_content(content: dict) -> bool:
             "underperformers",
             "profile",
             "report",
+            "findings",
+            "strategic_implications",
+            "evidence",
             "total_revenue",
             "overall_roas",
         )

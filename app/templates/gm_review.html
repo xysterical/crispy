@@ -145,6 +145,7 @@
           <select id="mem-type" onchange="loadMemories()">
             <option value="">All</option>
             <option value="summary">Summary</option>
+            <option value="research_intelligence">Research intelligence</option>
             <option value="store_intelligence">Store intelligence</option>
             <option value="product_intelligence">Product intelligence</option>
             <option value="strategy">Strategy</option>
@@ -358,7 +359,7 @@
       const reasons = [];
       if ((content.conflicts || []).some((x) => (x || {}).status !== "resolved")) reasons.push("unresolved conflicts");
       if (typeof content.confidence === "number" && content.confidence < 0.45) reasons.push("low confidence");
-      const hasContent = ["summary", "winning_patterns", "avoid_patterns", "top_variants", "underperformers", "profile", "report", "total_revenue", "overall_roas"].some((k) => {
+      const hasContent = ["summary", "winning_patterns", "avoid_patterns", "top_variants", "underperformers", "profile", "report", "findings", "strategic_implications", "evidence", "total_revenue", "overall_roas"].some((k) => {
         const v = content[k];
         return Array.isArray(v) ? v.length : Boolean(v);
       });

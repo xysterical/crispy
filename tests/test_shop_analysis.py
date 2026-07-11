@@ -96,6 +96,15 @@ def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monk
     ).all()
     assert {row.source_type for row in rows} >= {"shop_profile", "competitor_analysis"}
     assert all((row.content or {}).get("shop_id") == shop["id"] for row in rows)
+    research_rows = [row for row in rows if row.source_type in {"shop_profile", "competitor_analysis"}]
+    assert all(row.memory_type == "research_intelligence" for row in research_rows)
+    for row in research_rows:
+        content = row.content or {}
+        assert content["summary"]
+        assert content["confidence"] >= 0.6
+        assert content["expires_at"]
+        assert content["source_queries"]
+        assert content["evidence"][0]["url"] == "https://shop-memory.example"
 
 
 def test_create_run_planning_input_includes_shop_memory(client, db_session):
