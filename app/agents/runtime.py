@@ -4845,3 +4845,245 @@ class AgentsRuntime:
             "source_queries": source_queries,
             "search_errors": search_errors if search_errors else None,
         }
+
+    def run_audience_pain_point_research(
+        self,
+        store_url: str,
+        description: str,
+        store_profile: dict,
+        competitor_report: str,
+        *,
+        provider: str,
+        model: str,
+        runtime_config: dict | None = None,
+        tavily_api_key: str | None = None,
+        firecrawl_api_key: str | None = None,
+    ) -> dict:
+        """Research public reviews and community discussions for audience pain points."""
+        from app.search import FirecrawlClient, TavilyClient
+
+        search_errors: list[str] = []
+        search_results: list[dict] = []
+        community_pages: list[str] = []
+        evidence: list[dict] = []
+        source_queries: list[str] = []
+        target = str(store_profile.get("target_audience") or description or store_url)
+        categories = store_profile.get("product_categories") or []
+        cat_str = ", ".join(str(item) for item in categories[:3])
+        queries = [
+            f"{target} {cat_str} customer reviews complaints pain points",
+            f"{target} {cat_str} reddit forum problems objections",
+            f"{description or store_url} reviews negative feedback alternatives",
+        ]
+
+        if tavily_api_key:
+            try:
+                tv = TavilyClient(api_key=tavily_api_key)
+                for query in queries:
+                    source_queries.append(query)
+                    raw = tv.search_raw(query, max_results=4)
+                    search_results.append(raw)
+                    for row in raw.get("results") or []:
+                        url = row.get("url", "")
+                        evidence.append({
+                            "source": "tavily",
+                            "url": url,
+                            "title": row.get("title", ""),
+                            "summary": row.get("content", ""),
+                            "score": row.get("score"),
+                            "query": query,
+                            "evidence_category": "review_community",
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "ok",
+                        })
+                        if url and any(token in url.lower() for token in ["reddit", "forum", "review", "amazon", "walmart", "trustpilot"]):
+                            community_pages.append(url)
+            except Exception as exc:
+                search_errors.append(f"tavily_audience_search: {exc}")
+
+        community_content: list[str] = []
+        if firecrawl_api_key and community_pages:
+            try:
+                fc = FirecrawlClient(api_key=firecrawl_api_key)
+                for page_url in community_pages[:3]:
+                    try:
+                        result = fc.scrape(page_url)
+                        community_content.append(f"URL: {page_url}\nTITLE: {result.title}\n{result.markdown[:3000]}")
+                        evidence.append({
+                            "source": "firecrawl",
+                            "url": page_url,
+                            "title": result.title,
+                            "summary": result.markdown[:500],
+                            "evidence_category": "review_community",
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "ok",
+                        })
+                    except Exception:
+                        evidence.append({
+                            "source": "firecrawl",
+                            "url": page_url,
+                            "summary": "Community page scrape failed",
+                            "evidence_category": "review_community",
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "failed",
+                        })
+            except Exception as exc:
+                search_errors.append(f"firecrawl_audience_pages: {exc}")
+
+        prompt_parts = [
+            f"{self._business_strategy_system_prompt('Audience Research Analyst')}",
+            f"Store URL: {store_url}",
+            f"Operator notes: {description or 'None provided'}.",
+            f"Store profile: {json.dumps(store_profile)}",
+            f"Competitor context: {competitor_report[:3000]}",
+        ]
+        if search_results:
+            prompt_parts.append(f"REVIEW AND COMMUNITY SEARCH RESULTS: {json.dumps(search_results, indent=2)}")
+        if community_content:
+            prompt_parts.append("COMMUNITY/REVIEW PAGE CONTENT:\n" + "\n---\n".join(community_content))
+        if search_errors:
+            prompt_parts.append(f"Search errors (partial data): {'; '.join(search_errors)}")
+        prompt_parts.append(
+            "Return ONLY valid JSON with keys: summary, findings, strategic_implications. "
+            "findings must include target_audience, pain_points (list), objections (list), review_phrases (list), "
+            "community_sources (list of source names or URLs), confidence_notes."
+        )
+        summary, model_used, estimated_cost = self._chat_complete(provider, model, "\n".join(prompt_parts), runtime_config)
+        try:
+            brief = json.loads(summary)
+        except json.JSONDecodeError:
+            match = re.search(r'\{[\s\S]*\}', summary)
+            brief = json.loads(match.group(0)) if match else {
+                "summary": f"Audience pain point research for {target}.",
+                "findings": {"target_audience": target, "pain_points": [], "raw_response": summary},
+                "strategic_implications": [],
+            }
+        return {
+            "brief": brief,
+            "model_used": model_used,
+            "estimated_cost": estimated_cost,
+            "evidence": evidence,
+            "source_queries": source_queries,
+            "search_errors": search_errors if search_errors else None,
+        }
+
+    def run_compliance_policy_research(
+        self,
+        store_url: str,
+        description: str,
+        store_profile: dict,
+        competitor_report: str,
+        *,
+        provider: str,
+        model: str,
+        runtime_config: dict | None = None,
+        tavily_api_key: str | None = None,
+        firecrawl_api_key: str | None = None,
+    ) -> dict:
+        """Research platform policy and regulatory sources for claim/compliance risks."""
+        from app.search import FirecrawlClient, TavilyClient
+
+        search_errors: list[str] = []
+        policy_results: list[dict] = []
+        policy_pages: list[str] = []
+        evidence: list[dict] = []
+        source_queries: list[str] = []
+        categories = store_profile.get("product_categories") or []
+        cat_str = ", ".join(str(item) for item in categories[:3]) or description or store_url
+        queries = [
+            f"Meta advertising policies claims before after guarantee {cat_str}",
+            f"TikTok Shop product listing policy restricted claims {cat_str}",
+            f"FTC advertising substantiation endorsement review claims {cat_str}",
+            f"Shopify prohibited items acceptable use policy {cat_str}",
+        ]
+
+        if tavily_api_key:
+            try:
+                tv = TavilyClient(api_key=tavily_api_key)
+                for query in queries:
+                    source_queries.append(query)
+                    raw = tv.search_raw(query, max_results=4)
+                    policy_results.append(raw)
+                    for row in raw.get("results") or []:
+                        url = row.get("url", "")
+                        evidence.append({
+                            "source": "tavily",
+                            "url": url,
+                            "title": row.get("title", ""),
+                            "summary": row.get("content", ""),
+                            "score": row.get("score"),
+                            "query": query,
+                            "evidence_category": "policy_regulatory",
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "ok",
+                        })
+                        if url and any(domain in url.lower() for domain in ["facebook", "meta", "tiktok", "ftc.gov", "shopify"]):
+                            policy_pages.append(url)
+            except Exception as exc:
+                search_errors.append(f"tavily_policy_search: {exc}")
+
+        policy_content: list[str] = []
+        if firecrawl_api_key and policy_pages:
+            try:
+                fc = FirecrawlClient(api_key=firecrawl_api_key)
+                for page_url in policy_pages[:4]:
+                    try:
+                        result = fc.scrape(page_url)
+                        policy_content.append(f"URL: {page_url}\nTITLE: {result.title}\n{result.markdown[:3000]}")
+                        evidence.append({
+                            "source": "firecrawl",
+                            "url": page_url,
+                            "title": result.title,
+                            "summary": result.markdown[:500],
+                            "evidence_category": "policy_regulatory",
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "ok",
+                        })
+                    except Exception:
+                        evidence.append({
+                            "source": "firecrawl",
+                            "url": page_url,
+                            "summary": "Policy page scrape failed",
+                            "evidence_category": "policy_regulatory",
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "failed",
+                        })
+            except Exception as exc:
+                search_errors.append(f"firecrawl_policy_pages: {exc}")
+
+        prompt_parts = [
+            f"{self._business_strategy_system_prompt('Compliance Research Analyst')}",
+            f"Store URL: {store_url}",
+            f"Operator notes: {description or 'None provided'}.",
+            f"Store profile: {json.dumps(store_profile)}",
+            f"Competitor context: {competitor_report[:3000]}",
+        ]
+        if policy_results:
+            prompt_parts.append(f"POLICY AND REGULATORY SEARCH RESULTS: {json.dumps(policy_results, indent=2)}")
+        if policy_content:
+            prompt_parts.append("POLICY/REGULATORY PAGE CONTENT:\n" + "\n---\n".join(policy_content))
+        if search_errors:
+            prompt_parts.append(f"Search errors (partial data): {'; '.join(search_errors)}")
+        prompt_parts.append(
+            "Return ONLY valid JSON with keys: summary, findings, strategic_implications. "
+            "findings must include policy_sources (list), flagged_terms (list), claims_to_verify (list), "
+            "platform_risks (list), required_evidence (list), confidence_notes."
+        )
+        summary, model_used, estimated_cost = self._chat_complete(provider, model, "\n".join(prompt_parts), runtime_config)
+        try:
+            brief = json.loads(summary)
+        except json.JSONDecodeError:
+            match = re.search(r'\{[\s\S]*\}', summary)
+            brief = json.loads(match.group(0)) if match else {
+                "summary": f"Compliance policy research for {store_url}.",
+                "findings": {"policy_sources": [], "flagged_terms": [], "raw_response": summary},
+                "strategic_implications": [],
+            }
+        return {
+            "brief": brief,
+            "model_used": model_used,
+            "estimated_cost": estimated_cost,
+            "evidence": evidence,
+            "source_queries": source_queries,
+            "search_errors": search_errors if search_errors else None,
+        }

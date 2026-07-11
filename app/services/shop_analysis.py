@@ -426,6 +426,8 @@ def _normalize_evidence(store_url: str, *, source_type: str, evidence: list[dict
             "url": url,
             "title": str(item.get("title") or ""),
             "summary": str(item.get("summary") or item.get("content") or "")[:500],
+            "query": str(item.get("query") or ""),
+            "evidence_category": str(item.get("evidence_category") or source_type),
             "fetched_at": str(item.get("fetched_at") or utcnow().isoformat()),
             "status": str(item.get("status") or "ok"),
             "score": item.get("score"),
@@ -1106,31 +1108,70 @@ def execute_research_task(db: Session, task_id: str) -> dict:
             errors.append(f"competitor_analysis: {exc}")
 
     derived_results: list[dict] = []
-    derived_plan = []
+    derived_plan: list[tuple[str, dict, list[dict], list[str], list[str]]] = []
     if profile_data and focus in {"full_intelligence", "industry_baseline"}:
         derived_plan.append(("industry_baseline", build_industry_baseline_brief(
             industry_code=payload.industry_code,
             store_url=payload.store_url,
             profile_data=profile_data,
             competitor_report=competitor_report,
-        )))
+        ), [*profile_evidence, *competitor_evidence], [*profile_queries, *competitor_queries], [*profile_errors, *competitor_errors]))
     if profile_data and focus in {"full_intelligence", "audience_pain_points"}:
-        derived_plan.append(("audience_pain_points", build_audience_pain_points_brief(
-            store_url=payload.store_url,
-            profile_data=profile_data,
-            competitor_report=competitor_report,
-        )))
+        try:
+            result = runtime.run_audience_pain_point_research(
+                store_url=payload.store_url,
+                description=payload.description,
+                store_profile=profile_data,
+                competitor_report=competitor_report,
+                provider=provider,
+                model=model,
+                runtime_config=runtime_config,
+                tavily_api_key=tavily_api_key,
+                firecrawl_api_key=firecrawl_api_key,
+            )
+            derived_plan.append((
+                "audience_pain_points",
+                result["brief"],
+                result.get("evidence") or [],
+                result.get("source_queries") or [],
+                result.get("search_errors") or [],
+            ))
+        except Exception as exc:
+            errors.append(f"audience_pain_points_search: {exc}")
+            derived_plan.append(("audience_pain_points", build_audience_pain_points_brief(
+                store_url=payload.store_url,
+                profile_data=profile_data,
+                competitor_report=competitor_report,
+            ), [*profile_evidence, *competitor_evidence], [*profile_queries, *competitor_queries], [*profile_errors, *competitor_errors]))
     if profile_data and focus in {"full_intelligence", "compliance_scan"}:
-        derived_plan.append(("compliance_scan", build_compliance_scan_brief(
-            store_url=payload.store_url,
-            profile_data=profile_data,
-            competitor_report=competitor_report,
-        )))
+        try:
+            result = runtime.run_compliance_policy_research(
+                store_url=payload.store_url,
+                description=payload.description,
+                store_profile=profile_data,
+                competitor_report=competitor_report,
+                provider=provider,
+                model=model,
+                runtime_config=runtime_config,
+                tavily_api_key=tavily_api_key,
+                firecrawl_api_key=firecrawl_api_key,
+            )
+            derived_plan.append((
+                "compliance_scan",
+                result["brief"],
+                result.get("evidence") or [],
+                result.get("source_queries") or [],
+                result.get("search_errors") or [],
+            ))
+        except Exception as exc:
+            errors.append(f"compliance_scan_search: {exc}")
+            derived_plan.append(("compliance_scan", build_compliance_scan_brief(
+                store_url=payload.store_url,
+                profile_data=profile_data,
+                competitor_report=competitor_report,
+            ), [*profile_evidence, *competitor_evidence], [*profile_queries, *competitor_queries], [*profile_errors, *competitor_errors]))
 
-    combined_evidence = [*profile_evidence, *competitor_evidence]
-    combined_queries = [*profile_queries, *competitor_queries]
-    combined_errors = [*profile_errors, *competitor_errors]
-    for source_type, brief in derived_plan:
+    for source_type, brief, evidence, source_queries, search_errors in derived_plan:
         try:
             entry = save_research_brief(
                 db,
@@ -1139,9 +1180,9 @@ def execute_research_task(db: Session, task_id: str) -> dict:
                 store_url=payload.store_url,
                 source_type=source_type,
                 brief=brief,
-                evidence=combined_evidence,
-                source_queries=combined_queries,
-                search_errors=combined_errors,
+                evidence=evidence,
+                source_queries=source_queries,
+                search_errors=search_errors,
                 shop_id=shop.id if shop else None,
                 shop_name=shop.name if shop else None,
                 research_focus=payload.research_focus,

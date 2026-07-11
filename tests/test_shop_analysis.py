@@ -112,8 +112,82 @@ def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monk
             "search_errors": [],
         }
 
+    def fake_audience(self, **kwargs):
+        return {
+            "brief": {
+                "summary": "Review communities mention utility and daily walking convenience.",
+                "findings": {
+                    "target_audience": "Urban dog owners",
+                    "pain_points": ["Need durable walking gear."],
+                    "objections": ["Premium price needs proof."],
+                    "review_phrases": ["daily walks"],
+                    "community_sources": ["review.example"],
+                },
+                "strategic_implications": ["Use daily walking proof in hooks."],
+            },
+            "evidence": [
+                {
+                    "source": "tavily",
+                    "url": "https://review.example/shop-memory",
+                    "title": "Review",
+                    "summary": "Urban dog owners mention utility.",
+                    "score": 0.82,
+                    "status": "ok",
+                    "evidence_category": "review_community",
+                },
+                {
+                    "source": "firecrawl",
+                    "url": "https://community.example/shop-memory",
+                    "title": "Community",
+                    "summary": "Community discussion about durable walking gear.",
+                    "status": "ok",
+                    "evidence_category": "review_community",
+                },
+            ],
+            "source_queries": ["urban dog owners reviews complaints pain points"],
+            "search_errors": [],
+        }
+
+    def fake_compliance(self, **kwargs):
+        return {
+            "brief": {
+                "summary": "Policy research requires proof for comparative durability claims.",
+                "findings": {
+                    "policy_sources": ["Meta advertising policies", "FTC advertising substantiation"],
+                    "flagged_terms": ["premium"],
+                    "claims_to_verify": ["Premium urban pet utility"],
+                    "platform_risks": ["Comparative claims need proof."],
+                    "required_evidence": ["Product proof"],
+                },
+                "strategic_implications": ["Avoid unsupported superiority language."],
+            },
+            "evidence": [
+                {
+                    "source": "tavily",
+                    "url": "https://www.ftc.gov/business-guidance/advertising-marketing",
+                    "title": "FTC Advertising",
+                    "summary": "Advertising claims require substantiation.",
+                    "score": 0.8,
+                    "status": "ok",
+                    "evidence_category": "policy_regulatory",
+                },
+                {
+                    "source": "firecrawl",
+                    "url": "https://www.facebook.com/policies/ads",
+                    "title": "Meta Ads Policy",
+                    "summary": "Meta ad policies discuss restricted claims.",
+                    "status": "ok",
+                    "evidence_category": "policy_regulatory",
+                },
+            ],
+            "source_queries": ["FTC advertising substantiation pet accessories"],
+            "search_errors": [],
+        }
+
     monkeypatch.setattr(AgentsRuntime, "run_shop_profile_analysis", fake_profile)
     monkeypatch.setattr(AgentsRuntime, "run_competitor_analysis", fake_competitors)
+    monkeypatch.setattr(AgentsRuntime, "run_audience_pain_point_research", fake_audience)
+    monkeypatch.setattr(AgentsRuntime, "run_compliance_policy_research", fake_compliance)
 
     shop = client.post(
         "/shops",
@@ -360,6 +434,34 @@ def test_focused_audience_research_writes_single_task_output(client, db_session,
             "search_errors": [],
         },
     )
+    monkeypatch.setattr(
+        AgentsRuntime,
+        "run_audience_pain_point_research",
+        lambda self, **kwargs: {
+            "brief": {
+                "summary": "Review and community research shows convenience objections.",
+                "findings": {
+                    "target_audience": "Urban dog owners",
+                    "pain_points": ["Need hands-free walking convenience."],
+                    "objections": ["Unsure whether premium accessories are worth it."],
+                    "review_phrases": ["daily walking routine"],
+                    "community_sources": ["reddit.com/r/dogs"],
+                },
+                "strategic_implications": ["Lead with daily routine friction."],
+            },
+            "evidence": [
+                {
+                    "source": "tavily",
+                    "url": "https://reddit.example/dogs",
+                    "summary": "Dog owners discuss daily walking convenience.",
+                    "status": "ok",
+                    "evidence_category": "review_community",
+                }
+            ],
+            "source_queries": ["urban dog owners reviews complaints pain points"],
+            "search_errors": [],
+        },
+    )
 
     shop = client.post(
         "/shops",
@@ -391,7 +493,117 @@ def test_focused_audience_research_writes_single_task_output(client, db_session,
     assert {row.source_type for row in rows} == {"audience_pain_points"}
     content = rows[0].content or {}
     assert content["findings"]["pain_points"]
+    assert content["evidence"][0]["evidence_category"] == "review_community"
+    assert content["source_queries"] == ["urban dog owners reviews complaints pain points"]
     assert content["research_focus"] == "audience_pain_points"
+
+
+def test_focused_compliance_research_uses_policy_sources(client, db_session, monkeypatch):
+    from app.agents.runtime import AgentsRuntime
+    from app.data.models import GmMemory
+    from sqlalchemy import select
+
+    monkeypatch.setattr(
+        AgentsRuntime,
+        "run_shop_profile_analysis",
+        lambda self, **kwargs: {
+            "profile": {
+                "positioning": "Premium pet wellness accessories",
+                "target_audience": "Dog owners",
+                "product_categories": ["pet supplements", "dog accessories"],
+                "unique_selling_points": ["Guarantees calmer walks"],
+            },
+            "evidence": [
+                {
+                    "source": "firecrawl",
+                    "url": "https://compliance-focus.example",
+                    "summary": "Store claims calmer walks.",
+                    "status": "ok",
+                }
+            ],
+            "source_queries": ["compliance store profile"],
+            "search_errors": [],
+        },
+    )
+    monkeypatch.setattr(
+        AgentsRuntime,
+        "run_competitor_analysis",
+        lambda self, **kwargs: {
+            "report": "Competitors use guarantee and calming claims.",
+            "evidence": [
+                {
+                    "source": "tavily",
+                    "url": "https://compliance-competitor.example",
+                    "summary": "Competitor claims need review.",
+                    "status": "ok",
+                }
+            ],
+            "source_queries": ["competitor compliance"],
+            "search_errors": [],
+        },
+    )
+    monkeypatch.setattr(
+        AgentsRuntime,
+        "run_compliance_policy_research",
+        lambda self, **kwargs: {
+            "brief": {
+                "summary": "Policy research flags guarantee and wellness claims.",
+                "findings": {
+                    "policy_sources": ["Meta advertising policies", "FTC advertising substantiation"],
+                    "flagged_terms": ["guarantee", "calmer"],
+                    "claims_to_verify": ["Guarantees calmer walks"],
+                    "platform_risks": ["Substantiation required before ad use."],
+                    "required_evidence": ["Product proof and customer evidence."],
+                },
+                "strategic_implications": ["Avoid guarantee language in generated ads."],
+            },
+            "evidence": [
+                {
+                    "source": "tavily",
+                    "url": "https://www.ftc.gov/business-guidance/advertising-marketing",
+                    "summary": "FTC guidance on advertising substantiation.",
+                    "status": "ok",
+                    "evidence_category": "policy_regulatory",
+                }
+            ],
+            "source_queries": ["FTC advertising substantiation pet supplements"],
+            "search_errors": [],
+        },
+    )
+
+    shop = client.post(
+        "/shops",
+        json={
+            "name": "compliance-focus-shop",
+            "industry_code": "pet_accessories",
+            "store_url": "https://compliance-focus.example",
+        },
+    ).json()
+    resp = client.post(
+        "/shop-analysis/run",
+        json={
+            "shop_id": shop["id"],
+            "store_url": "https://compliance-focus.example",
+            "description": "Pet accessories shop with wellness claims.",
+            "industry_code": "pet_accessories",
+            "research_focus": "compliance_scan",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["profile"] is None
+    assert body["competitor_analysis"] is None
+    assert [item["source_type"] for item in body["extended_results"]] == ["compliance_scan"]
+    assert body["task"]["task_type"] == "compliance_scan"
+    assert len(body["task"]["memory_ids"]) == 1
+    rows = db_session.scalars(select(GmMemory).where(GmMemory.memory_scope == "shop")).all()
+    assert {row.source_type for row in rows} == {"compliance_scan"}
+    content = rows[0].content or {}
+    assert "guarantee" in content["findings"]["flagged_terms"]
+    assert content["evidence"][0]["evidence_category"] == "policy_regulatory"
+    assert content["source_queries"] == ["FTC advertising substantiation pet supplements"]
+    assert content["research_focus"] == "compliance_scan"
 
 
 def test_create_run_planning_input_includes_shop_memory(client, db_session):
@@ -1257,14 +1469,19 @@ def test_firecrawl_client_instantiation():
 
 
 def test_runtime_accepts_search_keys():
-    """Verify run_shop_profile_analysis accepts tavily/firecrawl api key params."""
+    """Verify research runtime methods accept tavily/firecrawl api key params."""
     import inspect
     from app.agents.runtime import AgentsRuntime
     rt = AgentsRuntime()
-    sig = inspect.signature(rt.run_shop_profile_analysis)
-    params = list(sig.parameters.keys())
-    assert "tavily_api_key" in params
-    assert "firecrawl_api_key" in params
+    for method in [
+        rt.run_shop_profile_analysis,
+        rt.run_audience_pain_point_research,
+        rt.run_compliance_policy_research,
+    ]:
+        sig = inspect.signature(method)
+        params = list(sig.parameters.keys())
+        assert "tavily_api_key" in params
+        assert "firecrawl_api_key" in params
 
 
 def test_v2_page_loads_with_three_mode_rows(client):
