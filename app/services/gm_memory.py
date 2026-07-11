@@ -177,10 +177,18 @@ def _has_weak_research_evidence(row: GmMemory) -> bool:
         return False
     content = row.content or {}
     evidence = content.get("evidence") or []
+    quality = content.get("evidence_quality") or {}
+    aggregate_score = quality.get("aggregate_score")
+    if isinstance(aggregate_score, int | float) and aggregate_score < 0.55:
+        return True
     has_real_source = any(
         isinstance(item, dict)
         and item.get("source") in {"tavily", "firecrawl"}
         and item.get("status", "ok") == "ok"
+        and (
+            "quality_score" not in item
+            or float(item.get("quality_score") or 0) >= 0.5
+        )
         and item.get("url")
         for item in evidence
     )

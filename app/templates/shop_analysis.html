@@ -492,7 +492,7 @@
           <div class="metric-tile"><div class="metric-label">Status</div><div class="metric-value">Running</div><div class="metric-note">Waiting for research output</div></div>
           <div class="metric-tile"><div class="metric-label">Evidence</div><div class="metric-value">0</div><div class="metric-note">External sources collected</div></div>
           <div class="metric-tile"><div class="metric-label">Memory</div><div class="metric-value">Pending</div><div class="metric-note">GM reuse depends on evidence gates</div></div>
-          <div class="metric-tile"><div class="metric-label">Focus</div><div class="metric-value">Full</div><div class="metric-note">Current research type</div></div>
+          <div class="metric-tile"><div class="metric-label">Quality</div><div class="metric-value">--</div><div class="metric-note">Source quality score</div></div>
         </div>
         <div class="result-section" id="summary-section" style="display:none;">
           <div class="result-section-head">
@@ -635,6 +635,20 @@
       return items;
     }
 
+    function aggregateEvidenceQuality(data) {
+      const summaries = ["profile", "competitor_analysis"].map(key => {
+        const quality = resultContent(data && data[key]).evidence_quality || {};
+        return typeof quality.aggregate_score === "number" ? quality : null;
+      }).filter(Boolean);
+      if (!summaries.length) return { aggregate_score: null, quality_tier: "unknown" };
+      const total = summaries.reduce((sum, item) => sum + Number(item.aggregate_score || 0), 0);
+      const score = Math.round((total / summaries.length) * 100) / 100;
+      return {
+        aggregate_score: score,
+        quality_tier: score >= 0.75 ? "high" : score >= 0.55 ? "medium" : "low",
+      };
+    }
+
     function combinedResearchStatus(data) {
       const statuses = [resultResearchStatus(data?.profile), resultResearchStatus(data?.competitor_analysis)].filter(s => s !== "unknown");
       if (!statuses.length) return "unknown";
@@ -647,12 +661,13 @@
       const evidence = data ? collectEvidence(data) : [];
       const status = state || combinedResearchStatus(data);
       const memoryState = status === "complete" ? "Eligible" : status === "fallback" ? "Needs review" : status === "failed" ? "Blocked" : "Pending";
-      const focus = researchFocusCopy[data?.research_focus || selectedResearchFocus] || researchFocusCopy.full_intelligence;
+      const quality = aggregateEvidenceQuality(data);
+      const qualityValue = typeof quality.aggregate_score === "number" ? Math.round(quality.aggregate_score * 100) : "--";
       document.getElementById("result-overview").innerHTML =
         '<div class="metric-tile"><div class="metric-label">Status</div><div class="metric-value">' + escHtml(status) + '</div><div class="metric-note">Research run state</div></div>'
         + '<div class="metric-tile"><div class="metric-label">Evidence</div><div class="metric-value">' + evidence.length + '</div><div class="metric-note">External sources collected</div></div>'
         + '<div class="metric-tile"><div class="metric-label">Memory</div><div class="metric-value">' + escHtml(memoryState) + '</div><div class="metric-note">GM reuse depends on safety gates</div></div>'
-        + '<div class="metric-tile"><div class="metric-label">Focus</div><div class="metric-value">' + escHtml(focus.short) + '</div><div class="metric-note">' + escHtml(focus.label) + '</div></div>';
+        + '<div class="metric-tile"><div class="metric-label">Quality</div><div class="metric-value">' + escHtml(qualityValue) + '</div><div class="metric-note">' + escHtml(quality.quality_tier) + ' source quality</div></div>';
     }
 
     function renderSummary(data) {
@@ -679,10 +694,12 @@
         const label = item.title || item.summary || item.url || "Untitled source";
         const url = item.url || "";
         const status = item.status || "ok";
+        const tier = item.quality_tier || "unknown";
+        const score = typeof item.quality_score === "number" ? Math.round(item.quality_score * 100) : "--";
         return '<div class="evidence-item">'
           + '<div class="evidence-source">' + escHtml(item.source || item.source_type || "source") + '</div>'
           + '<div><div class="evidence-title">' + escHtml(label) + '</div><div class="evidence-url">' + escHtml(url) + '</div></div>'
-          + '<span class="tool-pill ' + escAttr(status === "ok" ? "ok" : "warn") + '">' + escHtml(status) + '</span>'
+          + '<span class="tool-pill ' + escAttr(status === "ok" ? "ok" : "warn") + '">' + escHtml(tier) + ' ' + escHtml(score) + '</span>'
           + '</div>';
       }).join("");
     }
@@ -692,7 +709,8 @@
       const profile = resultContent(data?.profile);
       const competitor = resultContent(data?.competitor_analysis);
       const expiresAt = profile.expires_at || competitor.expires_at || "";
-      const focus = researchFocusCopy[data?.research_focus || selectedResearchFocus] || researchFocusCopy.full_intelligence;
+      const quality = aggregateEvidenceQuality(data);
+      const qualityValue = typeof quality.aggregate_score === "number" ? Math.round(quality.aggregate_score * 100) : "--";
       const impact = status === "complete"
         ? "Available to GM after research safety checks"
         : status === "fallback"
@@ -702,7 +720,7 @@
       document.getElementById("memory-impact-list").innerHTML =
         '<div class="impact-item"><div class="impact-label">Memory type</div><div class="impact-value">research_intelligence</div></div>'
         + '<div class="impact-item"><div class="impact-label">Planning impact</div><div class="impact-value">' + escHtml(impact) + '</div></div>'
-        + '<div class="impact-item"><div class="impact-label">Focus and expiry</div><div class="impact-value">' + escHtml(focus.label) + (expiresAt ? '<br>' + escHtml(expiresAt.substring(0, 10)) : '<br>No expiry returned') + '</div></div>';
+        + '<div class="impact-item"><div class="impact-label">Quality and expiry</div><div class="impact-value">' + escHtml(qualityValue) + ' · ' + escHtml(quality.quality_tier) + (expiresAt ? '<br>' + escHtml(expiresAt.substring(0, 10)) : '<br>No expiry returned') + '</div></div>';
     }
 
     function resetResultSections() {
@@ -724,6 +742,11 @@
       if (state === "refresh_soon") return "refresh soon";
       if (state === "expired") return "expired";
       return "unknown";
+    }
+
+    function qualityLabel(quality) {
+      if (!quality || typeof quality.aggregate_score !== "number") return "quality=--";
+      return "quality=" + Math.round(quality.aggregate_score * 100) + " " + (quality.quality_tier || "");
     }
 
     // ── Shop Management ──
@@ -1043,7 +1066,7 @@
             + ' <span class="status-badge ' + badgeClass + '">' + escHtml(researchStatus) + '</span>'
             + ' <span class="status-badge ' + escAttr(refreshState) + '">' + escHtml(freshnessLabel(refreshState)) + '</span>'
             + '<br><span class="muted">' + escHtml((item.summary || '').substring(0, 100)) + '</span>'
-            + '<br><span class="muted">focus=' + escHtml(focusLabel(item.research_focus)) + ' · evidence=' + Number(item.evidence_count || 0) + expires + escHtml(taskStatus) + '</span></div>'
+            + '<br><span class="muted">focus=' + escHtml(focusLabel(item.research_focus)) + ' · evidence=' + Number(item.evidence_count || 0) + ' · ' + escHtml(qualityLabel(item.evidence_quality)) + expires + escHtml(taskStatus) + '</span></div>'
             + '<div class="history-actions"><button type="button" data-action="refresh-research" data-store-url="' + escAttr(item.store_url) + '" data-industry-code="' + escAttr(item.industry_code || "general") + '" data-research-focus="' + escAttr(item.research_focus || "full_intelligence") + '">Refresh</button><span class="muted">' + timeStr + '</span></div>'
             + '</div>';
         }).join("");

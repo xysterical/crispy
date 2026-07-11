@@ -141,6 +141,8 @@ def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monk
     assert body["task"]["task_type"] == "competitive_landscape"
     assert body["task"]["refresh_reason"] == "operator_refresh"
     assert len(body["task"]["memory_ids"]) == 2
+    assert body["profile"]["evidence_quality"]["aggregate_score"] >= 0.55
+    assert body["profile"]["content"]["evidence"][0]["quality_tier"] in {"medium", "high"}
     rows = db_session.scalars(
         select(GmMemory).where(GmMemory.memory_scope == "shop")
     ).all()
@@ -156,6 +158,8 @@ def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monk
         assert content["source_queries"]
         assert content["research_status"] == "complete"
         assert content["research_focus"] == "competitive_landscape"
+        assert content["evidence_quality"]["aggregate_score"] >= 0.55
+        assert content["evidence"][0]["quality_score"] >= 0.5
         assert content["evidence"][0]["source"] in {"firecrawl", "tavily"}
         assert content["evidence"][0]["url"]
     task = db_session.scalar(select(ResearchTask).where(ResearchTask.shop_id == shop["id"]))
@@ -168,6 +172,7 @@ def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monk
     assert history.status_code == 200
     first = history.json()["items"][0]
     assert first["refresh_state"] == "fresh"
+    assert first["evidence_quality"]["quality_tier"] in {"medium", "high"}
     assert first["latest_task"]["status"] == "completed"
 
     tasks = client.get(f"/shop-analysis/tasks?shop_id={shop['id']}")
@@ -433,6 +438,77 @@ def test_weak_research_evidence_is_excluded_from_planning_unless_pinned(client, 
     db_session.flush()
     task_input = _build_task_input(db_session, run, planning_task)
     assert weak.id in {item["id"] for item in task_input["gm_lessons"]}
+
+
+def test_low_quality_research_source_is_excluded_from_planning(client, db_session):
+    from datetime import UTC, datetime, timedelta
+
+    from app.data.models import GmMemory, Workspace
+    from app.schemas.api import RunCreateRequest
+    from app.services.gm_memory import memory_dirty_reasons
+    from app.services.runs import _build_task_input, create_run
+
+    shop = Workspace(name="low-quality-research-shop", industry_code="pet_accessories")
+    db_session.add(shop)
+    db_session.flush()
+    run = create_run(
+        db_session,
+        RunCreateRequest(
+            workspace_name="low-quality-research-shop",
+            project_name="low-quality-research-project",
+            product_name="utility leash",
+            product_code="LOW-QUALITY-RESEARCH",
+            industry_code="pet_accessories",
+            campaign_name="low-quality-research-campaign",
+            creative_preset="custom",
+            creative_specs={"image_size": "1:1", "video_size": "1:1", "resolution": "720p", "video_duration_seconds": 5},
+        ),
+    )
+    low_quality = GmMemory(
+        project_id=run.project_id,
+        memory_scope="shop",
+        industry_code="pet_accessories",
+        source_type="shop_profile",
+        memory_type="research_intelligence",
+        content={
+            "shop_id": shop.id,
+            "summary": "Low-quality search result should not shape strategy.",
+            "evidence": [
+                {
+                    "source": "tavily",
+                    "url": "https://thin.example",
+                    "status": "ok",
+                    "quality_score": 0.32,
+                    "quality_tier": "low",
+                }
+            ],
+            "evidence_quality": {"aggregate_score": 0.32, "quality_tier": "low"},
+            "research_status": "partial",
+            "expires_at": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
+            "confidence": 0.8,
+        },
+    )
+    db_session.add(low_quality)
+    db_session.flush()
+
+    planning_task = next(task for task in run.stage_tasks if task.stage_name == "planning")
+    task_input = _build_task_input(db_session, run, planning_task)
+    assert "weak_research_evidence" in memory_dirty_reasons(low_quality)
+    assert low_quality.id not in {item["id"] for item in task_input["gm_lessons"]}
+
+
+def test_source_quality_scoring_penalizes_thin_evidence():
+    from app.services.shop_analysis import _normalize_evidence, _research_status
+
+    evidence = _normalize_evidence(
+        "https://thin.example",
+        source_type="shop_profile",
+        evidence=[{"source": "tavily", "url": "https://thin.example", "status": "ok"}],
+    )
+
+    assert evidence[0]["quality_score"] < 0.55
+    assert evidence[0]["quality_tier"] == "low"
+    assert _research_status(evidence, []) == "partial"
 
 
 def test_shopify_sync_writes_shop_memory_contract(client, db_session, monkeypatch):

@@ -662,6 +662,7 @@ class ShopAnalysisResult(BaseModel):
     summary: str      # one-line summary for display
     research_status: str = "unknown"
     evidence_count: int = 0
+    evidence_quality: dict = Field(default_factory=dict)
     research_focus: str = "full_intelligence"
 
 
@@ -716,6 +717,7 @@ class ShopAnalysisListItem(BaseModel):
     research_focus: str = "full_intelligence"
     research_status: str = "unknown"
     evidence_count: int = 0
+    evidence_quality: dict = Field(default_factory=dict)
     expires_at: str | None = None
     refresh_state: str = "unknown"
     latest_task: ResearchTaskItem | None = None

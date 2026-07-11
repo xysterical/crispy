@@ -3033,6 +3033,7 @@ def run_shop_analysis(
             "summary": result["profile"].get("positioning", payload.store_url),
             "research_status": entry.content.get("research_status", "unknown"),
             "evidence_count": len(entry.content.get("evidence") or []),
+            "evidence_quality": entry.content.get("evidence_quality") or {},
             "research_focus": payload.research_focus,
         }
     except Exception as exc:
@@ -3072,6 +3073,7 @@ def run_shop_analysis(
                 "summary": result["report"][:120] + "..." if len(result["report"]) > 120 else result["report"],
                 "research_status": entry.content.get("research_status", "unknown"),
                 "evidence_count": len(entry.content.get("evidence") or []),
+                "evidence_quality": entry.content.get("evidence_quality") or {},
                 "research_focus": payload.research_focus,
             }
         except Exception as exc:
