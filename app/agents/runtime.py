@@ -4694,7 +4694,7 @@ class AgentsRuntime:
                 search_errors.append(f"tavily_search: {exc}")
 
         prompt_parts = [
-            f"{self._business_strategy_system_prompt('Shop Analyst')}",
+            f"{self._business_strategy_system_prompt('Research Intelligence Analyst')}",
             f"Research this store: {store_url}",
             f"Operator description: {description or 'None provided'}.",
         ]
@@ -4813,7 +4813,7 @@ class AgentsRuntime:
                 search_errors.append(f"firecrawl_competitor: {exc}")
 
         prompt_parts = [
-            f"{self._business_strategy_system_prompt('Shop Analyst')}",
+            f"{self._business_strategy_system_prompt('Research Intelligence Analyst')}",
             f"Store profile: {json.dumps(store_profile)}",
             f"Store URL: {store_url}",
             f"Operator notes: {description or 'None provided'}.",

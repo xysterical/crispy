@@ -2543,6 +2543,11 @@ def _dashboard_shared_js() -> str:
           }
         </script>
     """
+@router.get("/dashboard/research", response_class=HTMLResponse)
+def dashboard_research(request: Request) -> str:
+    return templates.TemplateResponse(request=request, name="shop_analysis.html")
+
+
 @router.get("/dashboard/shop-analysis", response_class=HTMLResponse)
 def dashboard_shop_analysis(request: Request) -> str:
     return templates.TemplateResponse(request=request, name="shop_analysis.html")

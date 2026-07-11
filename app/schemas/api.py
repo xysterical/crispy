@@ -682,6 +682,10 @@ class ShopAnalysisListItem(BaseModel):
     industry_code: str
     status: str
     source_type: str
+    memory_type: str = ""
+    research_status: str = "unknown"
+    evidence_count: int = 0
+    expires_at: str | None = None
     summary: str
     created_at: datetime
 

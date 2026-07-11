@@ -291,12 +291,12 @@
       }
       return [{ row_key: `${r.agent_name}__text`, agent_name: r.agent_name, mode: "text", title, source: r.agent_name }];
     });
-    // Append Shop Analysis section at the bottom
+    // Append Research Intelligence section at the bottom
     rows.push(
       { row_key: "__divider_shop__", agent_name: "__divider__", mode: "text", title: "divider", source: "divider", isDivider: true },
-      { row_key: "shop_analyst__text", agent_name: "shop_analyst", mode: "text", title: "Shop Analyst - LLM", source: "shop_analyst" },
-      { row_key: "shop_analyst__tavily", agent_name: "shop_analyst", mode: "tavily", title: "Shop Analyst - Tavily", source: "shop_analyst" },
-      { row_key: "shop_analyst__firecrawl", agent_name: "shop_analyst", mode: "firecrawl", title: "Shop Analyst - Firecrawl", source: "shop_analyst" },
+      { row_key: "shop_analyst__text", agent_name: "shop_analyst", mode: "text", title: "Research Intelligence - LLM", source: "shop_analyst" },
+      { row_key: "shop_analyst__tavily", agent_name: "shop_analyst", mode: "tavily", title: "Research Intelligence - Tavily", source: "shop_analyst" },
+      { row_key: "shop_analyst__firecrawl", agent_name: "shop_analyst", mode: "firecrawl", title: "Research Intelligence - Firecrawl", source: "shop_analyst" },
     );
     async function api(path, options = {}) {
       const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
@@ -342,7 +342,7 @@
       rows.forEach((r) => {
         if (r.isDivider) {
           const tr = document.createElement("tr");
-          tr.innerHTML = '<td colspan="12" style="padding:8px 10px;background:#f0f4f2;border-bottom:2px solid var(--accent);font-weight:700;font-size:12px;color:var(--accent);">Shop Analysis Agents</td>';
+          tr.innerHTML = '<td colspan="12" style="padding:8px 10px;background:#f0f4f2;border-bottom:2px solid var(--accent);font-weight:700;font-size:12px;color:var(--accent);">Research Intelligence Agents</td>';
           body.appendChild(tr);
           return;
         }

@@ -30,7 +30,7 @@ def test_shop_analysis_page_has_shop_selector(client):
     html = resp.text
     assert '<select id="shop-name"' in html
     assert "renderShopSelect" in html
-    assert "Shop" in html
+    assert "Research Intelligence" in html
 
 
 def test_create_run_form_has_shop_labels(client):

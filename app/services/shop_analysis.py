@@ -240,6 +240,10 @@ def list_shop_analyses(
             "industry_code": row.industry_code or "",
             "status": "completed",
             "source_type": row.source_type,
+            "memory_type": row.memory_type,
+            "research_status": (row.content or {}).get("research_status") or "unknown",
+            "evidence_count": len((row.content or {}).get("evidence") or []),
+            "expires_at": (row.content or {}).get("expires_at"),
             "summary": summary,
             "created_at": row.created_at,
         })

@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 
-def test_shop_analysis_page_loads(client):
-    resp = client.get("/dashboard/shop-analysis")
+def test_research_page_loads(client):
+    resp = client.get("/dashboard/research")
     assert resp.status_code == 200
     html = resp.text
-    assert "Shop Analysis" in html
+    assert "Research Intelligence" in html
     assert "store-url" in html
-    assert "Run Analysis" in html
+    assert "Run Research" in html
+    assert "research-readiness" in html
+
+
+def test_legacy_shop_analysis_page_loads(client):
+    resp = client.get("/dashboard/shop-analysis")
+    assert resp.status_code == 200
+    assert "Research Intelligence" in resp.text
 
 
 def test_shop_analysis_history_empty(client):
@@ -803,9 +810,9 @@ def test_runtime_accepts_search_keys():
 
 
 def test_v2_page_loads_with_three_mode_rows(client):
-    """Verify Shop Analysis page still loads after v2 changes."""
-    resp = client.get("/dashboard/shop-analysis")
+    """Verify Research page still loads after v2 changes."""
+    resp = client.get("/dashboard/research")
     assert resp.status_code == 200
     html = resp.text
-    assert "Shop Analysis" in html
+    assert "Research Intelligence" in html
     assert "store-url" in html
