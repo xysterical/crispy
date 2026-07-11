@@ -434,6 +434,12 @@ class GmMemoryUpdateRequest(BaseModel):
     superseded_by_id: str | None = None
 
 
+class GmMemoryReviewActionRequest(BaseModel):
+    action: Literal["approve", "pin", "unpin", "reject", "resolve_conflicts"]
+    notes: str | None = None
+    changed_by: str = "operator"
+
+
 class GmMemoryCompactRequest(BaseModel):
     project_id: str
     memory_scope: Literal["shop", "product", "industry"]

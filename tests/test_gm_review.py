@@ -208,3 +208,110 @@ def test_gm_review_page_and_dashboard_link_load(client):
     assert "Compact Memory" in html
     assert "Generate Review" in html
     assert "Export Markdown" in html
+    assert "reviewMemory" in html
+    assert "Resolve conflicts" in html
+
+
+def test_gm_review_research_memory_actions_affect_planning(client, db_session):
+    from datetime import UTC, datetime, timedelta
+
+    from app.data.models import GmMemory, Workspace
+    from app.schemas.api import RunCreateRequest
+    from app.services.gm_memory import memory_dirty_reasons
+    from app.services.runs import _build_task_input, create_run
+
+    shop = Workspace(name="gm-review-research-shop", industry_code="pet_accessories")
+    db_session.add(shop)
+    db_session.flush()
+    run = create_run(
+        db_session,
+        RunCreateRequest(
+            workspace_name="gm-review-research-shop",
+            project_name="gm-review-research-project",
+            product_name="utility leash",
+            product_code="GM-REVIEW-RESEARCH",
+            industry_code="pet_accessories",
+            campaign_name="gm-review-research-campaign",
+            creative_preset="custom",
+            creative_specs={"image_size": "1:1", "video_size": "1:1", "resolution": "720p", "video_duration_seconds": 5},
+        ),
+    )
+    conflicted = GmMemory(
+        project_id=run.project_id,
+        memory_scope="shop",
+        industry_code="pet_accessories",
+        source_type="shop_profile",
+        memory_type="research_intelligence",
+        content={
+            "shop_id": shop.id,
+            "summary": "Conflicted research.",
+            "findings": {"positioning": "conflicted"},
+            "evidence": [{"source": "tavily", "url": "https://review-conflict.example", "status": "ok", "quality_score": 0.8}],
+            "evidence_quality": {"aggregate_score": 0.8, "quality_tier": "high"},
+            "conflicts": [{"pattern_key": "profile.positioning", "status": "unresolved"}],
+            "expires_at": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
+            "confidence": 0.8,
+        },
+    )
+    db_session.add(conflicted)
+    db_session.commit()
+
+    planning_task = next(task for task in run.stage_tasks if task.stage_name == "planning")
+    assert "unresolved_conflicts" in memory_dirty_reasons(conflicted)
+    assert conflicted.id not in {item["id"] for item in _build_task_input(db_session, run, planning_task)["gm_lessons"]}
+
+    resolve = client.post(
+        f"/gm-memory/{conflicted.id}/review",
+        json={"action": "resolve_conflicts", "notes": "newer research accepted", "changed_by": "test"},
+    )
+    assert resolve.status_code == 200
+    resolved_body = resolve.json()
+    assert resolved_body["content"]["review_status"] == "conflicts_resolved"
+    assert resolved_body["content"]["conflicts"][0]["status"] == "resolved"
+    db_session.refresh(conflicted)
+    assert conflicted.id in {item["id"] for item in _build_task_input(db_session, run, planning_task)["gm_lessons"]}
+
+    reject = client.post(
+        f"/gm-memory/{conflicted.id}/review",
+        json={"action": "reject", "notes": "do not use", "changed_by": "test"},
+    )
+    assert reject.status_code == 200
+    assert reject.json()["status"] == "archived"
+
+
+def test_gm_review_approve_pins_research_memory(client, db_session):
+    from datetime import UTC, datetime, timedelta
+
+    from app.data.models import GmMemory, Workspace
+
+    shop = Workspace(name="gm-review-approve-shop", industry_code="pet_accessories")
+    db_session.add(shop)
+    db_session.flush()
+    memory = GmMemory(
+        project_id="project-review-approve",
+        memory_scope="shop",
+        industry_code="pet_accessories",
+        source_type="audience_pain_points",
+        memory_type="research_intelligence",
+        content={
+            "shop_id": shop.id,
+            "summary": "Audience pain points need review.",
+            "findings": {"pain_points": ["objection"]},
+            "evidence": [{"source": "shop_profile", "url": "https://approve.example", "status": "ok"}],
+            "research_status": "fallback",
+            "expires_at": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
+            "confidence": 0.8,
+        },
+    )
+    db_session.add(memory)
+    db_session.commit()
+
+    resp = client.post(
+        f"/gm-memory/{memory.id}/review",
+        json={"action": "approve", "notes": "operator approved weak source", "changed_by": "test"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pinned"] is True
+    assert body["content"]["review_status"] == "approved"
+    assert body["content"]["review_log"][0]["action"] == "approve"

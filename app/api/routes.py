@@ -79,6 +79,7 @@ from app.schemas.api import (
     RunTemplateCreate,
     RunTemplateUpdate,
     RunTemplateView,
+    GmMemoryReviewActionRequest,
     ShopAnalysisRequest,
     ShopAnalysisResponse,
     ShopAnalysisPreflightResponse,
@@ -3519,6 +3520,70 @@ def update_gm_memory(
         content["superseded_by_id"] = payload.superseded_by_id
         row.content = content
         row.status = "superseded"
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _gm_memory_item(row)
+
+
+@router.post("/gm-memory/{memory_id}/review", response_model=GmMemoryItem)
+def review_research_memory(
+    memory_id: str,
+    payload: GmMemoryReviewActionRequest,
+    db: Session = Depends(get_db),
+) -> GmMemoryItem:
+    row = db.get(GmMemory, memory_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="GM memory not found")
+    if row.memory_type != "research_intelligence":
+        raise HTTPException(status_code=400, detail="Review actions are only supported for research_intelligence memory")
+
+    content = dict(row.content or {})
+    review_log = list(content.get("review_log") or [])
+    review_event = {
+        "action": payload.action,
+        "changed_by": payload.changed_by,
+        "notes": payload.notes or "",
+        "reviewed_at": datetime.now(UTC).isoformat(),
+    }
+    review_log.append(review_event)
+
+    if payload.action == "approve":
+        row.status = "active"
+        row.pinned = True
+        content["review_status"] = "approved"
+    elif payload.action == "pin":
+        row.pinned = True
+        content["review_status"] = content.get("review_status") or "pinned"
+    elif payload.action == "unpin":
+        row.pinned = False
+        content["review_status"] = content.get("review_status") or "unreviewed"
+    elif payload.action == "reject":
+        row.status = "archived"
+        row.pinned = False
+        content["review_status"] = "rejected"
+    elif payload.action == "resolve_conflicts":
+        resolved = []
+        for conflict in content.get("conflicts") or []:
+            item = dict(conflict or {})
+            item["status"] = "resolved"
+            item["resolved_by"] = payload.changed_by
+            item["resolved_at"] = review_event["reviewed_at"]
+            if payload.notes:
+                item["resolution_notes"] = payload.notes
+            resolved.append(item)
+        content["conflicts"] = resolved
+        content["conflict_count"] = 0
+        content["review_status"] = "conflicts_resolved"
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported review action")
+
+    content["review_log"] = review_log
+    content["reviewed_at"] = review_event["reviewed_at"]
+    content["reviewed_by"] = payload.changed_by
+    if payload.notes:
+        content["review_notes"] = payload.notes
+    row.content = content
     db.add(row)
     db.commit()
     db.refresh(row)

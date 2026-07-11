@@ -375,6 +375,8 @@
       const pinLabel = item.pinned ? "Unpin" : "Pin";
       const statusAction = item.status === "active" ? "Archive" : "Activate";
       const nextStatus = item.status === "active" ? "archived" : "active";
+      const isResearch = item.memory_type === "research_intelligence";
+      const reviewStatus = content.review_status || "unreviewed";
       return `<div class="memory-item">
         <div class="pill-row">
           <span class="badge ${item.status === "active" ? "badge-ok" : "badge-muted"}">${esc(item.status)}</span>
@@ -382,6 +384,7 @@
           <span class="pill mono">${esc(item.memory_type)}</span>
           <span class="pill mono">${esc(item.source_type)}</span>
           ${item.pinned ? '<span class="badge badge-warn">Pinned</span>' : ''}
+          ${isResearch ? `<span class="pill mono">review=${esc(reviewStatus)}</span>` : ''}
           ${dirtyReasons.length ? `<span class="badge badge-warn">Dirty</span>` : ''}
           ${conflicts.length ? `<span class="badge badge-warn">${conflicts.length} conflicts</span>` : ''}
         </div>
@@ -390,6 +393,9 @@
         ${conflicts.length ? `<div class="muted">Conflicts: ${conflicts.map((item) => esc(item.pattern_key || item.reason)).join(", ")}</div>` : ''}
         <div class="muted mono">${esc(item.id)} · score=${item.score_hint ?? "-"} · confidence=${confidence} · evidence=${evidence}</div>
         <div class="memory-actions">
+          ${isResearch ? `<button onclick="reviewMemory('${esc(item.id)}', 'approve')">Approve</button>` : ''}
+          ${isResearch && conflicts.length ? `<button onclick="reviewMemory('${esc(item.id)}', 'resolve_conflicts')">Resolve conflicts</button>` : ''}
+          ${isResearch ? `<button class="danger" onclick="reviewMemory('${esc(item.id)}', 'reject')">Reject</button>` : ''}
           <button onclick="updateMemory('${esc(item.id)}', {pinned: ${item.pinned ? "false" : "true"}})">${pinLabel}</button>
           <button onclick="updateMemory('${esc(item.id)}', {status: '${nextStatus}'})">${statusAction}</button>
           <button class="danger" onclick="updateMemory('${esc(item.id)}', {status: 'superseded'})">Supersede</button>
@@ -420,6 +426,20 @@
         await loadMemories();
       } catch (err) {
         setMemoryMsg("Failed to update memory: " + err.message, "error");
+      }
+    }
+    async function reviewMemory(id, action) {
+      const notes = action === "resolve_conflicts" ? "Resolved in GM Review." : "";
+      setMemoryMsg("Reviewing research memory...");
+      try {
+        await api(`/gm-memory/${encodeURIComponent(id)}/review`, {
+          method: "POST",
+          body: JSON.stringify({action, notes, changed_by: "gm_review"})
+        });
+        await loadMemories();
+        setMemoryMsg("Research memory reviewed.", "ok");
+      } catch (err) {
+        setMemoryMsg("Failed to review memory: " + err.message, "error");
       }
     }
     async function compactMemory() {
