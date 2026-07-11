@@ -61,11 +61,43 @@ def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monk
             "profile": {
                 "positioning": "Premium urban pet utility",
                 "target_audience": "Urban dog owners",
-            }
+            },
+            "evidence": [
+                {
+                    "source": "firecrawl",
+                    "url": "https://shop-memory.example",
+                    "title": "Shop Memory",
+                    "summary": "Premium dog accessories.",
+                    "status": "ok",
+                },
+                {
+                    "source": "tavily",
+                    "url": "https://review.example/shop-memory",
+                    "title": "Review",
+                    "summary": "Urban dog owners mention utility.",
+                    "score": 0.82,
+                    "status": "ok",
+                },
+            ],
+            "source_queries": ["shop-memory target audience"],
+            "search_errors": [],
         }
 
     def fake_competitors(self, **kwargs):
-        return {"report": "## Competitive Landscape Overview\nComparable pet accessory stores."}
+        return {
+            "report": "## Competitive Landscape Overview\nComparable pet accessory stores.",
+            "evidence": [
+                {
+                    "source": "tavily",
+                    "url": "https://competitor.example",
+                    "title": "Competitor",
+                    "summary": "Comparable pet accessory store.",
+                    "status": "ok",
+                }
+            ],
+            "source_queries": ["competitors similar to premium pet utility"],
+            "search_errors": [],
+        }
 
     monkeypatch.setattr(AgentsRuntime, "run_shop_profile_analysis", fake_profile)
     monkeypatch.setattr(AgentsRuntime, "run_competitor_analysis", fake_competitors)
@@ -104,7 +136,36 @@ def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monk
         assert content["confidence"] >= 0.6
         assert content["expires_at"]
         assert content["source_queries"]
-        assert content["evidence"][0]["url"] == "https://shop-memory.example"
+        assert content["research_status"] == "complete"
+        assert content["evidence"][0]["source"] in {"firecrawl", "tavily"}
+        assert content["evidence"][0]["url"]
+
+
+def test_shop_analysis_preflight_reports_search_tool_status(client, monkeypatch):
+    monkeypatch.setenv("CRISPY_API_KEY_TEST_LLM", "llm")
+    monkeypatch.setenv("CRISPY_API_KEY_TEST_TAVILY", "tavily")
+    monkeypatch.setenv("CRISPY_API_KEY_TEST_FIRECRAWL", "firecrawl")
+    resp = client.patch(
+        "/agent-configs/shop_analyst",
+        json={
+            "api_key_env": "CRISPY_API_KEY_TEST_LLM",
+            "extra": {
+                "tavily_config": {"api_key_env": "CRISPY_API_KEY_TEST_TAVILY"},
+                "firecrawl_config": {"api_key_env": "CRISPY_API_KEY_TEST_FIRECRAWL"},
+            },
+        },
+    )
+    assert resp.status_code == 200
+
+    preflight = client.get("/shop-analysis/preflight")
+    assert preflight.status_code == 200
+    body = preflight.json()
+    assert body["ok"] is True
+    assert body["severity"] == "ok"
+    checks = {item["key"]: item for item in body["checks"]}
+    assert checks["shop_analyst.llm"]["available"] is True
+    assert checks["shop_analyst.tavily"]["available"] is True
+    assert checks["shop_analyst.firecrawl"]["available"] is True
 
 
 def test_create_run_planning_input_includes_shop_memory(client, db_session):
@@ -211,6 +272,80 @@ def test_create_run_planning_input_includes_shop_memory(client, db_session):
     assert shop_lessons[0]["memory_type"] == "summary"
     assert {item["source_type"] for item in shop_lessons} >= {"shop_profile", "shopify_sync", "meta_sync"}
     assert all(item["content"].get("summary") != "Archived memory should not reach planning." for item in shop_lessons)
+
+
+def test_expired_research_memory_is_excluded_from_planning_unless_pinned(client, db_session):
+    from datetime import UTC, datetime, timedelta
+
+    from app.data.models import GmMemory, Workspace
+    from app.schemas.api import RunCreateRequest
+    from app.services.runs import _build_task_input, _gm_memory_trace_payload, create_run
+
+    shop = Workspace(name="expired-research-shop", industry_code="pet_accessories")
+    db_session.add(shop)
+    db_session.flush()
+    run = create_run(
+        db_session,
+        RunCreateRequest(
+            workspace_name="expired-research-shop",
+            project_name="expired-research-project",
+            product_name="utility leash",
+            product_code="EXP-RESEARCH",
+            industry_code="pet_accessories",
+            campaign_name="expired-research-campaign",
+            creative_preset="custom",
+            creative_specs={"image_size": "1:1", "video_size": "1:1", "resolution": "720p", "video_duration_seconds": 5},
+        ),
+    )
+    expired = GmMemory(
+        project_id=run.project_id,
+        memory_scope="shop",
+        industry_code="pet_accessories",
+        source_type="shop_profile",
+        memory_type="research_intelligence",
+        content={
+            "shop_id": shop.id,
+            "summary": "Expired research should not shape strategy.",
+            "evidence": [{"source": "tavily", "url": "https://expired.example", "status": "ok"}],
+            "research_status": "complete",
+            "expires_at": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
+            "confidence": 0.9,
+        },
+    )
+    fresh = GmMemory(
+        project_id=run.project_id,
+        memory_scope="shop",
+        industry_code="pet_accessories",
+        source_type="shop_profile",
+        memory_type="research_intelligence",
+        content={
+            "shop_id": shop.id,
+            "summary": "Fresh research can shape strategy.",
+            "evidence": [{"source": "tavily", "url": "https://fresh.example", "status": "ok"}],
+            "research_status": "complete",
+            "expires_at": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
+            "confidence": 0.9,
+        },
+    )
+    db_session.add_all([expired, fresh])
+    db_session.flush()
+
+    planning_task = next(task for task in run.stage_tasks if task.stage_name == "planning")
+    task_input = _build_task_input(db_session, run, planning_task)
+    lesson_ids = {item["id"] for item in task_input["gm_lessons"]}
+    assert fresh.id in lesson_ids
+    assert expired.id not in lesson_ids
+
+    trace_payload = _gm_memory_trace_payload(task_input["gm_lessons"])
+    fresh_ref = next(item for item in trace_payload["references"] if item["memory_id"] == fresh.id)
+    assert fresh_ref["research_status"] == "complete"
+    assert fresh_ref["evidence_count"] == 1
+    assert fresh_ref["expires_at"] == fresh.content["expires_at"]
+
+    expired.pinned = True
+    db_session.flush()
+    task_input = _build_task_input(db_session, run, planning_task)
+    assert expired.id in {item["id"] for item in task_input["gm_lessons"]}
 
 
 def test_shopify_sync_writes_shop_memory_contract(client, db_session, monkeypatch):

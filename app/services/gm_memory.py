@@ -22,6 +22,8 @@ def memory_dirty_reasons(row: GmMemory) -> list[str]:
     confidence = content.get("confidence")
     if isinstance(confidence, int | float) and confidence < 0.45:
         reasons.append("low_confidence")
+    if _is_expired_research_memory(row):
+        reasons.append("expired_research")
     if not _has_actionable_content(content):
         reasons.append("empty_actionable_content")
     return reasons
@@ -151,3 +153,18 @@ def _has_actionable_content(content: dict) -> bool:
             "overall_roas",
         )
     )
+
+
+def _is_expired_research_memory(row: GmMemory) -> bool:
+    if row.memory_type != "research_intelligence":
+        return False
+    expires_at = (row.content or {}).get("expires_at")
+    if not isinstance(expires_at, str) or not expires_at:
+        return False
+    try:
+        parsed = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed < datetime.now(UTC)

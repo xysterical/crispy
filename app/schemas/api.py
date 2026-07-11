@@ -652,6 +652,8 @@ class ShopAnalysisResult(BaseModel):
     source_type: str  # "shop_profile" or "competitor_analysis"
     content: dict     # structured profile or markdown report
     summary: str      # one-line summary for display
+    research_status: str = "unknown"
+    evidence_count: int = 0
 
 
 class ShopAnalysisResponse(BaseModel):
@@ -663,8 +665,15 @@ class ShopAnalysisResponse(BaseModel):
     profile: ShopAnalysisResult | None = None
     competitor_analysis: ShopAnalysisResult | None = None
     status: str  # "running", "completed", "failed"
+    tool_status: dict = Field(default_factory=dict)
     error_message: str | None = None
     created_at: datetime
+
+
+class ShopAnalysisPreflightResponse(BaseModel):
+    ok: bool
+    severity: Literal["ok", "warn", "error"]
+    checks: list[dict] = Field(default_factory=list)
 
 
 class ShopAnalysisListItem(BaseModel):

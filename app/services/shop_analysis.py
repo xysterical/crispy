@@ -31,6 +31,36 @@ def _evidence_for_store_url(store_url: str, *, source_type: str) -> list[dict]:
     ]
 
 
+def _normalize_evidence(store_url: str, *, source_type: str, evidence: list[dict] | None) -> list[dict]:
+    normalized: list[dict] = []
+    for item in evidence or []:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or store_url)
+        normalized.append({
+            "source": str(item.get("source") or source_type),
+            "url": url,
+            "title": str(item.get("title") or ""),
+            "summary": str(item.get("summary") or item.get("content") or "")[:500],
+            "fetched_at": str(item.get("fetched_at") or utcnow().isoformat()),
+            "status": str(item.get("status") or "ok"),
+            "score": item.get("score"),
+        })
+    return normalized or _evidence_for_store_url(store_url, source_type=source_type)
+
+
+def _research_status(evidence: list[dict], search_errors: list[str] | None) -> str:
+    errors = search_errors or []
+    real_sources = [item for item in evidence if item.get("source") in {"tavily", "firecrawl"} and item.get("status") == "ok"]
+    if real_sources and not errors:
+        return "complete"
+    if real_sources:
+        return "partial"
+    if errors:
+        return "degraded"
+    return "fallback"
+
+
 def _profile_summary(store_url: str, profile_data: dict) -> str:
     if isinstance(profile_data, dict):
         return str(profile_data.get("positioning") or profile_data.get("summary") or store_url)
@@ -80,17 +110,22 @@ def save_shop_profile(
     industry_code: str,
     store_url: str,
     profile_data: dict,
+    evidence: list[dict] | None = None,
+    source_queries: list[str] | None = None,
+    search_errors: list[str] | None = None,
     shop_id: str | None = None,
     shop_name: str | None = None,
 ) -> GmMemory:
     generated_at = utcnow()
+    normalized_evidence = _normalize_evidence(store_url, source_type="shop_profile", evidence=evidence)
+    status = _research_status(normalized_evidence, search_errors)
     entry = GmMemory(
         project_id=project_id,
         memory_scope="shop" if shop_id else "industry",
         industry_code=industry_code,
         source_type="shop_profile",
         memory_type="research_intelligence",
-        score_hint=0.65,
+        score_hint=0.7 if status == "complete" else 0.6,
         content={
             "source": "shop_profile",
             "scope": "shop" if shop_id else "industry",
@@ -101,10 +136,12 @@ def save_shop_profile(
             "summary": _profile_summary(store_url, profile_data),
             "findings": profile_data if isinstance(profile_data, dict) else {"raw_profile": profile_data},
             "strategic_implications": _profile_implications(profile_data),
-            "evidence": _evidence_for_store_url(store_url, source_type="shop_profile"),
-            "source_queries": [f"{store_url} brand positioning target audience product catalog"],
+            "evidence": normalized_evidence,
+            "source_queries": source_queries or [f"{store_url} brand positioning target audience product catalog"],
+            "search_errors": search_errors or [],
+            "research_status": status,
             "metric_window": {"start": generated_at.date().isoformat(), "end": generated_at.date().isoformat()},
-            "confidence": 0.65,
+            "confidence": 0.72 if status == "complete" else 0.6,
             "generated_at": generated_at.isoformat(),
             "expires_at": _research_expires_at(generated_at),
         },
@@ -121,17 +158,22 @@ def save_competitor_analysis(
     industry_code: str,
     store_url: str,
     analysis_markdown: str,
+    evidence: list[dict] | None = None,
+    source_queries: list[str] | None = None,
+    search_errors: list[str] | None = None,
     shop_id: str | None = None,
     shop_name: str | None = None,
 ) -> GmMemory:
     generated_at = utcnow()
+    normalized_evidence = _normalize_evidence(store_url, source_type="competitor_analysis", evidence=evidence)
+    status = _research_status(normalized_evidence, search_errors)
     entry = GmMemory(
         project_id=project_id,
         memory_scope="shop" if shop_id else "industry",
         industry_code=industry_code,
         source_type="competitor_analysis",
         memory_type="research_intelligence",
-        score_hint=0.6,
+        score_hint=0.68 if status == "complete" else 0.58,
         content={
             "source": "competitor_analysis",
             "scope": "shop" if shop_id else "industry",
@@ -142,10 +184,12 @@ def save_competitor_analysis(
             "summary": _report_summary(store_url, analysis_markdown),
             "findings": {"report": analysis_markdown},
             "strategic_implications": [_report_summary(store_url, analysis_markdown)],
-            "evidence": _evidence_for_store_url(store_url, source_type="competitor_analysis"),
-            "source_queries": [f"competitors similar to {store_url} online store positioning creative patterns"],
+            "evidence": normalized_evidence,
+            "source_queries": source_queries or [f"competitors similar to {store_url} online store positioning creative patterns"],
+            "search_errors": search_errors or [],
+            "research_status": status,
             "metric_window": {"start": generated_at.date().isoformat(), "end": generated_at.date().isoformat()},
-            "confidence": 0.6,
+            "confidence": 0.68 if status == "complete" else 0.58,
             "generated_at": generated_at.isoformat(),
             "expires_at": _research_expires_at(generated_at),
         },

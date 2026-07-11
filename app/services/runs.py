@@ -805,6 +805,9 @@ def _gm_memory_trace_payload(gm_lessons: list[dict]) -> dict:
             "source_type": item.get("source_type"),
             "memory_type": item.get("memory_type"),
             "summary": content.get("summary") or content.get("source") or "",
+            "research_status": content.get("research_status"),
+            "evidence_count": len(content.get("evidence") or []),
+            "expires_at": content.get("expires_at"),
             "reason": "matched product/shop/industry planning context",
         })
     return {

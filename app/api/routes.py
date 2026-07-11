@@ -81,6 +81,7 @@ from app.schemas.api import (
     RunTemplateView,
     ShopAnalysisRequest,
     ShopAnalysisResponse,
+    ShopAnalysisPreflightResponse,
     ShopAnalysisListItem,
     ShopAnalysisHistoryResponse,
     ShopItem,
@@ -2893,6 +2894,37 @@ def delete_shop(shop_name: str, db: Session = Depends(get_db)):
 
 # ── Shop Analysis ─────────────────────────────────────────────────
 
+def _shop_analysis_tool_status(config: dict) -> dict:
+    extra = config.get("extra") or {}
+    tavily_cfg = extra.get("tavily_config") or {}
+    firecrawl_cfg = extra.get("firecrawl_config") or {}
+    llm_env = config.get("api_key_env")
+    tavily_env = tavily_cfg.get("api_key_env")
+    firecrawl_env = firecrawl_cfg.get("api_key_env")
+    return {
+        "llm": {"configured": bool(llm_env), "available": api_key_available(llm_env), "api_key_env": llm_env},
+        "tavily": {"configured": bool(tavily_env), "available": api_key_available(tavily_env), "api_key_env": tavily_env},
+        "firecrawl": {"configured": bool(firecrawl_env), "available": api_key_available(firecrawl_env), "api_key_env": firecrawl_env},
+    }
+
+
+@router.get("/shop-analysis/preflight", response_model=ShopAnalysisPreflightResponse)
+def shop_analysis_preflight(db: Session = Depends(get_db)) -> dict:
+    from app.services.agent_api_configs import resolve_agent_config
+
+    config = resolve_agent_config(db, agent_name="shop_analyst", run_provider="", run_model="")
+    tool_status = _shop_analysis_tool_status(config)
+    checks = [
+        {"key": "shop_analyst.llm", "severity": "ok" if tool_status["llm"]["available"] else "error", **tool_status["llm"]},
+        {"key": "shop_analyst.tavily", "severity": "ok" if tool_status["tavily"]["available"] else "warn", **tool_status["tavily"]},
+        {"key": "shop_analyst.firecrawl", "severity": "ok" if tool_status["firecrawl"]["available"] else "warn", **tool_status["firecrawl"]},
+    ]
+    has_llm = tool_status["llm"]["available"]
+    has_external_research = tool_status["tavily"]["available"] or tool_status["firecrawl"]["available"]
+    severity = "ok" if has_llm and has_external_research else "warn" if has_llm else "error"
+    return {"ok": has_llm, "severity": severity, "checks": checks}
+
+
 @router.post("/shop-analysis/run", response_model=ShopAnalysisResponse)
 def run_shop_analysis(
     payload: ShopAnalysisRequest,
@@ -2930,6 +2962,7 @@ def run_shop_analysis(
     provider = config["provider_name"]
     model = config["model_name"]
     runtime_config = resolve_agent_runtime(config)
+    tool_status = _shop_analysis_tool_status(config)
 
     # Extract search tool API keys from config extra
     extra = config.get("extra") or {}
@@ -2960,6 +2993,9 @@ def run_shop_analysis(
             industry_code=payload.industry_code,
             store_url=payload.store_url,
             profile_data=result["profile"],
+            evidence=result.get("evidence"),
+            source_queries=result.get("source_queries"),
+            search_errors=result.get("search_errors"),
             shop_id=shop.id if shop else None,
             shop_name=shop.name if shop else None,
         )
@@ -2967,6 +3003,8 @@ def run_shop_analysis(
             "source_type": "shop_profile",
             "content": entry.content,
             "summary": result["profile"].get("positioning", payload.store_url),
+            "research_status": entry.content.get("research_status", "unknown"),
+            "evidence_count": len(entry.content.get("evidence") or []),
         }
     except Exception as exc:
         errors.append(f"shop_profile: {exc}")
@@ -2991,6 +3029,9 @@ def run_shop_analysis(
                 industry_code=payload.industry_code,
                 store_url=payload.store_url,
                 analysis_markdown=result["report"],
+                evidence=result.get("evidence"),
+                source_queries=result.get("source_queries"),
+                search_errors=result.get("search_errors"),
                 shop_id=shop.id if shop else None,
                 shop_name=shop.name if shop else None,
             )
@@ -2998,6 +3039,8 @@ def run_shop_analysis(
                 "source_type": "competitor_analysis",
                 "content": entry.content,
                 "summary": result["report"][:120] + "..." if len(result["report"]) > 120 else result["report"],
+                "research_status": entry.content.get("research_status", "unknown"),
+                "evidence_count": len(entry.content.get("evidence") or []),
             }
         except Exception as exc:
             errors.append(f"competitor_analysis: {exc}")
@@ -3016,6 +3059,7 @@ def run_shop_analysis(
         profile=profile_result,
         competitor_analysis=competitor_result,
         status=status,
+        tool_status=tool_status,
         error_message="; ".join(errors) if errors else None,
         created_at=datetime.now(UTC),
     ).model_dump(mode="json")

@@ -4647,20 +4647,49 @@ class AgentsRuntime:
         store_content = ""
         tavily_results: dict = {}
         search_errors: list[str] = []
+        evidence: list[dict] = []
+        source_queries: list[str] = []
 
         if firecrawl_api_key:
             try:
                 fc = FirecrawlClient(api_key=firecrawl_api_key)
                 result = fc.scrape(store_url)
                 store_content = result.markdown[:8000]
+                evidence.append({
+                    "source": "firecrawl",
+                    "url": store_url,
+                    "title": result.title,
+                    "summary": result.markdown[:500],
+                    "fetched_at": datetime.now(UTC).isoformat(),
+                    "status": "ok",
+                })
             except Exception as exc:
                 search_errors.append(f"firecrawl_scrape: {exc}")
+                evidence.append({
+                    "source": "firecrawl",
+                    "url": store_url,
+                    "summary": str(exc),
+                    "fetched_at": datetime.now(UTC).isoformat(),
+                    "status": "failed",
+                })
 
         if tavily_api_key:
             try:
                 tv = TavilyClient(api_key=tavily_api_key)
                 search_query = f"{description or store_url} brand positioning reviews target audience"
+                source_queries.append(search_query)
                 tavily_results = tv.search_raw(search_query, max_results=5)
+                for row in tavily_results.get("results") or []:
+                    evidence.append({
+                        "source": "tavily",
+                        "url": row.get("url", ""),
+                        "title": row.get("title", ""),
+                        "summary": row.get("content", ""),
+                        "score": row.get("score"),
+                        "query": search_query,
+                        "fetched_at": datetime.now(UTC).isoformat(),
+                        "status": "ok",
+                    })
             except Exception as exc:
                 search_errors.append(f"tavily_search: {exc}")
 
@@ -4701,6 +4730,8 @@ class AgentsRuntime:
             "profile": profile,
             "model_used": model_used,
             "estimated_cost": estimated_cost,
+            "evidence": evidence,
+            "source_queries": source_queries,
             "search_errors": search_errors if search_errors else None,
         }
 
@@ -4722,6 +4753,8 @@ class AgentsRuntime:
         search_errors: list[str] = []
         competitor_search_results: dict = {}
         competitor_pages: list[str] = []
+        evidence: list[dict] = []
+        source_queries: list[str] = []
 
         if tavily_api_key:
             try:
@@ -4730,9 +4763,20 @@ class AgentsRuntime:
                 categories = store_profile.get("product_categories", [])
                 cat_str = ", ".join(categories[:3]) if categories else ""
                 query = f"competitors similar to {positioning} {cat_str} online store"
+                source_queries.append(query)
                 competitor_search_results = tv.search_raw(query, max_results=5)
                 for r in (competitor_search_results.get("results") or []):
                     url = r.get("url", "")
+                    evidence.append({
+                        "source": "tavily",
+                        "url": url,
+                        "title": r.get("title", ""),
+                        "summary": r.get("content", ""),
+                        "score": r.get("score"),
+                        "query": query,
+                        "fetched_at": datetime.now(UTC).isoformat(),
+                        "status": "ok",
+                    })
                     if url and url != store_url:
                         competitor_pages.append(url)
             except Exception as exc:
@@ -4748,8 +4792,23 @@ class AgentsRuntime:
                         competitor_content.append(
                             f"URL: {comp_url}\nTITLE: {result.title}\n{result.markdown[:4000]}"
                         )
+                        evidence.append({
+                            "source": "firecrawl",
+                            "url": comp_url,
+                            "title": result.title,
+                            "summary": result.markdown[:500],
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "ok",
+                        })
                     except Exception:
                         competitor_content.append(f"URL: {comp_url}\n[Scrape failed]")
+                        evidence.append({
+                            "source": "firecrawl",
+                            "url": comp_url,
+                            "summary": "Scrape failed",
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "failed",
+                        })
             except Exception as exc:
                 search_errors.append(f"firecrawl_competitor: {exc}")
 
@@ -4782,5 +4841,7 @@ class AgentsRuntime:
             "report": summary,
             "model_used": model_used,
             "estimated_cost": estimated_cost,
+            "evidence": evidence,
+            "source_queries": source_queries,
             "search_errors": search_errors if search_errors else None,
         }
