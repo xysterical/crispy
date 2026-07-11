@@ -1146,6 +1146,52 @@ def _dashboard_shared_js() -> str:
             if (["failed_assets", "media_issue", "operator_quality_issue", "needs_regeneration", "rejected", "visual_qa_failed", "visual_qa_placeholder", "visual_qa_empty_video", "visual_qa_decode_error", "visual_qa_empty_file", "visual_qa_missing_file", "media_gate_generation_error", "media_gate_placeholder", "media_gate_empty_video", "media_gate_decode_error", "media_gate_empty_file", "media_gate_missing_file", "media_gate_missing_uri"].includes(flag)) return "bad";
             return "";
           }
+          function qualityChipLabel(flag){
+            const titleize = (value) => String(value || "-")
+              .replaceAll("_", " ")
+              .split(" ")
+              .filter(Boolean)
+              .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+              .join(" ");
+            const labels = {
+              ready_to_review: "Ready",
+              winner: "Winner",
+              shortlisted: "Picked",
+              processing_assets: "Processing",
+              missing_assets: "Missing assets",
+              compliance_attention: "Needs compliance check",
+              low_score: "Low score",
+              pending_review: "Pending review",
+              visual_qa_attention: "Needs visual QA",
+              visual_qa_needs_frame_review: "Needs frame review",
+              visual_qa_remote_unchecked: "Remote QA unchecked",
+              visual_qa_aspect_mismatch: "Aspect mismatch",
+              visual_qa_low_information: "Low detail",
+              visual_qa_video_header_unverified: "Video header unchecked",
+              media_gate_asset_processing: "Media processing",
+              media_gate_aspect_mismatch: "Aspect mismatch",
+              media_gate_low_information: "Low detail",
+              failed_assets: "Asset failed",
+              media_issue: "Media issue",
+              operator_quality_issue: "Marked issue",
+              needs_regeneration: "Needs redo",
+              rejected: "Rejected",
+              visual_qa_failed: "Visual QA failed",
+              visual_qa_placeholder: "Placeholder asset",
+              visual_qa_empty_video: "Empty video",
+              visual_qa_decode_error: "Decode error",
+              visual_qa_empty_file: "Empty file",
+              visual_qa_missing_file: "Missing file",
+              media_gate_generation_error: "Generation failed",
+              media_gate_placeholder: "Placeholder asset",
+              media_gate_empty_video: "Empty video",
+              media_gate_decode_error: "Decode error",
+              media_gate_empty_file: "Empty file",
+              media_gate_missing_file: "Missing file",
+              media_gate_missing_uri: "Missing file link",
+            };
+            return labels[flag] || titleize(flag);
+          }
           function qualitySurfaceBadges(summary){
             const badges = [];
             const frameFlags = summary?.frame_review_flags || [];
@@ -1381,7 +1427,7 @@ def _dashboard_shared_js() -> str:
             const score = evaluation?.total_score;
             const qSummary = qualitySummary(item);
             const flags = qualityFlags(item);
-            const qualityChips = flags.map((flag) => `<span class="quality-chip ${qualityChipClass(flag)}">${esc(flag)}</span>`).join("");
+            const qualityChips = flags.map((flag) => `<span class="quality-chip ${qualityChipClass(flag)}">${esc(qualityChipLabel(flag))}</span>`).join("");
             const surfaceBadges = qualitySurfaceBadges(qSummary);
             return `
               <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
@@ -1389,7 +1435,7 @@ def _dashboard_shared_js() -> str:
                   <b style="font-size:18px;">${esc(item.variant_id)}</b>
                   <span class="muted"> · ${esc(item.angle || "-")}</span>
                   ${item.is_winner ? '<span class="quality-chip good">Winner</span>' : ''}
-                  ${item.shortlisted ? '<span class="quality-chip good">Shortlisted</span>' : ''}
+                  ${item.shortlisted ? '<span class="quality-chip good">Picked</span>' : ''}
                 </div>
                 <button onclick="(()=>{const p=document.getElementById('variant-detail-panel');expandedVariantId=null;p.classList.remove('open');p.classList.add('is-closing');const m=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--modal-close-dur'))||150;setTimeout(()=>p.classList.remove('is-closing'),m);document.querySelectorAll('.variant-score-card').forEach(c=>c.classList.remove('selected'));})()" style="font-size:12px;">Close</button>
               </div>
@@ -1406,7 +1452,7 @@ def _dashboard_shared_js() -> str:
                   <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:10px;">
                     <span class="score-number ${scoreColorClass(score)}" style="font-size:42px;">${score != null ? Math.round(score) : "-"}</span>
                     <span class="muted">/ 100</span>
-                    <span class="quality-chip ${qualityChipClass(qSummary.quality_status)}">${esc(qSummary.quality_status || "-")}</span>
+                    <span class="quality-chip ${qualityChipClass(qSummary.quality_status)}">${esc(qualityChipLabel(qSummary.quality_status || "-"))}</span>
                   </div>
                   <div class="variant-score-breakdown">${renderScoreBreakdown(item)}</div>
                   <div class="quality-row" style="margin-top:10px;">${surfaceBadges}${qualityChips}</div>
@@ -1431,7 +1477,7 @@ def _dashboard_shared_js() -> str:
               <div class="variant-detail-actions">
                 <button onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/review', {action:'approve_variant', comment:'approved from dashboard'})">Approve</button>
                 <button onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/review', {action:'reject_variant', comment:'rejected from dashboard'})">Reject</button>
-                <button onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/select', {shortlist:true, comment:'shortlisted from dashboard'})">Shortlist</button>
+                <button onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/select', {shortlist:true, comment:'shortlisted from dashboard'})">Pick</button>
                 <button class="primary" onclick="variantAction('${runId}', '${variantId}', '/runs/${runId}/variants/${variantId}/select', {winner:true, comment:'winner chosen from dashboard'})">Set Winner</button>
                 <button onclick="requestVariantRegeneration('${runId}', '${variantId}')">Regenerate</button>
                 <button onclick="scheduleVariantQuick('${variantId}','${runId}','${(item.hook||'').replace(/'/g,\"\\\\'\")}')" style="background:var(--soft);border-color:var(--accent);color:var(--accent);">+ Calendar</button>
@@ -1595,16 +1641,16 @@ def _dashboard_shared_js() -> str:
                   </div>
                   <div class="quality-row" style="justify-content:center;">
                     ${item.is_winner ? '<span class="quality-chip good">Winner</span>' : ''}
-                    ${item.shortlisted && !item.is_winner ? '<span class="quality-chip good">Shortlisted</span>' : ''}
+                    ${item.shortlisted && !item.is_winner ? '<span class="quality-chip good">Picked</span>' : ''}
                     ${surfaceBadges}
-                    <span class="quality-chip ${qualityChipClass(qSummary.quality_status)}">${esc(qSummary.quality_status || "-")}</span>
+                    <span class="quality-chip ${qualityChipClass(qSummary.quality_status)}">${esc(qualityChipLabel(qSummary.quality_status || "-"))}</span>
                   </div>
                   <div class="muted" style="font-size:11px;margin-top:6px;">Decision: ${esc(lastDecision)}</div>
                   <div class="muted" style="font-size:11px;">Blocker: ${esc(blocker)}</div>
                   <div class="muted" style="font-size:11px;">Regen Goal: ${esc(regenGoal)}</div>
                   <div class="quick-actions">
                     <button class="primary" onclick="event.stopPropagation();variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/select', {winner:true, comment:'winner chosen from dashboard'})">Set Winner</button>
-                    <button onclick="event.stopPropagation();variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/select', {shortlist:true, comment:'shortlisted from dashboard'})">Shortlist</button>
+                    <button onclick="event.stopPropagation();variantAction('${runId}', '${item.variant_id}', '/runs/${runId}/variants/${item.variant_id}/select', {shortlist:true, comment:'shortlisted from dashboard'})">Pick</button>
                   </div>
                 </article>
               `;

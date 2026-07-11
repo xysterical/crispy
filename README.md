@@ -35,12 +35,10 @@ Tested with a random robe sourced from the internet; the corresponding multi-vie
 | :---: | :---: | :---: |
 | ![robe](other/robe.jpg) | <video src="https://github.com/user-attachments/assets/3066a679-ddc8-47d9-9de1-df0d68a4c304" width="100%" controls></video> | <video src="https://github.com/user-attachments/assets/bfe00d55-6f9c-4dd6-8e7b-577474633a2f" width="100%" controls></video> | 
 
-#### 3. White Dress (Long Video)
-Below is a 30-second continuous showcase generated from a single white dress image. By ensuring geometric and lighting consistency between the boundary frames of consecutive chunks, the model achieves a long-horizon temporal extension:
+#### 3. White Dress (Multi-image auto selection)
 
-| Input Image | Video View |
-| :---: | :---: |
-|![white dress](other/white_dress_correct.jpg)|<video src="https://github.com/user-attachments/assets/6795d7e0-a493-464f-a92e-50db57628b8c" width="100%" controls></video>|
+
+
 ## Quick Start
 
 ### 1. Install
@@ -91,7 +89,7 @@ env | grep CRISPY_API_KEY | sort
 ### 3. Start
 
 ```bash
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8849
+uv run uvicorn app.main:app --port 8849
 ```
 
 Open **http://localhost:8849** in your browser.
@@ -128,9 +126,9 @@ curl -X POST "http://localhost:8849/integrations/meta/sync?workspace_name=Defaul
 1. **Configure agents** — Go to API & Integration Configs, pick providers/models for each agent![API configures](other/image.png)
 2. **Add useful background information** -- Use Shop Analysis to acquire basic information strategy-wise.![Shop Analysis](other/iShot_2026-05-06_13.27.44.png)
 3. **Create a run** — Click the + button, fill in product info, upload reference images/videos![Screenshot](other/iShot_2026-05-06_13.25.47.png)
-4. **Review outputs** — Each stage pauses for human approval (or use semi_auto/full_auto mode)
-5. **Schedule winners** — Push approved creatives to Notion Calendar with publish dates
-6. **Import feedback** — Upload CSV with ad performance data (impressions, clicks, spend, conversions, revenue), or sync Shopify / Meta data from Data Dashboard.
+4. **Review outputs** — Each stage pauses for human approval (or use semi_auto/full_auto mode)![completed result](other/completedimage.png)
+5. **Schedule winners** — Push approved creatives to Notion Calendar with publish dates![pickvariant](other/iShot_2026-07-11_12.19.59.png)
+6. **Import feedback** — Use supplementary information and ad performance data (impressions, clicks, spend, conversions, revenue) from syncing.
 7. **Next run improves** — The planning agent automatically uses winning patterns from past feedback
 
 ## Pipeline Modes
