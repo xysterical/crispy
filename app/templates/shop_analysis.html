@@ -117,9 +117,10 @@
     border: 1px solid var(--line);
     border-radius: 12px;
     background: #f8fafc;
+    min-height: 64px;
   }
   .focus-hint-title { font-size: 12px; font-weight: 750; color: #0f172a; }
-  .focus-hint-copy { margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+  .focus-hint-copy { margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.35; }
   .result-stack { display: grid; gap: 12px; margin-bottom: 16px; }
   .result-overview {
     display: grid;
@@ -235,8 +236,6 @@
   .history-item:last-child { border-bottom: none; }
   #shop-mgmt-card {
     padding: 16px 18px;
-    background: #f8fafc;
-    box-shadow: 0 3px 12px rgba(30, 62, 50, 0.045);
   }
   .shop-manager-head {
     display: flex;
@@ -445,7 +444,7 @@
         </div>
         <div class="focus-hint" id="research-focus-hint">
           <div class="focus-hint-title">Full intelligence</div>
-          <div class="focus-hint-copy">Runs store context and competitive landscape, then writes evidence-backed research_intelligence memory for GM planning.</div>
+          <div class="focus-hint-copy">Runs store and competitor research, then writes evidence-backed GM memory.</div>
         </div>
       </div>
       <div class="form-row" style="margin-bottom:10px;">
@@ -558,17 +557,17 @@
       full_intelligence: {
         label: "Full intelligence",
         short: "Full",
-        copy: "Runs store context and competitive landscape, then writes evidence-backed research_intelligence memory for GM planning."
+        copy: "Runs store and competitor research, then writes evidence-backed GM memory."
       },
       store_context: {
         label: "Store context",
         short: "Store",
-        copy: "Keeps the operator focused on positioning, audience, catalog cues, and owned-store claims."
+        copy: "Focuses on positioning, audience, catalog cues, and owned-store claims."
       },
       competitive_landscape: {
         label: "Competitive landscape",
         short: "Competitors",
-        copy: "Keeps the operator focused on comparable offers, differentiation, and competitor creative patterns."
+        copy: "Focuses on comparable offers, differentiation, and competitor creative patterns."
       },
       industry_baseline: {
         label: "Industry baseline",
