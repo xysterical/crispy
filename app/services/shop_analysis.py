@@ -27,6 +27,13 @@ RESEARCH_SOURCE_TYPES = [
     "audience_pain_points",
     "compliance_scan",
 ]
+RESEARCH_SOURCE_TO_FOCUS = {
+    "shop_profile": "store_context",
+    "competitor_analysis": "competitive_landscape",
+    "industry_baseline": "industry_baseline",
+    "audience_pain_points": "audience_pain_points",
+    "compliance_scan": "compliance_scan",
+}
 
 
 def _research_expires_at(generated_at: datetime) -> str:
@@ -151,6 +158,27 @@ def select_next_queued_research_task(db: Session) -> ResearchTask | None:
     return task
 
 
+def pending_research_task_exists(
+    db: Session,
+    *,
+    project_id: str,
+    shop_id: str | None,
+    store_url: str,
+    task_type: str,
+) -> bool:
+    stmt = select(ResearchTask).where(
+        ResearchTask.project_id == project_id,
+        ResearchTask.store_url == store_url,
+        ResearchTask.task_type == task_type,
+        ResearchTask.status.in_(["queued", "running"]),
+    )
+    if shop_id:
+        stmt = stmt.where(ResearchTask.shop_id == shop_id)
+    else:
+        stmt = stmt.where(ResearchTask.shop_id.is_(None))
+    return db.scalar(stmt.limit(1)) is not None
+
+
 def research_task_to_dict(task: ResearchTask | None) -> dict | None:
     if not task:
         return None
@@ -171,6 +199,103 @@ def research_task_to_dict(task: ResearchTask | None) -> dict | None:
         "created_at": task.created_at,
         "started_at": task.started_at,
         "completed_at": task.completed_at,
+    }
+
+
+def enqueue_due_research_refreshes(
+    db: Session,
+    *,
+    project_id: str,
+    shop_id: str | None = None,
+    include_refresh_soon: bool = True,
+    limit: int = 20,
+) -> dict:
+    project = db.get(Project, project_id)
+    if not project:
+        raise ValueError(f"project not found: {project_id}")
+
+    stmt = (
+        select(GmMemory)
+        .where(
+            GmMemory.project_id == project_id,
+            GmMemory.memory_type == "research_intelligence",
+            GmMemory.source_type.in_(RESEARCH_SOURCE_TYPES),
+            GmMemory.status == "active",
+        )
+        .order_by(desc(GmMemory.created_at))
+        .limit(limit * 5)
+    )
+    if shop_id:
+        stmt = stmt.where(GmMemory.memory_scope == "shop")
+    rows = db.scalars(stmt).all()
+
+    tasks: list[ResearchTask] = []
+    skipped = {"fresh": 0, "pending": 0, "missing_store_url": 0, "duplicate": 0}
+    seen: set[tuple[str | None, str, str]] = set()
+    for row in rows:
+        content = row.content or {}
+        row_shop_id = content.get("shop_id")
+        if shop_id and row_shop_id != shop_id:
+            continue
+        store_url = str(content.get("store_url") or "")
+        if not store_url:
+            skipped["missing_store_url"] += 1
+            continue
+        refresh_state = research_refresh_state(content.get("expires_at"))
+        if refresh_state == "fresh" or (refresh_state == "refresh_soon" and not include_refresh_soon):
+            skipped["fresh"] += 1
+            continue
+        focus = str(content.get("research_focus") or RESEARCH_SOURCE_TO_FOCUS.get(row.source_type) or "full_intelligence")
+        key = (row_shop_id, store_url, focus)
+        if key in seen:
+            skipped["duplicate"] += 1
+            continue
+        seen.add(key)
+        if pending_research_task_exists(
+            db,
+            project_id=project_id,
+            shop_id=row_shop_id,
+            store_url=store_url,
+            task_type=focus,
+        ):
+            skipped["pending"] += 1
+            continue
+
+        shop = db.get(Workspace, row_shop_id) if row_shop_id else None
+        workspace = shop or project.workspace
+        reason = "auto_expired" if refresh_state == "expired" else "auto_refresh_soon"
+        payload = {
+            "shop_id": row_shop_id,
+            "store_url": store_url,
+            "description": (shop.description if shop else None) or content.get("summary") or "",
+            "industry_code": row.industry_code or (workspace.industry_code if workspace else "general") or "general",
+            "workspace_name": workspace.name if workspace else "workspace_demo",
+            "project_name": project.name,
+            "refresh_reason": reason,
+            "research_focus": focus,
+            "execution_mode": "queued",
+        }
+        task = create_research_task(
+            db,
+            project_id=project_id,
+            shop_id=row_shop_id,
+            shop_name=shop.name if shop else content.get("shop_name"),
+            store_url=store_url,
+            industry_code=payload["industry_code"],
+            task_type=focus,
+            source="refresh_policy",
+            refresh_reason=reason,
+            payload=payload,
+        )
+        tasks.append(task)
+        if len(tasks) >= limit:
+            break
+
+    db.flush()
+    return {
+        "queued": [research_task_to_dict(task) for task in tasks],
+        "queued_count": len(tasks),
+        "skipped": skipped,
     }
 
 

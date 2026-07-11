@@ -550,7 +550,13 @@
     </section>
 
     <section class="card">
-      <h2>Research History</h2>
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;">
+        <h2>Research History</h2>
+        <div class="history-actions">
+          <button type="button" onclick="queueDueRefreshes()">Queue Due Refreshes</button>
+          <span id="refresh-queue-status" class="muted"></span>
+        </div>
+      </div>
       <div id="history-list" class="muted">Loading...</div>
     </section>
   </main>
@@ -1147,6 +1153,24 @@
         });
       } catch (err) {
         document.getElementById("history-list").innerHTML = '<div class="muted">Failed to load history.</div>';
+      }
+    }
+
+    async function queueDueRefreshes() {
+      const status = document.getElementById("refresh-queue-status");
+      status.textContent = "Checking...";
+      try {
+        const shopId = document.getElementById("shop-id").value;
+        const shop = selectedShop();
+        const shopName = shop ? shop.name : "workspace_demo";
+        const url = shopId
+          ? "/shop-analysis/refresh-due?shop_id=" + encodeURIComponent(shopId)
+          : "/shop-analysis/refresh-due?workspace_name=" + encodeURIComponent(shopName) + "&project_name=shop_analysis";
+        const data = await api(url, { method: "POST" });
+        status.textContent = data.queued_count ? "Queued " + data.queued_count : "Nothing due";
+        loadHistory();
+      } catch (err) {
+        status.textContent = "Refresh scan failed";
       }
     }
 

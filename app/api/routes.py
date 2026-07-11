@@ -3046,6 +3046,41 @@ def shop_analysis_queue_status() -> dict:
     return research_worker.get_status()
 
 
+@router.post("/shop-analysis/refresh-due")
+def queue_due_shop_analysis_refreshes(
+    shop_id: str | None = Query(default=None),
+    workspace_name: str = Query(default="workspace_demo"),
+    project_name: str = Query(default="shop_analysis"),
+    include_refresh_soon: bool = Query(default=True),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.shop_analysis import _get_or_create_workspace_project, enqueue_due_research_refreshes
+
+    if shop_id:
+        shop = _get_shop_by_id_or_name(db, shop_id)
+        if not shop:
+            raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+        _, project = _get_or_create_workspace_project(db, shop.name, "shop_analysis")
+        result = enqueue_due_research_refreshes(
+            db,
+            project_id=project.id,
+            shop_id=shop.id,
+            include_refresh_soon=include_refresh_soon,
+            limit=limit,
+        )
+    else:
+        _, project = _get_or_create_workspace_project(db, workspace_name, project_name)
+        result = enqueue_due_research_refreshes(
+            db,
+            project_id=project.id,
+            include_refresh_soon=include_refresh_soon,
+            limit=limit,
+        )
+    db.commit()
+    return result
+
+
 @router.get("/shop-analysis/tasks/{task_id}", response_model=ResearchTaskItem)
 def get_shop_analysis_task(
     task_id: str,

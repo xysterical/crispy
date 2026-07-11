@@ -574,6 +574,112 @@ def test_expired_research_memory_is_excluded_from_planning_unless_pinned(client,
     assert expired.id in {item["id"] for item in task_input["gm_lessons"]}
 
 
+def test_due_research_refreshes_are_queued_and_deduped(client, db_session):
+    from datetime import UTC, datetime, timedelta
+
+    from app.data.models import GmMemory
+    from app.services.shop_analysis import _get_or_create_workspace_project
+
+    shop = client.post(
+        "/shops",
+        json={
+            "name": "refresh-policy-shop",
+            "industry_code": "pet_accessories",
+            "store_url": "https://refresh-policy.example",
+        },
+    ).json()
+    workspace, project = _get_or_create_workspace_project(db_session, "refresh-policy-shop", "shop_analysis")
+    workspace.store_url = "https://refresh-policy.example"
+
+    expired_at = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    soon_at = (datetime.now(UTC) + timedelta(days=3)).isoformat()
+    fresh_at = (datetime.now(UTC) + timedelta(days=30)).isoformat()
+    db_session.add_all([
+        GmMemory(
+            project_id=project.id,
+            memory_scope="shop",
+            industry_code="pet_accessories",
+            source_type="shop_profile",
+            memory_type="research_intelligence",
+            content={
+                "shop_id": shop["id"],
+                "shop_name": "refresh-policy-shop",
+                "store_url": "https://refresh-policy.example",
+                "summary": "Expired full research profile.",
+                "research_focus": "full_intelligence",
+                "research_status": "complete",
+                "expires_at": expired_at,
+            },
+        ),
+        GmMemory(
+            project_id=project.id,
+            memory_scope="shop",
+            industry_code="pet_accessories",
+            source_type="competitor_analysis",
+            memory_type="research_intelligence",
+            content={
+                "shop_id": shop["id"],
+                "shop_name": "refresh-policy-shop",
+                "store_url": "https://refresh-policy.example",
+                "summary": "Expired full research competitors.",
+                "research_focus": "full_intelligence",
+                "research_status": "complete",
+                "expires_at": expired_at,
+            },
+        ),
+        GmMemory(
+            project_id=project.id,
+            memory_scope="shop",
+            industry_code="pet_accessories",
+            source_type="audience_pain_points",
+            memory_type="research_intelligence",
+            content={
+                "shop_id": shop["id"],
+                "shop_name": "refresh-policy-shop",
+                "store_url": "https://refresh-policy.example",
+                "summary": "Audience research nearing expiry.",
+                "research_focus": "audience_pain_points",
+                "research_status": "complete",
+                "expires_at": soon_at,
+            },
+        ),
+        GmMemory(
+            project_id=project.id,
+            memory_scope="shop",
+            industry_code="pet_accessories",
+            source_type="compliance_scan",
+            memory_type="research_intelligence",
+            content={
+                "shop_id": shop["id"],
+                "shop_name": "refresh-policy-shop",
+                "store_url": "https://refresh-policy.example",
+                "summary": "Fresh compliance research.",
+                "research_focus": "compliance_scan",
+                "research_status": "complete",
+                "expires_at": fresh_at,
+            },
+        ),
+    ])
+    db_session.commit()
+
+    queued = client.post(f"/shop-analysis/refresh-due?shop_id={shop['id']}")
+    assert queued.status_code == 200
+    body = queued.json()
+    assert body["queued_count"] == 2
+    assert body["skipped"]["duplicate"] == 1
+    assert body["skipped"]["fresh"] == 1
+    task_types = {item["task_type"] for item in body["queued"]}
+    assert task_types == {"full_intelligence", "audience_pain_points"}
+    assert {item["source"] for item in body["queued"]} == {"refresh_policy"}
+    assert {item["refresh_reason"] for item in body["queued"]} == {"auto_expired", "auto_refresh_soon"}
+
+    repeated = client.post(f"/shop-analysis/refresh-due?shop_id={shop['id']}")
+    assert repeated.status_code == 200
+    repeated_body = repeated.json()
+    assert repeated_body["queued_count"] == 0
+    assert repeated_body["skipped"]["pending"] == 2
+
+
 def test_weak_research_evidence_is_excluded_from_planning_unless_pinned(client, db_session):
     from datetime import UTC, datetime, timedelta
 
