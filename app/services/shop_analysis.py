@@ -115,6 +115,7 @@ def save_shop_profile(
     search_errors: list[str] | None = None,
     shop_id: str | None = None,
     shop_name: str | None = None,
+    research_focus: str = "full_intelligence",
 ) -> GmMemory:
     generated_at = utcnow()
     normalized_evidence = _normalize_evidence(store_url, source_type="shop_profile", evidence=evidence)
@@ -128,6 +129,7 @@ def save_shop_profile(
         score_hint=0.7 if status == "complete" else 0.6,
         content={
             "source": "shop_profile",
+            "research_focus": research_focus,
             "scope": "shop" if shop_id else "industry",
             "shop_id": shop_id,
             "shop_name": shop_name,
@@ -163,6 +165,7 @@ def save_competitor_analysis(
     search_errors: list[str] | None = None,
     shop_id: str | None = None,
     shop_name: str | None = None,
+    research_focus: str = "full_intelligence",
 ) -> GmMemory:
     generated_at = utcnow()
     normalized_evidence = _normalize_evidence(store_url, source_type="competitor_analysis", evidence=evidence)
@@ -176,6 +179,7 @@ def save_competitor_analysis(
         score_hint=0.68 if status == "complete" else 0.58,
         content={
             "source": "competitor_analysis",
+            "research_focus": research_focus,
             "scope": "shop" if shop_id else "industry",
             "shop_id": shop_id,
             "shop_name": shop_name,

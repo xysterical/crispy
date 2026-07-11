@@ -11,6 +11,11 @@ def test_research_page_loads(client):
     assert "store-url" in html
     assert "Run Research" in html
     assert "research-readiness" in html
+    assert "Research Type" in html
+    assert "result-overview" in html
+    assert "Evidence" in html
+    assert "Memory Impact" in html
+    assert "/dashboard/gm-review" in html
 
 
 def test_legacy_shop_analysis_page_loads(client):
@@ -124,6 +129,7 @@ def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monk
             "store_url": "https://shop-memory.example",
             "description": "Pet accessories shop.",
             "industry_code": "pet_accessories",
+            "research_focus": "competitive_landscape",
         },
     )
 
@@ -144,6 +150,7 @@ def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monk
         assert content["expires_at"]
         assert content["source_queries"]
         assert content["research_status"] == "complete"
+        assert content["research_focus"] == "competitive_landscape"
         assert content["evidence"][0]["source"] in {"firecrawl", "tavily"}
         assert content["evidence"][0]["url"]
 
@@ -816,3 +823,7 @@ def test_v2_page_loads_with_three_mode_rows(client):
     html = resp.text
     assert "Research Intelligence" in html
     assert "store-url" in html
+    assert "Research Type" in html
+    assert "Full intelligence" in html
+    assert "Store Context Detail" in html
+    assert "Competitive Landscape Detail" in html

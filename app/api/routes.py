@@ -3003,6 +3003,7 @@ def run_shop_analysis(
             search_errors=result.get("search_errors"),
             shop_id=shop.id if shop else None,
             shop_name=shop.name if shop else None,
+            research_focus=payload.research_focus,
         )
         profile_result = {
             "source_type": "shop_profile",
@@ -3010,6 +3011,7 @@ def run_shop_analysis(
             "summary": result["profile"].get("positioning", payload.store_url),
             "research_status": entry.content.get("research_status", "unknown"),
             "evidence_count": len(entry.content.get("evidence") or []),
+            "research_focus": payload.research_focus,
         }
     except Exception as exc:
         errors.append(f"shop_profile: {exc}")
@@ -3039,6 +3041,7 @@ def run_shop_analysis(
                 search_errors=result.get("search_errors"),
                 shop_id=shop.id if shop else None,
                 shop_name=shop.name if shop else None,
+                research_focus=payload.research_focus,
             )
             competitor_result = {
                 "source_type": "competitor_analysis",
@@ -3046,6 +3049,7 @@ def run_shop_analysis(
                 "summary": result["report"][:120] + "..." if len(result["report"]) > 120 else result["report"],
                 "research_status": entry.content.get("research_status", "unknown"),
                 "evidence_count": len(entry.content.get("evidence") or []),
+                "research_focus": payload.research_focus,
             }
         except Exception as exc:
             errors.append(f"competitor_analysis: {exc}")
@@ -3064,6 +3068,7 @@ def run_shop_analysis(
         profile=profile_result,
         competitor_analysis=competitor_result,
         status=status,
+        research_focus=payload.research_focus,
         tool_status=tool_status,
         error_message="; ".join(errors) if errors else None,
         created_at=datetime.now(UTC),

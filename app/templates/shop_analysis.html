@@ -78,6 +78,137 @@
   .form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
   .form-row > div { flex: 1; min-width: 200px; }
   .result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .focus-row {
+    display: grid;
+    grid-template-columns: minmax(260px, 0.6fr) 1fr;
+    gap: 12px;
+    margin-bottom: 10px;
+    align-items: stretch;
+  }
+  .segmented {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #eef2f7;
+  }
+  .segmented button {
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    font-size: 12px;
+    color: #475569;
+  }
+  .segmented button.active {
+    background: #fff;
+    color: #065f46;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+  }
+  .segmented button:disabled {
+    opacity: 0.46;
+    cursor: not-allowed;
+  }
+  .focus-hint {
+    min-height: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #f8fafc;
+  }
+  .focus-hint-title { font-size: 12px; font-weight: 750; color: #0f172a; }
+  .focus-hint-copy { margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+  .result-stack { display: grid; gap: 12px; margin-bottom: 16px; }
+  .result-overview {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .metric-tile {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #f8fafc;
+    padding: 12px;
+    min-height: 82px;
+  }
+  .metric-label {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+  .metric-value {
+    margin-top: 6px;
+    font-size: 17px;
+    font-weight: 760;
+    line-height: 1.2;
+  }
+  .metric-note { margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.35; }
+  .result-section {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    padding: 14px;
+  }
+  .result-section-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: flex-start;
+    margin-bottom: 10px;
+  }
+  .result-section-title { font-size: 14px; font-weight: 760; }
+  .result-section-copy { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .evidence-list { display: grid; gap: 8px; }
+  .evidence-item {
+    display: grid;
+    grid-template-columns: minmax(90px, 0.22fr) 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 9px 10px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    background: #f8fafc;
+    font-size: 12px;
+  }
+  .evidence-source { font-weight: 750; color: #075985; }
+  .evidence-title { color: #0f172a; font-weight: 650; line-height: 1.25; }
+  .evidence-url { color: var(--muted); margin-top: 2px; word-break: break-all; }
+  .memory-impact-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(180px, auto);
+    gap: 10px;
+    align-items: center;
+  }
+  .impact-list {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .impact-item {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    background: #f8fafc;
+    padding: 10px;
+    min-height: 70px;
+  }
+  .impact-label { color: var(--muted); font-size: 11px; font-weight: 700; }
+  .impact-value { margin-top: 4px; font-size: 13px; font-weight: 720; line-height: 1.3; }
+  .gm-link {
+    justify-self: end;
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid #bbf7d0;
+    border-radius: 10px;
+    background: #ecfdf5;
+    color: #047857;
+    padding: 9px 12px;
+    font-size: 12px;
+    font-weight: 760;
+  }
   .result-panel {
     border: 1px solid var(--line);
     border-radius: 12px;
@@ -235,6 +366,10 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (max-width: 860px) {
     .result-grid { grid-template-columns: 1fr; }
+    .focus-row, .memory-impact-grid { grid-template-columns: 1fr; }
+    .result-overview, .impact-list { grid-template-columns: 1fr; }
+    .evidence-item { grid-template-columns: 1fr; }
+    .gm-link { justify-self: start; }
     .form-row > div { min-width: 100%; }
     .shop-toolbar { justify-content: flex-start; flex-wrap: wrap; }
     .shop-row, .shop-create-row { grid-template-columns: 1fr; }
@@ -299,6 +434,20 @@
         </div>
         <div class="readiness-checks" id="research-readiness-checks"></div>
       </div>
+      <div class="focus-row">
+        <div>
+          <label>Research Type</label>
+          <div class="segmented" id="research-focus-controls" aria-label="Research type">
+            <button type="button" class="active" data-focus="full_intelligence">Full</button>
+            <button type="button" data-focus="store_context">Store</button>
+            <button type="button" data-focus="competitive_landscape">Competitors</button>
+          </div>
+        </div>
+        <div class="focus-hint" id="research-focus-hint">
+          <div class="focus-hint-title">Full intelligence</div>
+          <div class="focus-hint-copy">Runs store context and competitive landscape, then writes evidence-backed research_intelligence memory for GM planning.</div>
+        </div>
+      </div>
       <div class="form-row" style="margin-bottom:10px;">
         <div>
           <label>Shop</label>
@@ -330,9 +479,48 @@
 
     <section class="card" id="results-card" style="display:none;">
       <h2 id="results-title">Results</h2>
+      <div class="result-stack">
+        <div class="result-overview" id="result-overview">
+          <div class="metric-tile"><div class="metric-label">Status</div><div class="metric-value">Running</div><div class="metric-note">Waiting for research output</div></div>
+          <div class="metric-tile"><div class="metric-label">Evidence</div><div class="metric-value">0</div><div class="metric-note">External sources collected</div></div>
+          <div class="metric-tile"><div class="metric-label">Memory</div><div class="metric-value">Pending</div><div class="metric-note">GM reuse depends on evidence gates</div></div>
+          <div class="metric-tile"><div class="metric-label">Focus</div><div class="metric-value">Full</div><div class="metric-note">Current research type</div></div>
+        </div>
+        <div class="result-section" id="summary-section" style="display:none;">
+          <div class="result-section-head">
+            <div>
+              <div class="result-section-title">Summary</div>
+              <div class="result-section-copy">Research conclusions that should be readable before opening raw JSON.</div>
+            </div>
+          </div>
+          <div id="summary-content" class="muted"></div>
+        </div>
+        <div class="result-section" id="evidence-section" style="display:none;">
+          <div class="result-section-head">
+            <div>
+              <div class="result-section-title">Evidence</div>
+              <div class="result-section-copy">Sources captured for safety gating, expiry, and later review.</div>
+            </div>
+            <span class="tool-pill" id="evidence-count-pill">0 sources</span>
+          </div>
+          <div class="evidence-list" id="evidence-list"></div>
+        </div>
+        <div class="result-section" id="memory-impact-section" style="display:none;">
+          <div class="result-section-head">
+            <div>
+              <div class="result-section-title">Memory Impact</div>
+              <div class="result-section-copy">How this research enters GM context for future planning decisions.</div>
+            </div>
+          </div>
+          <div class="memory-impact-grid">
+            <div class="impact-list" id="memory-impact-list"></div>
+            <a class="gm-link" href="/dashboard/gm-review">Open GM Review</a>
+          </div>
+        </div>
+      </div>
       <div class="result-grid">
         <div>
-          <h3>Store Context</h3>
+          <h3>Store Context Detail</h3>
           <div class="result-panel" id="profile-panel">
             <div class="loading" id="profile-loading"><div class="spinner"></div><div>Analyzing store...</div></div>
             <pre id="profile-content" style="display:none;"></pre>
@@ -340,7 +528,7 @@
           </div>
         </div>
         <div>
-          <h3>Competitive Landscape</h3>
+          <h3>Competitive Landscape Detail</h3>
           <div class="result-panel" id="competitor-panel">
             <div class="loading" id="competitor-loading"><div class="spinner"></div><div>Researching competitors...</div></div>
             <div id="competitor-content" style="display:none;"></div>
@@ -365,6 +553,34 @@
 
     let analysisShops = [];
     let shopSortDirection = "asc";
+    let selectedResearchFocus = "full_intelligence";
+    const researchFocusCopy = {
+      full_intelligence: {
+        label: "Full intelligence",
+        short: "Full",
+        copy: "Runs store context and competitive landscape, then writes evidence-backed research_intelligence memory for GM planning."
+      },
+      store_context: {
+        label: "Store context",
+        short: "Store",
+        copy: "Keeps the operator focused on positioning, audience, catalog cues, and owned-store claims."
+      },
+      competitive_landscape: {
+        label: "Competitive landscape",
+        short: "Competitors",
+        copy: "Keeps the operator focused on comparable offers, differentiation, and competitor creative patterns."
+      },
+      industry_baseline: {
+        label: "Industry baseline",
+        short: "Industry",
+        copy: "Reserved for market-wide category context once broader research agents are connected."
+      },
+      audience_pain_points: {
+        label: "Audience pain points",
+        short: "Audience",
+        copy: "Reserved for review and community evidence about buyer anxieties, objections, and jobs to be done."
+      },
+    };
     function escHtml(v) {
       return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
@@ -375,6 +591,119 @@
       const el = document.getElementById("shop-mgmt-status");
       el.textContent = message || "";
       el.className = "shop-status" + (kind ? " " + kind : "");
+    }
+
+    function setResearchFocus(focus) {
+      if (!researchFocusCopy[focus]) return;
+      selectedResearchFocus = focus;
+      document.querySelectorAll("#research-focus-controls button").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.focus === focus);
+      });
+      const meta = researchFocusCopy[focus];
+      document.getElementById("research-focus-hint").innerHTML =
+        '<div class="focus-hint-title">' + escHtml(meta.label) + '</div>'
+        + '<div class="focus-hint-copy">' + escHtml(meta.copy) + '</div>';
+    }
+
+    function resultContent(result) {
+      return result && result.content ? result.content : {};
+    }
+
+    function resultResearchStatus(result) {
+      const content = resultContent(result);
+      return result?.research_status || content.research_status || "unknown";
+    }
+
+    function collectEvidence(data) {
+      const items = [];
+      ["profile", "competitor_analysis"].forEach(key => {
+        const result = data && data[key];
+        const content = resultContent(result);
+        (content.evidence || []).forEach((item) => {
+          items.push({ ...item, source_type: result?.source_type || key });
+        });
+      });
+      return items;
+    }
+
+    function combinedResearchStatus(data) {
+      const statuses = [resultResearchStatus(data?.profile), resultResearchStatus(data?.competitor_analysis)].filter(s => s !== "unknown");
+      if (!statuses.length) return "unknown";
+      if (statuses.includes("complete")) return "complete";
+      if (statuses.includes("fallback")) return "fallback";
+      return statuses[0];
+    }
+
+    function renderResultOverview(data, state) {
+      const evidence = data ? collectEvidence(data) : [];
+      const status = state || combinedResearchStatus(data);
+      const memoryState = status === "complete" ? "Eligible" : status === "fallback" ? "Needs review" : status === "failed" ? "Blocked" : "Pending";
+      const focus = researchFocusCopy[data?.research_focus || selectedResearchFocus] || researchFocusCopy.full_intelligence;
+      document.getElementById("result-overview").innerHTML =
+        '<div class="metric-tile"><div class="metric-label">Status</div><div class="metric-value">' + escHtml(status) + '</div><div class="metric-note">Research run state</div></div>'
+        + '<div class="metric-tile"><div class="metric-label">Evidence</div><div class="metric-value">' + evidence.length + '</div><div class="metric-note">External sources collected</div></div>'
+        + '<div class="metric-tile"><div class="metric-label">Memory</div><div class="metric-value">' + escHtml(memoryState) + '</div><div class="metric-note">GM reuse depends on safety gates</div></div>'
+        + '<div class="metric-tile"><div class="metric-label">Focus</div><div class="metric-value">' + escHtml(focus.short) + '</div><div class="metric-note">' + escHtml(focus.label) + '</div></div>';
+    }
+
+    function renderSummary(data) {
+      const profile = resultContent(data?.profile);
+      const competitor = resultContent(data?.competitor_analysis);
+      const profileSummary = profile.summary || data?.profile?.summary || profile.profile?.positioning || data?.store_url || "";
+      const competitorSummary = competitor.summary || data?.competitor_analysis?.summary || "";
+      document.getElementById("summary-section").style.display = "block";
+      document.getElementById("summary-content").innerHTML =
+        '<div><b>Store:</b> ' + escHtml(profileSummary || "No store summary returned.") + '</div>'
+        + '<div style="margin-top:6px;"><b>Competition:</b> ' + escHtml(competitorSummary || "No competitor summary returned.") + '</div>';
+    }
+
+    function renderEvidence(data) {
+      const evidence = collectEvidence(data);
+      document.getElementById("evidence-section").style.display = "block";
+      document.getElementById("evidence-count-pill").textContent = evidence.length + (evidence.length === 1 ? " source" : " sources");
+      const list = document.getElementById("evidence-list");
+      if (!evidence.length) {
+        list.innerHTML = '<div class="muted">No external evidence returned. This research should stay out of automatic GM planning unless manually pinned.</div>';
+        return;
+      }
+      list.innerHTML = evidence.slice(0, 8).map(item => {
+        const label = item.title || item.summary || item.url || "Untitled source";
+        const url = item.url || "";
+        const status = item.status || "ok";
+        return '<div class="evidence-item">'
+          + '<div class="evidence-source">' + escHtml(item.source || item.source_type || "source") + '</div>'
+          + '<div><div class="evidence-title">' + escHtml(label) + '</div><div class="evidence-url">' + escHtml(url) + '</div></div>'
+          + '<span class="tool-pill ' + escAttr(status === "ok" ? "ok" : "warn") + '">' + escHtml(status) + '</span>'
+          + '</div>';
+      }).join("");
+    }
+
+    function renderMemoryImpact(data) {
+      const status = combinedResearchStatus(data);
+      const profile = resultContent(data?.profile);
+      const competitor = resultContent(data?.competitor_analysis);
+      const expiresAt = profile.expires_at || competitor.expires_at || "";
+      const focus = researchFocusCopy[data?.research_focus || selectedResearchFocus] || researchFocusCopy.full_intelligence;
+      const impact = status === "complete"
+        ? "Available to GM after research safety checks"
+        : status === "fallback"
+          ? "Visible for review, weak for automatic planning"
+          : "Not ready for automatic planning";
+      document.getElementById("memory-impact-section").style.display = "block";
+      document.getElementById("memory-impact-list").innerHTML =
+        '<div class="impact-item"><div class="impact-label">Memory type</div><div class="impact-value">research_intelligence</div></div>'
+        + '<div class="impact-item"><div class="impact-label">Planning impact</div><div class="impact-value">' + escHtml(impact) + '</div></div>'
+        + '<div class="impact-item"><div class="impact-label">Focus and expiry</div><div class="impact-value">' + escHtml(focus.label) + (expiresAt ? '<br>' + escHtml(expiresAt.substring(0, 10)) : '<br>No expiry returned') + '</div></div>';
+    }
+
+    function resetResultSections() {
+      renderResultOverview({ research_focus: selectedResearchFocus }, "running");
+      ["summary-section", "evidence-section", "memory-impact-section"].forEach(id => {
+        document.getElementById(id).style.display = "none";
+      });
+      document.getElementById("summary-content").innerHTML = "";
+      document.getElementById("evidence-list").innerHTML = "";
+      document.getElementById("memory-impact-list").innerHTML = "";
     }
 
     // ── Shop Management ──
@@ -598,6 +927,7 @@
       const card = document.getElementById("results-card");
       card.style.display = "block";
       document.getElementById("results-title").textContent = "Research results: " + storeUrl;
+      resetResultSections();
 
       document.getElementById("profile-loading").style.display = "block";
       document.getElementById("profile-content").style.display = "none";
@@ -616,8 +946,13 @@
             industry_code: document.getElementById("industry-code").value.trim() || "general",
             workspace_name: shop ? shop.name : "workspace_demo",
             project_name: "shop_analysis",
+            research_focus: selectedResearchFocus,
           }),
         });
+        renderResultOverview(data);
+        renderSummary(data);
+        renderEvidence(data);
+        renderMemoryImpact(data);
 
         document.getElementById("profile-loading").style.display = "none";
         if (data.profile) {
@@ -647,6 +982,7 @@
         loadHistory();
       } catch (err) {
         status.textContent = "Error: " + err.message;
+        renderResultOverview({ research_focus: selectedResearchFocus }, "failed");
         document.getElementById("profile-loading").style.display = "none";
         document.getElementById("competitor-loading").style.display = "none";
       } finally {
@@ -690,7 +1026,15 @@
       }
     }
 
-    document.addEventListener("DOMContentLoaded", () => { loadShopMgmt(); loadHistory(); loadResearchReadiness(); });
+    document.addEventListener("DOMContentLoaded", () => {
+      document.querySelectorAll("#research-focus-controls button").forEach(btn => {
+        btn.addEventListener("click", () => setResearchFocus(btn.dataset.focus));
+      });
+      setResearchFocus(selectedResearchFocus);
+      loadShopMgmt();
+      loadHistory();
+      loadResearchReadiness();
+    });
   </script>
 </body>
 {% endblock %}

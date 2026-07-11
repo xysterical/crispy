@@ -646,6 +646,13 @@ class ShopAnalysisRequest(BaseModel):
     industry_code: str = Field(default="general", description="Industry code for GmMemory association")
     workspace_name: str = Field(default="workspace_demo")
     project_name: str = Field(default="")
+    research_focus: Literal[
+        "full_intelligence",
+        "store_context",
+        "competitive_landscape",
+        "industry_baseline",
+        "audience_pain_points",
+    ] = "full_intelligence"
 
 
 class ShopAnalysisResult(BaseModel):
@@ -654,6 +661,7 @@ class ShopAnalysisResult(BaseModel):
     summary: str      # one-line summary for display
     research_status: str = "unknown"
     evidence_count: int = 0
+    research_focus: str = "full_intelligence"
 
 
 class ShopAnalysisResponse(BaseModel):
@@ -665,6 +673,7 @@ class ShopAnalysisResponse(BaseModel):
     profile: ShopAnalysisResult | None = None
     competitor_analysis: ShopAnalysisResult | None = None
     status: str  # "running", "completed", "failed"
+    research_focus: str = "full_intelligence"
     tool_status: dict = Field(default_factory=dict)
     error_message: str | None = None
     created_at: datetime
