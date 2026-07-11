@@ -65,7 +65,7 @@ def test_shop_analysis_run_stores_gm_memory(client):
 
 def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monkeypatch):
     from app.agents.runtime import AgentsRuntime
-    from app.data.models import GmMemory
+    from app.data.models import GmMemory, ResearchTask
     from sqlalchemy import select
 
     def fake_profile(self, **kwargs):
@@ -130,12 +130,17 @@ def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monk
             "description": "Pet accessories shop.",
             "industry_code": "pet_accessories",
             "research_focus": "competitive_landscape",
+            "refresh_reason": "operator_refresh",
         },
     )
 
     assert resp.status_code == 200
     body = resp.json()
     assert body["shop_id"] == shop["id"]
+    assert body["task"]["status"] == "completed"
+    assert body["task"]["task_type"] == "competitive_landscape"
+    assert body["task"]["refresh_reason"] == "operator_refresh"
+    assert len(body["task"]["memory_ids"]) == 2
     rows = db_session.scalars(
         select(GmMemory).where(GmMemory.memory_scope == "shop")
     ).all()
@@ -153,6 +158,21 @@ def test_shop_analysis_run_stores_shop_scoped_gm_memory(client, db_session, monk
         assert content["research_focus"] == "competitive_landscape"
         assert content["evidence"][0]["source"] in {"firecrawl", "tavily"}
         assert content["evidence"][0]["url"]
+    task = db_session.scalar(select(ResearchTask).where(ResearchTask.shop_id == shop["id"]))
+    assert task is not None
+    assert task.status == "completed"
+    assert task.memory_ids
+    assert set(task.memory_ids) == {row.id for row in research_rows}
+
+    history = client.get(f"/shop-analysis/history?shop_id={shop['id']}")
+    assert history.status_code == 200
+    first = history.json()["items"][0]
+    assert first["refresh_state"] == "fresh"
+    assert first["latest_task"]["status"] == "completed"
+
+    tasks = client.get(f"/shop-analysis/tasks?shop_id={shop['id']}")
+    assert tasks.status_code == 200
+    assert tasks.json()["items"][0]["id"] == task.id
 
 
 def test_shop_analysis_preflight_reports_search_tool_status(client, monkeypatch):

@@ -84,6 +84,7 @@ from app.schemas.api import (
     ShopAnalysisPreflightResponse,
     ShopAnalysisListItem,
     ShopAnalysisHistoryResponse,
+    ResearchTaskHistoryResponse,
     ShopItem,
     ShopListResponse,
     ShopPatchRequest,
@@ -2939,6 +2940,11 @@ def run_shop_analysis(
     from app.services.agent_api_configs import resolve_agent_config, resolve_agent_runtime
     from app.services.shop_analysis import (
         _get_or_create_workspace_project,
+        create_research_task,
+        mark_research_task_completed,
+        mark_research_task_failed,
+        mark_research_task_running,
+        research_task_to_dict,
         save_shop_profile,
         save_competitor_analysis,
     )
@@ -2979,6 +2985,21 @@ def run_shop_analysis(
 
     analysis_id = str(uuid.uuid4())
     errors: list[str] = []
+    task = create_research_task(
+        db,
+        project_id=project.id,
+        shop_id=shop.id if shop else None,
+        shop_name=shop.name if shop else None,
+        store_url=payload.store_url,
+        industry_code=payload.industry_code,
+        task_type=payload.research_focus,
+        source="manual",
+        refresh_reason=payload.refresh_reason,
+        payload=payload.model_dump(mode="json"),
+    )
+    mark_research_task_running(task)
+    db.flush()
+    memory_ids: list[str] = []
 
     # Phase 1: Store profile
     profile_result = None
@@ -3005,6 +3026,7 @@ def run_shop_analysis(
             shop_name=shop.name if shop else None,
             research_focus=payload.research_focus,
         )
+        memory_ids.append(entry.id)
         profile_result = {
             "source_type": "shop_profile",
             "content": entry.content,
@@ -3043,6 +3065,7 @@ def run_shop_analysis(
                 shop_name=shop.name if shop else None,
                 research_focus=payload.research_focus,
             )
+            memory_ids.append(entry.id)
             competitor_result = {
                 "source_type": "competitor_analysis",
                 "content": entry.content,
@@ -3056,9 +3079,13 @@ def run_shop_analysis(
 
     if shop and (profile_result or competitor_result):
         shop.last_analyzed_at = datetime.now(UTC)
+    status = "failed" if not profile_result and not competitor_result else "completed"
+    if status == "failed":
+        mark_research_task_failed(task, "; ".join(errors) if errors else "research failed")
+    else:
+        mark_research_task_completed(task, memory_ids)
     db.commit()
 
-    status = "failed" if not profile_result and not competitor_result else "completed"
     return ShopAnalysisResponse(
         id=analysis_id,
         shop_id=shop.id if shop else None,
@@ -3069,6 +3096,7 @@ def run_shop_analysis(
         competitor_analysis=competitor_result,
         status=status,
         research_focus=payload.research_focus,
+        task=research_task_to_dict(task),
         tool_status=tool_status,
         error_message="; ".join(errors) if errors else None,
         created_at=datetime.now(UTC),
@@ -3093,6 +3121,28 @@ def shop_analysis_history(
     else:
         _, project = _get_or_create_workspace_project(db, workspace_name, project_name)
         items = list_shop_analyses(db, project.id, limit=limit)
+    return {"items": items}
+
+
+@router.get("/shop-analysis/tasks", response_model=ResearchTaskHistoryResponse)
+def shop_analysis_tasks(
+    shop_id: str | None = Query(default=None),
+    workspace_name: str = Query(default="workspace_demo"),
+    project_name: str = Query(default=""),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.shop_analysis import _get_or_create_workspace_project, list_research_tasks
+
+    if shop_id:
+        shop = _get_shop_by_id_or_name(db, shop_id)
+        if not shop:
+            raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+        _, project = _get_or_create_workspace_project(db, shop.name, "shop_analysis")
+        items = list_research_tasks(db, project_id=project.id, shop_id=shop.id, limit=limit)
+    else:
+        _, project = _get_or_create_workspace_project(db, workspace_name, project_name)
+        items = list_research_tasks(db, project_id=project.id, limit=limit)
     return {"items": items}
 
 

@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from app.data.models import GmMemory, Project, Workspace
+from app.data.models import GmMemory, Project, ResearchTask, Workspace
 
 
 def utcnow() -> datetime:
@@ -14,10 +14,135 @@ def utcnow() -> datetime:
 
 
 RESEARCH_MEMORY_TTL_DAYS = 60
+RESEARCH_REFRESH_SOON_DAYS = 14
 
 
 def _research_expires_at(generated_at: datetime) -> str:
     return (generated_at + timedelta(days=RESEARCH_MEMORY_TTL_DAYS)).isoformat()
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def research_refresh_state(expires_at: str | None) -> str:
+    parsed = _parse_iso_datetime(expires_at)
+    if not parsed:
+        return "unknown"
+    now = utcnow()
+    if parsed < now:
+        return "expired"
+    if parsed <= now + timedelta(days=RESEARCH_REFRESH_SOON_DAYS):
+        return "refresh_soon"
+    return "fresh"
+
+
+def create_research_task(
+    db: Session,
+    *,
+    project_id: str,
+    shop_id: str | None,
+    shop_name: str | None,
+    store_url: str,
+    industry_code: str,
+    task_type: str,
+    source: str = "manual",
+    refresh_reason: str | None = None,
+    payload: dict | None = None,
+) -> ResearchTask:
+    task = ResearchTask(
+        project_id=project_id,
+        shop_id=shop_id,
+        shop_name=shop_name,
+        store_url=store_url,
+        industry_code=industry_code or "general",
+        task_type=task_type or "full_intelligence",
+        status="queued",
+        source=source,
+        refresh_reason=refresh_reason,
+        payload=payload or {},
+        memory_ids=[],
+    )
+    db.add(task)
+    db.flush()
+    return task
+
+
+def mark_research_task_running(task: ResearchTask) -> None:
+    task.status = "running"
+    task.started_at = utcnow()
+
+
+def mark_research_task_completed(task: ResearchTask, memory_ids: list[str]) -> None:
+    task.status = "completed"
+    task.memory_ids = memory_ids
+    task.completed_at = utcnow()
+
+
+def mark_research_task_failed(task: ResearchTask, error_message: str) -> None:
+    task.status = "failed"
+    task.error_message = error_message
+    task.completed_at = utcnow()
+
+
+def latest_research_task(
+    db: Session,
+    *,
+    project_id: str,
+    shop_id: str | None = None,
+    store_url: str | None = None,
+) -> ResearchTask | None:
+    stmt = select(ResearchTask).where(ResearchTask.project_id == project_id)
+    if shop_id:
+        stmt = stmt.where(ResearchTask.shop_id == shop_id)
+    if store_url:
+        stmt = stmt.where(ResearchTask.store_url == store_url)
+    return db.scalar(stmt.order_by(desc(ResearchTask.created_at)).limit(1))
+
+
+def list_research_tasks(
+    db: Session,
+    *,
+    project_id: str,
+    shop_id: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    stmt = select(ResearchTask).where(ResearchTask.project_id == project_id)
+    if shop_id:
+        stmt = stmt.where(ResearchTask.shop_id == shop_id)
+    rows = db.scalars(stmt.order_by(desc(ResearchTask.created_at)).limit(limit)).all()
+    return [item for task in rows if (item := research_task_to_dict(task))]
+
+
+def research_task_to_dict(task: ResearchTask | None) -> dict | None:
+    if not task:
+        return None
+    return {
+        "id": task.id,
+        "project_id": task.project_id,
+        "shop_id": task.shop_id,
+        "shop_name": task.shop_name,
+        "store_url": task.store_url,
+        "industry_code": task.industry_code,
+        "task_type": task.task_type,
+        "status": task.status,
+        "priority": task.priority,
+        "source": task.source,
+        "refresh_reason": task.refresh_reason,
+        "memory_ids": task.memory_ids or [],
+        "error_message": task.error_message,
+        "created_at": task.created_at,
+        "started_at": task.started_at,
+        "completed_at": task.completed_at,
+    }
 
 
 def _evidence_for_store_url(store_url: str, *, source_type: str) -> list[dict]:
@@ -238,6 +363,13 @@ def list_shop_analyses(
         else:
             report = (row.content or {}).get("report", "")
             summary = (report[:80] + "...") if len(report) > 80 else report
+        latest_task = latest_research_task(
+            db,
+            project_id=project_id,
+            shop_id=(row.content or {}).get("shop_id"),
+            store_url=store_url,
+        )
+        expires_at = (row.content or {}).get("expires_at")
         result.append({
             "id": row.id,
             "store_url": store_url,
@@ -245,9 +377,12 @@ def list_shop_analyses(
             "status": "completed",
             "source_type": row.source_type,
             "memory_type": row.memory_type,
+            "research_focus": (row.content or {}).get("research_focus") or "full_intelligence",
             "research_status": (row.content or {}).get("research_status") or "unknown",
             "evidence_count": len((row.content or {}).get("evidence") or []),
-            "expires_at": (row.content or {}).get("expires_at"),
+            "expires_at": expires_at,
+            "refresh_state": research_refresh_state(expires_at),
+            "latest_task": research_task_to_dict(latest_task),
             "summary": summary,
             "created_at": row.created_at,
         })

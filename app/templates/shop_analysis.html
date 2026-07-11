@@ -324,6 +324,13 @@
   .status-badge.completed { background: #ecfdf5; color: #065f46; }
   .status-badge.failed { background: #fef2f2; color: #991b1b; }
   .status-badge.running { background: #fffbeb; color: #92400e; }
+  .status-badge.fresh { background: #ecfdf5; color: #047857; }
+  .status-badge.refresh_soon { background: #fffbeb; color: #92400e; }
+  .status-badge.expired, .status-badge.degraded { background: #fef2f2; color: #991b1b; }
+  .status-badge.partial { background: #eff6ff; color: #1d4ed8; }
+  .status-badge.unknown, .status-badge.fallback { background: #f1f5f9; color: #475569; }
+  .history-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; }
+  .history-actions button { padding: 6px 9px; border-radius: 8px; font-size: 12px; }
   .readiness-strip {
     display: flex;
     align-items: center;
@@ -372,6 +379,8 @@
     .form-row > div { min-width: 100%; }
     .shop-toolbar { justify-content: flex-start; flex-wrap: wrap; }
     .shop-row, .shop-create-row { grid-template-columns: 1fr; }
+    .history-item { align-items: flex-start; gap: 10px; }
+    .history-actions { flex-direction: column; align-items: flex-end; }
     .shop-actions { justify-content: flex-start; }
   }
 {% endblock %}
@@ -553,6 +562,7 @@
     let analysisShops = [];
     let shopSortDirection = "asc";
     let selectedResearchFocus = "full_intelligence";
+    let pendingRefreshReason = null;
     const researchFocusCopy = {
       full_intelligence: {
         label: "Full intelligence",
@@ -703,6 +713,17 @@
       document.getElementById("summary-content").innerHTML = "";
       document.getElementById("evidence-list").innerHTML = "";
       document.getElementById("memory-impact-list").innerHTML = "";
+    }
+
+    function focusLabel(focus) {
+      return (researchFocusCopy[focus] || researchFocusCopy.full_intelligence).short;
+    }
+
+    function freshnessLabel(state) {
+      if (state === "fresh") return "fresh";
+      if (state === "refresh_soon") return "refresh soon";
+      if (state === "expired") return "expired";
+      return "unknown";
     }
 
     // ── Shop Management ──
@@ -946,6 +967,7 @@
             workspace_name: shop ? shop.name : "workspace_demo",
             project_name: "shop_analysis",
             research_focus: selectedResearchFocus,
+            refresh_reason: pendingRefreshReason,
           }),
         });
         renderResultOverview(data);
@@ -985,6 +1007,7 @@
         document.getElementById("profile-loading").style.display = "none";
         document.getElementById("competitor-loading").style.display = "none";
       } finally {
+        pendingRefreshReason = null;
         btn.disabled = false;
       }
     }
@@ -1007,19 +1030,32 @@
           const badgeClass = item.status === "completed" ? "completed" : "failed";
           const researchStatus = item.research_status && item.research_status !== "unknown" ? item.research_status : item.source_type;
           const expires = item.expires_at ? " · expires " + item.expires_at.substring(0, 10) : "";
+          const refreshState = item.refresh_state || "unknown";
+          const latestTask = item.latest_task || {};
+          const taskStatus = latestTask.status ? " · task=" + latestTask.status : "";
           const dt = new Date(item.created_at);
           const timeStr = String(dt.getMonth()+1).padStart(2,'0') + "-" +
             String(dt.getDate()).padStart(2,'0') + " " +
             String(dt.getHours()).padStart(2,'0') + ":" +
             String(dt.getMinutes()).padStart(2,'0');
           return '<div class="history-item">'
-            + '<div><b>' + item.store_url.replace(/</g, "&lt;") + '</b>'
+            + '<div><b>' + escHtml(item.store_url) + '</b>'
             + ' <span class="status-badge ' + badgeClass + '">' + escHtml(researchStatus) + '</span>'
+            + ' <span class="status-badge ' + escAttr(refreshState) + '">' + escHtml(freshnessLabel(refreshState)) + '</span>'
             + '<br><span class="muted">' + escHtml((item.summary || '').substring(0, 100)) + '</span>'
-            + '<br><span class="muted">evidence=' + Number(item.evidence_count || 0) + expires + '</span></div>'
-            + '<div class="muted">' + timeStr + '</div>'
+            + '<br><span class="muted">focus=' + escHtml(focusLabel(item.research_focus)) + ' · evidence=' + Number(item.evidence_count || 0) + expires + escHtml(taskStatus) + '</span></div>'
+            + '<div class="history-actions"><button type="button" data-action="refresh-research" data-store-url="' + escAttr(item.store_url) + '" data-industry-code="' + escAttr(item.industry_code || "general") + '" data-research-focus="' + escAttr(item.research_focus || "full_intelligence") + '">Refresh</button><span class="muted">' + timeStr + '</span></div>'
             + '</div>';
         }).join("");
+        list.querySelectorAll('button[data-action="refresh-research"]').forEach(btn => {
+          btn.addEventListener("click", () => {
+            document.getElementById("store-url").value = btn.dataset.storeUrl || "";
+            document.getElementById("industry-code").value = btn.dataset.industryCode || "general";
+            setResearchFocus(btn.dataset.researchFocus || "full_intelligence");
+            pendingRefreshReason = "operator_refresh";
+            runAnalysis();
+          });
+        });
       } catch (err) {
         document.getElementById("history-list").innerHTML = '<div class="muted">Failed to load history.</div>';
       }

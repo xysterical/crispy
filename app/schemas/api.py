@@ -646,6 +646,7 @@ class ShopAnalysisRequest(BaseModel):
     industry_code: str = Field(default="general", description="Industry code for GmMemory association")
     workspace_name: str = Field(default="workspace_demo")
     project_name: str = Field(default="")
+    refresh_reason: str | None = None
     research_focus: Literal[
         "full_intelligence",
         "store_context",
@@ -664,6 +665,25 @@ class ShopAnalysisResult(BaseModel):
     research_focus: str = "full_intelligence"
 
 
+class ResearchTaskItem(BaseModel):
+    id: str
+    project_id: str
+    shop_id: str | None = None
+    shop_name: str | None = None
+    store_url: str
+    industry_code: str = "general"
+    task_type: str = "full_intelligence"
+    status: str = "queued"
+    priority: int = 2
+    source: str = "manual"
+    refresh_reason: str | None = None
+    memory_ids: list[str] = Field(default_factory=list)
+    error_message: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 class ShopAnalysisResponse(BaseModel):
     id: str
     shop_id: str | None = None
@@ -674,6 +694,7 @@ class ShopAnalysisResponse(BaseModel):
     competitor_analysis: ShopAnalysisResult | None = None
     status: str  # "running", "completed", "failed"
     research_focus: str = "full_intelligence"
+    task: ResearchTaskItem | None = None
     tool_status: dict = Field(default_factory=dict)
     error_message: str | None = None
     created_at: datetime
@@ -692,15 +713,22 @@ class ShopAnalysisListItem(BaseModel):
     status: str
     source_type: str
     memory_type: str = ""
+    research_focus: str = "full_intelligence"
     research_status: str = "unknown"
     evidence_count: int = 0
     expires_at: str | None = None
+    refresh_state: str = "unknown"
+    latest_task: ResearchTaskItem | None = None
     summary: str
     created_at: datetime
 
 
 class ShopAnalysisHistoryResponse(BaseModel):
     items: list[ShopAnalysisListItem]
+
+
+class ResearchTaskHistoryResponse(BaseModel):
+    items: list[ResearchTaskItem]
 
 
 class ShopItem(BaseModel):
