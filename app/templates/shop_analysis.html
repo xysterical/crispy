@@ -649,6 +649,14 @@
       };
     }
 
+    function conflictCount(data) {
+      return ["profile", "competitor_analysis"].reduce((total, key) => {
+        const content = resultContent(data && data[key]);
+        const direct = typeof data?.[key]?.conflict_count === "number" ? data[key].conflict_count : null;
+        return total + Number(direct ?? content.conflict_count ?? ((content.conflicts || []).length) ?? 0);
+      }, 0);
+    }
+
     function combinedResearchStatus(data) {
       const statuses = [resultResearchStatus(data?.profile), resultResearchStatus(data?.competitor_analysis)].filter(s => s !== "unknown");
       if (!statuses.length) return "unknown";
@@ -660,13 +668,14 @@
     function renderResultOverview(data, state) {
       const evidence = data ? collectEvidence(data) : [];
       const status = state || combinedResearchStatus(data);
-      const memoryState = status === "complete" ? "Eligible" : status === "fallback" ? "Needs review" : status === "failed" ? "Blocked" : "Pending";
+      const conflicts = conflictCount(data);
+      const memoryState = conflicts > 0 ? "Needs review" : status === "complete" ? "Eligible" : status === "fallback" ? "Needs review" : status === "failed" ? "Blocked" : "Pending";
       const quality = aggregateEvidenceQuality(data);
       const qualityValue = typeof quality.aggregate_score === "number" ? Math.round(quality.aggregate_score * 100) : "--";
       document.getElementById("result-overview").innerHTML =
         '<div class="metric-tile"><div class="metric-label">Status</div><div class="metric-value">' + escHtml(status) + '</div><div class="metric-note">Research run state</div></div>'
         + '<div class="metric-tile"><div class="metric-label">Evidence</div><div class="metric-value">' + evidence.length + '</div><div class="metric-note">External sources collected</div></div>'
-        + '<div class="metric-tile"><div class="metric-label">Memory</div><div class="metric-value">' + escHtml(memoryState) + '</div><div class="metric-note">GM reuse depends on safety gates</div></div>'
+        + '<div class="metric-tile"><div class="metric-label">Memory</div><div class="metric-value">' + escHtml(memoryState) + '</div><div class="metric-note">' + escHtml(conflicts) + ' unresolved conflicts</div></div>'
         + '<div class="metric-tile"><div class="metric-label">Quality</div><div class="metric-value">' + escHtml(qualityValue) + '</div><div class="metric-note">' + escHtml(quality.quality_tier) + ' source quality</div></div>';
     }
 
@@ -711,7 +720,10 @@
       const expiresAt = profile.expires_at || competitor.expires_at || "";
       const quality = aggregateEvidenceQuality(data);
       const qualityValue = typeof quality.aggregate_score === "number" ? Math.round(quality.aggregate_score * 100) : "--";
-      const impact = status === "complete"
+      const conflicts = conflictCount(data);
+      const impact = conflicts > 0
+        ? "Held for GM Review until conflicts are resolved"
+        : status === "complete"
         ? "Available to GM after research safety checks"
         : status === "fallback"
           ? "Visible for review, weak for automatic planning"
@@ -720,7 +732,7 @@
       document.getElementById("memory-impact-list").innerHTML =
         '<div class="impact-item"><div class="impact-label">Memory type</div><div class="impact-value">research_intelligence</div></div>'
         + '<div class="impact-item"><div class="impact-label">Planning impact</div><div class="impact-value">' + escHtml(impact) + '</div></div>'
-        + '<div class="impact-item"><div class="impact-label">Quality and expiry</div><div class="impact-value">' + escHtml(qualityValue) + ' · ' + escHtml(quality.quality_tier) + (expiresAt ? '<br>' + escHtml(expiresAt.substring(0, 10)) : '<br>No expiry returned') + '</div></div>';
+        + '<div class="impact-item"><div class="impact-label">Quality and conflicts</div><div class="impact-value">' + escHtml(qualityValue) + ' · ' + escHtml(quality.quality_tier) + '<br>' + escHtml(conflicts) + ' conflicts' + (expiresAt ? ' · ' + escHtml(expiresAt.substring(0, 10)) : '') + '</div></div>';
     }
 
     function resetResultSections() {
@@ -747,6 +759,11 @@
     function qualityLabel(quality) {
       if (!quality || typeof quality.aggregate_score !== "number") return "quality=--";
       return "quality=" + Math.round(quality.aggregate_score * 100) + " " + (quality.quality_tier || "");
+    }
+
+    function conflictLabel(count) {
+      const value = Number(count || 0);
+      return value ? " · conflicts=" + value : "";
     }
 
     // ── Shop Management ──
@@ -1066,7 +1083,7 @@
             + ' <span class="status-badge ' + badgeClass + '">' + escHtml(researchStatus) + '</span>'
             + ' <span class="status-badge ' + escAttr(refreshState) + '">' + escHtml(freshnessLabel(refreshState)) + '</span>'
             + '<br><span class="muted">' + escHtml((item.summary || '').substring(0, 100)) + '</span>'
-            + '<br><span class="muted">focus=' + escHtml(focusLabel(item.research_focus)) + ' · evidence=' + Number(item.evidence_count || 0) + ' · ' + escHtml(qualityLabel(item.evidence_quality)) + expires + escHtml(taskStatus) + '</span></div>'
+            + '<br><span class="muted">focus=' + escHtml(focusLabel(item.research_focus)) + ' · evidence=' + Number(item.evidence_count || 0) + ' · ' + escHtml(qualityLabel(item.evidence_quality)) + escHtml(conflictLabel(item.conflict_count)) + expires + escHtml(taskStatus) + '</span></div>'
             + '<div class="history-actions"><button type="button" data-action="refresh-research" data-store-url="' + escAttr(item.store_url) + '" data-industry-code="' + escAttr(item.industry_code || "general") + '" data-research-focus="' + escAttr(item.research_focus || "full_intelligence") + '">Refresh</button><span class="muted">' + timeStr + '</span></div>'
             + '</div>';
         }).join("");

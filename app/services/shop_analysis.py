@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from difflib import SequenceMatcher
 from urllib.parse import urlparse
 
 from sqlalchemy import desc, select
@@ -18,6 +19,7 @@ RESEARCH_MEMORY_TTL_DAYS = 60
 RESEARCH_REFRESH_SOON_DAYS = 14
 MIN_RESEARCH_SOURCE_QUALITY = 0.5
 MIN_RESEARCH_AGGREGATE_QUALITY = 0.55
+RESEARCH_CONFLICT_SIMILARITY_THRESHOLD = 0.72
 
 
 def _research_expires_at(generated_at: datetime) -> str:
@@ -308,6 +310,136 @@ def _report_summary(store_url: str, report: str) -> str:
     return text[:240] if text else f"Competitive research for {store_url}."
 
 
+def _normalized_text(value) -> str:
+    return " ".join(str(value or "").lower().split())
+
+
+def _text_conflicts(previous, current, *, threshold: float = RESEARCH_CONFLICT_SIMILARITY_THRESHOLD) -> bool:
+    previous_text = _normalized_text(previous)
+    current_text = _normalized_text(current)
+    if not previous_text or not current_text or previous_text == current_text:
+        return False
+    return SequenceMatcher(None, previous_text, current_text).ratio() < threshold
+
+
+def _latest_prior_research_memory(
+    db: Session,
+    *,
+    project_id: str,
+    source_type: str,
+    store_url: str,
+    shop_id: str | None,
+) -> GmMemory | None:
+    rows = db.scalars(
+        select(GmMemory)
+        .where(
+            GmMemory.project_id == project_id,
+            GmMemory.source_type == source_type,
+            GmMemory.memory_type == "research_intelligence",
+            GmMemory.status == "active",
+        )
+        .order_by(desc(GmMemory.created_at))
+        .limit(20)
+    ).all()
+    for row in rows:
+        content = row.content or {}
+        if shop_id and content.get("shop_id") != shop_id:
+            continue
+        if content.get("store_url") != store_url:
+            continue
+        return row
+    return None
+
+
+def _research_conflict(
+    *,
+    field: str,
+    previous_value,
+    current_value,
+    previous_memory_id: str,
+    reason: str,
+) -> dict | None:
+    if not _text_conflicts(previous_value, current_value):
+        return None
+    return {
+        "pattern_key": field,
+        "field": field,
+        "status": "unresolved",
+        "conflict_type": "research_revision",
+        "previous_memory_id": previous_memory_id,
+        "previous_value": str(previous_value or "")[:240],
+        "current_value": str(current_value or "")[:240],
+        "reason": reason,
+    }
+
+
+def _detect_profile_conflicts(
+    db: Session,
+    *,
+    project_id: str,
+    store_url: str,
+    shop_id: str | None,
+    profile_data: dict,
+) -> list[dict]:
+    prior = _latest_prior_research_memory(
+        db,
+        project_id=project_id,
+        source_type="shop_profile",
+        store_url=store_url,
+        shop_id=shop_id,
+    )
+    if not prior:
+        return []
+    previous_profile = (prior.content or {}).get("profile") or {}
+    if not isinstance(previous_profile, dict) or not isinstance(profile_data, dict):
+        return []
+    checks = [
+        ("profile.positioning", previous_profile.get("positioning"), profile_data.get("positioning")),
+        ("profile.target_audience", previous_profile.get("target_audience"), profile_data.get("target_audience")),
+    ]
+    conflicts = [
+        conflict
+        for field, previous, current in checks
+        if (conflict := _research_conflict(
+            field=field,
+            previous_value=previous,
+            current_value=current,
+            previous_memory_id=prior.id,
+            reason="New store research materially differs from previous active store research.",
+        ))
+    ]
+    return conflicts
+
+
+def _detect_competitor_conflicts(
+    db: Session,
+    *,
+    project_id: str,
+    store_url: str,
+    shop_id: str | None,
+    analysis_markdown: str,
+) -> list[dict]:
+    prior = _latest_prior_research_memory(
+        db,
+        project_id=project_id,
+        source_type="competitor_analysis",
+        store_url=store_url,
+        shop_id=shop_id,
+    )
+    if not prior:
+        return []
+    previous_summary = (prior.content or {}).get("summary") or _report_summary(store_url, (prior.content or {}).get("report", ""))
+    current_summary = _report_summary(store_url, analysis_markdown)
+    conflict = _research_conflict(
+        field="competitor.summary",
+        previous_value=previous_summary,
+        current_value=current_summary,
+        previous_memory_id=prior.id,
+        reason="New competitor research materially differs from previous active competitor research.",
+    )
+    return [conflict] if conflict else []
+
+
 def _get_or_create_workspace_project(
     db: Session, workspace_name: str, project_name: str
 ) -> tuple[Workspace, Project]:
@@ -346,6 +478,13 @@ def save_shop_profile(
     normalized_evidence = _normalize_evidence(store_url, source_type="shop_profile", evidence=evidence)
     _, evidence_quality = _apply_evidence_quality(normalized_evidence)
     status = _research_status(normalized_evidence, search_errors)
+    conflicts = _detect_profile_conflicts(
+        db,
+        project_id=project_id,
+        store_url=store_url,
+        shop_id=shop_id,
+        profile_data=profile_data,
+    )
     entry = GmMemory(
         project_id=project_id,
         memory_scope="shop" if shop_id else "industry",
@@ -366,6 +505,8 @@ def save_shop_profile(
             "strategic_implications": _profile_implications(profile_data),
             "evidence": normalized_evidence,
             "evidence_quality": evidence_quality,
+            "conflicts": conflicts,
+            "conflict_count": len(conflicts),
             "source_queries": source_queries or [f"{store_url} brand positioning target audience product catalog"],
             "search_errors": search_errors or [],
             "research_status": status,
@@ -398,6 +539,13 @@ def save_competitor_analysis(
     normalized_evidence = _normalize_evidence(store_url, source_type="competitor_analysis", evidence=evidence)
     _, evidence_quality = _apply_evidence_quality(normalized_evidence)
     status = _research_status(normalized_evidence, search_errors)
+    conflicts = _detect_competitor_conflicts(
+        db,
+        project_id=project_id,
+        store_url=store_url,
+        shop_id=shop_id,
+        analysis_markdown=analysis_markdown,
+    )
     entry = GmMemory(
         project_id=project_id,
         memory_scope="shop" if shop_id else "industry",
@@ -418,6 +566,8 @@ def save_competitor_analysis(
             "strategic_implications": [_report_summary(store_url, analysis_markdown)],
             "evidence": normalized_evidence,
             "evidence_quality": evidence_quality,
+            "conflicts": conflicts,
+            "conflict_count": len(conflicts),
             "source_queries": source_queries or [f"competitors similar to {store_url} online store positioning creative patterns"],
             "search_errors": search_errors or [],
             "research_status": status,
@@ -485,6 +635,7 @@ def list_shop_analyses(
             "research_status": (row.content or {}).get("research_status") or "unknown",
             "evidence_count": len((row.content or {}).get("evidence") or []),
             "evidence_quality": (row.content or {}).get("evidence_quality") or {},
+            "conflict_count": len((row.content or {}).get("conflicts") or []),
             "expires_at": expires_at,
             "refresh_state": research_refresh_state(expires_at),
             "latest_task": research_task_to_dict(latest_task),

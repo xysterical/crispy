@@ -663,6 +663,7 @@ class ShopAnalysisResult(BaseModel):
     research_status: str = "unknown"
     evidence_count: int = 0
     evidence_quality: dict = Field(default_factory=dict)
+    conflict_count: int = 0
     research_focus: str = "full_intelligence"
 
 
@@ -718,6 +719,7 @@ class ShopAnalysisListItem(BaseModel):
     research_status: str = "unknown"
     evidence_count: int = 0
     evidence_quality: dict = Field(default_factory=dict)
+    conflict_count: int = 0
     expires_at: str | None = None
     refresh_state: str = "unknown"
     latest_task: ResearchTaskItem | None = None

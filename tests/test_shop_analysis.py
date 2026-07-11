@@ -497,6 +497,68 @@ def test_low_quality_research_source_is_excluded_from_planning(client, db_sessio
     assert low_quality.id not in {item["id"] for item in task_input["gm_lessons"]}
 
 
+def test_research_conflict_is_excluded_from_planning_unless_pinned(client, db_session):
+    from app.data.models import Workspace
+    from app.schemas.api import RunCreateRequest
+    from app.services.gm_memory import memory_dirty_reasons
+    from app.services.runs import _build_task_input, create_run
+    from app.services.shop_analysis import save_shop_profile
+
+    shop = Workspace(name="research-conflict-shop", industry_code="pet_accessories")
+    db_session.add(shop)
+    db_session.flush()
+    run = create_run(
+        db_session,
+        RunCreateRequest(
+            workspace_name="research-conflict-shop",
+            project_name="research-conflict-project",
+            product_name="utility leash",
+            product_code="RESEARCH-CONFLICT",
+            industry_code="pet_accessories",
+            campaign_name="research-conflict-campaign",
+            creative_preset="custom",
+            creative_specs={"image_size": "1:1", "video_size": "1:1", "resolution": "720p", "video_duration_seconds": 5},
+        ),
+    )
+    first = save_shop_profile(
+        db_session,
+        project_id=run.project_id,
+        industry_code="pet_accessories",
+        store_url="https://research-conflict.example",
+        profile_data={"positioning": "Premium urban dog walking gear", "target_audience": "Urban dog owners"},
+        evidence=[{"source": "tavily", "url": "https://research-conflict.example/a", "summary": "Premium urban dog walking gear.", "status": "ok"}],
+        shop_id=shop.id,
+        shop_name=shop.name,
+    )
+    second = save_shop_profile(
+        db_session,
+        project_id=run.project_id,
+        industry_code="pet_accessories",
+        store_url="https://research-conflict.example",
+        profile_data={"positioning": "Budget indoor cat toy bundles", "target_audience": "Apartment cat owners"},
+        evidence=[{"source": "firecrawl", "url": "https://research-conflict.example/b", "summary": "Budget indoor cat toy bundles.", "status": "ok"}],
+        shop_id=shop.id,
+        shop_name=shop.name,
+    )
+    db_session.flush()
+
+    conflicts = second.content["conflicts"]
+    assert conflicts
+    assert conflicts[0]["status"] == "unresolved"
+    assert conflicts[0]["previous_memory_id"] == first.id
+    assert "unresolved_conflicts" in memory_dirty_reasons(second)
+
+    planning_task = next(task for task in run.stage_tasks if task.stage_name == "planning")
+    task_input = _build_task_input(db_session, run, planning_task)
+    lesson_ids = {item["id"] for item in task_input["gm_lessons"]}
+    assert second.id not in lesson_ids
+
+    second.pinned = True
+    db_session.flush()
+    task_input = _build_task_input(db_session, run, planning_task)
+    assert second.id in {item["id"] for item in task_input["gm_lessons"]}
+
+
 def test_source_quality_scoring_penalizes_thin_evidence():
     from app.services.shop_analysis import _normalize_evidence, _research_status
 
@@ -923,3 +985,5 @@ def test_v2_page_loads_with_three_mode_rows(client):
     assert "Full intelligence" in html
     assert "Store Context Detail" in html
     assert "Competitive Landscape Detail" in html
+    assert "Quality" in html
+    assert "conflicts=" in html
