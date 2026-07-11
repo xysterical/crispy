@@ -24,6 +24,8 @@ def memory_dirty_reasons(row: GmMemory) -> list[str]:
         reasons.append("low_confidence")
     if _is_expired_research_memory(row):
         reasons.append("expired_research")
+    if _has_weak_research_evidence(row):
+        reasons.append("weak_research_evidence")
     if not _has_actionable_content(content):
         reasons.append("empty_actionable_content")
     return reasons
@@ -168,3 +170,18 @@ def _is_expired_research_memory(row: GmMemory) -> bool:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed < datetime.now(UTC)
+
+
+def _has_weak_research_evidence(row: GmMemory) -> bool:
+    if row.memory_type != "research_intelligence":
+        return False
+    content = row.content or {}
+    evidence = content.get("evidence") or []
+    has_real_source = any(
+        isinstance(item, dict)
+        and item.get("source") in {"tavily", "firecrawl"}
+        and item.get("status", "ok") == "ok"
+        and item.get("url")
+        for item in evidence
+    )
+    return not has_real_source
