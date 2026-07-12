@@ -42,7 +42,19 @@
     margin-top:10px;
     flex-wrap: wrap;
   }
+  .view-tabs { display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
+  .view-tab {
+    min-width: 112px;
+    border-radius: 999px;
+    background: #fff;
+  }
+  .view-tab.active {
+    border-color: var(--accent);
+    background: #ecfdf5;
+    color: #047857;
+  }
   .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:12px; }
+  .product-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:12px; }
   .asset-card {
     border:1px solid #e2e8f0;
     border-radius:12px;
@@ -51,6 +63,48 @@
     box-shadow: 0 4px 14px rgba(32, 75, 57, 0.04);
   }
   .asset-card:hover { transform: translateY(-1px); transition: transform 160ms ease; }
+  .product-card {
+    border:1px solid #e2e8f0;
+    border-radius:12px;
+    padding:14px;
+    background:#fff;
+    box-shadow: 0 4px 14px rgba(32, 75, 57, 0.04);
+    display:grid;
+    gap:12px;
+    min-height: 210px;
+  }
+  .product-placeholder {
+    height: 74px;
+    border: 1px dashed #c8dacd;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #f8fcfa, #f1f5f9);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:#64748b;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .product-title { font-size:15px; font-weight:750; line-height:1.25; }
+  .product-code { margin-top:4px; color:#047857; font-family:var(--mono); font-size:12px; overflow-wrap:anywhere; }
+  .product-meta { display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:8px; }
+  .product-metric { border:1px solid #e2e8f0; border-radius:10px; padding:8px; background:#f8fafc; }
+  .product-metric strong { display:block; font-size:16px; line-height:1; }
+  .product-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:auto; }
+  .product-actions a, .product-actions button {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    min-height:30px;
+    padding:7px 9px;
+    border:1px solid #e2e8f0;
+    border-radius:10px;
+    background:#f8fafc;
+    color:#1e293b;
+    font-size:12px;
+    font-weight:650;
+    text-decoration:none;
+  }
   input, select {
     width: 100%;
     padding: 9px 10px;
@@ -155,7 +209,11 @@
     <div class="toolbar">
       <div>
         <h1>Asset Library</h1>
-        <div class="subtitle">Browse generated outputs across runs, modes, and channels.</div>
+        <div class="subtitle">Browse generated outputs or use the SKU view as a temporary product page.</div>
+        <div class="view-tabs" aria-label="Asset library view">
+          <button class="view-tab active" id="tab-assets" type="button" onclick="switchView('assets')">Assets</button>
+          <button class="view-tab" id="tab-products" type="button" onclick="switchView('products')">Products</button>
+        </div>
       </div>
     </div>
     <section class="card">
@@ -211,13 +269,16 @@
     <section class="card">
       <div id="stats" class="muted stats-line"></div>
       <div id="asset-grid" class="grid"></div>
+      <div id="product-grid" class="product-grid" style="display:none;"></div>
     </section>
   </main>
   <script>
+    let currentView = "assets";
     let page = 1;
     let pageSize = 20;
     let total = 0;
     function esc(v){ return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
+    function escAttr(v){ return esc(v).replaceAll('"',"&quot;").replaceAll("'","&#39;");}
     function mediaUrl(path){ return `/media?path=${encodeURIComponent(path || "")}`; }
     function mediaViewUrl(path){ return `/media/view?path=${encodeURIComponent(path || "")}`; }
     function queryString(params){
@@ -229,6 +290,10 @@
       return q.toString();
     }
     async function refreshAssets() {
+      if (currentView === "products") {
+        await refreshProducts();
+        return;
+      }
       const params = {
         q: document.getElementById("q").value,
         artifact_types: document.getElementById("artifact_types").value,
@@ -273,8 +338,72 @@
         grid.appendChild(el);
       });
     }
+    async function refreshProducts() {
+      const params = {
+        q: document.getElementById("q").value,
+        product_code: document.getElementById("product_code").value,
+        page,
+        page_size: 24,
+      };
+      const resp = await fetch(`/asset-products?${queryString(params)}`);
+      if (!resp.ok) throw new Error(await resp.text());
+      const data = await resp.json();
+      total = data.total;
+      document.getElementById("stats").textContent = `products=${data.total}, page=${data.page}, page_size=${data.page_size}`;
+      const grid = document.getElementById("product-grid");
+      grid.innerHTML = "";
+      if (!data.items.length) {
+        grid.innerHTML = '<div class="empty">No products match current filters.</div>';
+        return;
+      }
+      data.items.forEach((item) => {
+        const el = document.createElement("article");
+        el.className = "product-card";
+        const latest = item.latest_run_at ? item.latest_run_at : "No runs yet";
+        el.innerHTML = `
+          <div class="product-placeholder">SKU</div>
+          <div>
+            <div class="product-title">${esc(item.name || item.product_code)}</div>
+            <div class="product-code">${esc(item.product_code)}</div>
+            <div class="muted">${esc(item.workspace_name)} / ${esc(item.project_name)}</div>
+          </div>
+          <div class="product-meta">
+            <div class="product-metric"><strong>${esc(item.run_count || 0)}</strong><span class="muted">Runs</span></div>
+            <div class="product-metric"><strong>${esc(item.asset_count || 0)}</strong><span class="muted">Assets</span></div>
+            <div class="product-metric"><strong>${esc(item.memory_count || 0)}</strong><span class="muted">Memory</span></div>
+          </div>
+          <div class="muted">latest: ${esc(latest)}</div>
+          <div class="product-actions">
+            <button type="button" onclick="showProductAssets('${escAttr(item.product_code)}')">View assets</button>
+            <a href="/dashboard?shop=${encodeURIComponent(item.workspace_name)}">Create Run</a>
+            <a href="/dashboard/data?shop=${encodeURIComponent(item.workspace_name)}">Data</a>
+          </div>
+        `;
+        grid.appendChild(el);
+      });
+    }
+    function switchView(view) {
+      currentView = view;
+      page = 1;
+      document.getElementById("tab-assets").classList.toggle("active", view === "assets");
+      document.getElementById("tab-products").classList.toggle("active", view === "products");
+      document.getElementById("asset-grid").style.display = view === "assets" ? "" : "none";
+      document.getElementById("product-grid").style.display = view === "products" ? "" : "none";
+      document.getElementById("artifact_types").disabled = view === "products";
+      document.getElementById("pipeline_mode").disabled = view === "products";
+      document.getElementById("sort_by").disabled = view === "products";
+      document.getElementById("sort_order").disabled = view === "products";
+      document.getElementById("date_from").disabled = view === "products";
+      document.getElementById("date_to").disabled = view === "products";
+      refreshAssets();
+    }
+    function showProductAssets(productCode) {
+      document.getElementById("product_code").value = productCode;
+      switchView("assets");
+    }
+    function currentPageSize(){ return currentView === "products" ? 24 : pageSize; }
     function prevPage(){ if (page > 1) { page -= 1; refreshAssets(); } }
-    function nextPage(){ if ((page * pageSize) < total) { page += 1; refreshAssets(); } }
+    function nextPage(){ if ((page * currentPageSize()) < total) { page += 1; refreshAssets(); } }
     refreshAssets();
   </script>
 </body>

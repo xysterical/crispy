@@ -413,6 +413,26 @@ class ArtifactListResponse(BaseModel):
     items: list[ArtifactListItem] = Field(default_factory=list)
 
 
+class AssetProductItem(BaseModel):
+    product_id: str
+    product_code: str
+    name: str
+    workspace_name: str
+    project_name: str
+    run_count: int = 0
+    asset_count: int = 0
+    memory_count: int = 0
+    latest_run_at: datetime | None = None
+    created_at: datetime
+
+
+class AssetProductListResponse(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    items: list[AssetProductItem] = Field(default_factory=list)
+
+
 class GmMemoryItem(BaseModel):
     id: str
     project_id: str

@@ -169,6 +169,43 @@ def test_artifacts_endpoint_filters_generated_outputs(client, monkeypatch):
     assert all(item["product_code"] == "DL-TEST-001" for item in by_code_items)
 
 
+def test_asset_products_endpoint_lists_skus_without_assets(client, db_session):
+    from app.data.models import Product, Project, Workspace
+
+    workspace = Workspace(name="asset-products-shop", industry_code="general")
+    db_session.add(workspace)
+    db_session.flush()
+    project = Project(workspace_id=workspace.id, name="catalog")
+    db_session.add(project)
+    db_session.flush()
+    product = Product(project_id=project.id, name="No Thumbnail Product", product_code="SKU-NO-ASSET")
+    db_session.add(product)
+    db_session.commit()
+
+    resp = client.get("/asset-products", params={"q": "SKU-NO-ASSET"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    item = body["items"][0]
+    assert item["product_code"] == "SKU-NO-ASSET"
+    assert item["name"] == "No Thumbnail Product"
+    assert item["workspace_name"] == "asset-products-shop"
+    assert item["project_name"] == "catalog"
+    assert item["run_count"] == 0
+    assert item["asset_count"] == 0
+
+
+def test_assets_page_has_product_view(client):
+    resp = client.get("/dashboard/assets")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "Products</button>" in html
+    assert "product-grid" in html
+    assert "/asset-products?" in html
+    assert "No products match current filters." in html
+
+
 def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):
     resp = client.get("/dashboard")
     assert resp.status_code == 200

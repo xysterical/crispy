@@ -31,6 +31,8 @@ from app.templates import templates
 from app.schemas.api import (
     AgentApiConfigPatchRequest,
     AgentApiConfigView,
+    AssetProductItem,
+    AssetProductListResponse,
     AgentTraceEventView,
     ArtifactListItem,
     ArtifactListResponse,
@@ -4235,6 +4237,85 @@ def list_artifacts(
         for row in rows
     ]
     return ArtifactListResponse(page=page, page_size=page_size, total=total, items=items)
+
+
+@router.get("/asset-products", response_model=AssetProductListResponse)
+def list_asset_products(
+    q: str | None = Query(default=None),
+    workspace_name: str | None = Query(default=None),
+    project_name: str | None = Query(default=None),
+    product_code: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=24, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> AssetProductListResponse:
+    query = (
+        select(Product, Project.name.label("project_name"), Workspace.name.label("workspace_name"))
+        .join(Project, Project.id == Product.project_id)
+        .join(Workspace, Workspace.id == Project.workspace_id)
+    )
+    if q:
+        pattern = f"%{q.lower()}%"
+        query = query.where(
+            or_(
+                func.lower(Product.name).like(pattern),
+                func.lower(Product.product_code).like(pattern),
+                func.lower(Project.name).like(pattern),
+                func.lower(Workspace.name).like(pattern),
+            )
+        )
+    if workspace_name:
+        query = query.where(Workspace.name == workspace_name)
+    if project_name:
+        query = query.where(Project.name == project_name)
+    if product_code:
+        query = query.where(Product.product_code == product_code)
+
+    total = int(db.scalar(select(func.count()).select_from(query.subquery())) or 0)
+    rows = db.execute(
+        query.order_by(Workspace.name, Project.name, Product.product_code)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+
+    items: list[AssetProductItem] = []
+    for product, project_label, workspace_label in rows:
+        run_count = db.scalar(
+            select(func.count(PipelineRun.id)).where(PipelineRun.product_code == product.product_code)
+        ) or 0
+        asset_count = db.scalar(
+            select(func.count(Artifact.id))
+            .join(PipelineRun, PipelineRun.id == Artifact.run_id)
+            .where(
+                PipelineRun.product_code == product.product_code,
+                Artifact.artifact_type.in_(DEFAULT_GENERATED_ARTIFACT_TYPES),
+            )
+        ) or 0
+        memory_count = db.scalar(
+            select(func.count(GmMemory.id)).where(
+                GmMemory.memory_scope == "product",
+                GmMemory.product_code == product.product_code,
+                GmMemory.status == "active",
+            )
+        ) or 0
+        latest_run_at = db.scalar(
+            select(func.max(PipelineRun.created_at)).where(PipelineRun.product_code == product.product_code)
+        )
+        items.append(
+            AssetProductItem(
+                product_id=product.id,
+                product_code=product.product_code,
+                name=product.name,
+                workspace_name=workspace_label,
+                project_name=project_label,
+                run_count=run_count,
+                asset_count=asset_count,
+                memory_count=memory_count,
+                latest_run_at=latest_run_at,
+                created_at=product.created_at,
+            )
+        )
+    return AssetProductListResponse(page=page, page_size=page_size, total=total, items=items)
 
 
 def get_stage_payload(db: Session, run_id: str, stage_name: str) -> dict:
