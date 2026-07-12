@@ -12,6 +12,8 @@ def test_research_page_loads(client):
     assert "Run Research" in html
     assert "research-readiness" in html
     assert "Research Type" in html
+    assert "research-focus-slider" in html
+    assert "updateResearchFocusIndicator" in html
     assert "result-overview" in html
     assert "Evidence" in html
     assert "Memory Impact" in html

@@ -86,6 +86,7 @@
     align-items: stretch;
   }
   .segmented {
+    position: relative;
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
@@ -95,17 +96,32 @@
     background: #eef2f7;
   }
   .segmented button {
+    position: relative;
+    z-index: 1;
     padding: 8px 10px;
     border: 0;
     border-radius: 8px;
     background: transparent;
     font-size: 12px;
     color: #475569;
+    transition: color 160ms ease;
+  }
+  .segmented-slider {
+    position: absolute;
+    z-index: 0;
+    left: 4px;
+    top: 4px;
+    width: 0;
+    height: 0;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+    transition: transform 180ms ease, width 180ms ease, height 180ms ease;
+    pointer-events: none;
   }
   .segmented button.active {
-    background: #fff;
+    background: transparent;
     color: #065f46;
-    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
   }
   .segmented button:disabled {
     opacity: 0.46;
@@ -415,6 +431,7 @@
         <div>
           <label>Research Type</label>
           <div class="segmented" id="research-focus-controls" aria-label="Research type">
+            <span class="segmented-slider" id="research-focus-slider" aria-hidden="true"></span>
             <button type="button" class="active" data-focus="full_intelligence">Full</button>
             <button type="button" data-focus="store_context">Store</button>
             <button type="button" data-focus="competitive_landscape">Competitors</button>
@@ -585,10 +602,21 @@
       document.querySelectorAll("#research-focus-controls button").forEach(btn => {
         btn.classList.toggle("active", btn.dataset.focus === focus);
       });
+      updateResearchFocusIndicator();
       const meta = researchFocusCopy[focus];
       document.getElementById("research-focus-hint").innerHTML =
         '<div class="focus-hint-title">' + escHtml(meta.label) + '</div>'
         + '<div class="focus-hint-copy">' + escHtml(meta.copy) + '</div>';
+    }
+
+    function updateResearchFocusIndicator() {
+      const controls = document.getElementById("research-focus-controls");
+      const slider = document.getElementById("research-focus-slider");
+      const active = controls?.querySelector("button.active");
+      if (!controls || !slider || !active) return;
+      slider.style.width = active.offsetWidth + "px";
+      slider.style.height = active.offsetHeight + "px";
+      slider.style.transform = "translate(" + active.offsetLeft + "px, " + active.offsetTop + "px)";
     }
 
     function researchResults(data) {
@@ -1001,6 +1029,7 @@
         btn.addEventListener("click", () => setResearchFocus(btn.dataset.focus));
       });
       setResearchFocus(selectedResearchFocus);
+      window.addEventListener("resize", updateResearchFocusIndicator);
       loadShopAnalysisShops();
       loadHistory();
       loadResearchReadiness();
