@@ -171,7 +171,7 @@ def test_artifacts_endpoint_filters_generated_outputs(client, monkeypatch):
 
 
 def test_asset_products_endpoint_lists_skus_without_assets(client, db_session):
-    from app.data.models import Product, Project, Workspace
+    from app.data.models import Artifact, Product, Project, Workspace
 
     workspace = Workspace(name="asset-products-shop", industry_code="general")
     db_session.add(workspace)
@@ -195,6 +195,42 @@ def test_asset_products_endpoint_lists_skus_without_assets(client, db_session):
     assert item["project_name"] == "catalog"
     assert item["run_count"] == 0
     assert item["asset_count"] == 0
+    assert item["thumbnail_uri"] is None
+
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "asset-thumb-shop",
+            "project_name": "asset-thumb-project",
+            "product_name": "Thumbnail Product",
+            "product_code": "SKU-WITH-THUMB",
+            "industry_code": "general",
+            "campaign_name": "asset-thumb-campaign",
+            "creative_preset": "meta_square_5s",
+            "pipeline_mode": "copy_image_only",
+            "business_context": {"target_audience": "operators"},
+        },
+    )
+    assert create_resp.status_code == 200
+    thumb_path = Path("assets/product_thumb.png")
+    thumb_path.parent.mkdir(parents=True, exist_ok=True)
+    thumb_path.write_bytes(b"fake image bytes")
+    db_session.add(
+        Artifact(
+            run_id=create_resp.json()["id"],
+            stage_name="copy_image_generation",
+            artifact_type="generated_image",
+            uri=str(thumb_path),
+            payload={"summary": "thumbnail"},
+        )
+    )
+    db_session.commit()
+
+    thumb_resp = client.get("/asset-products", params={"product_code": "SKU-WITH-THUMB"})
+
+    assert thumb_resp.status_code == 200
+    thumb_item = thumb_resp.json()["items"][0]
+    assert thumb_item["thumbnail_uri"] == str(thumb_path)
 
 
 def test_asset_bulk_image_zip_and_delete(client, db_session):
@@ -308,6 +344,9 @@ def test_assets_page_has_product_view(client):
     assert "asset-filter-card" in html
     assert "position: sticky" in html
     assert "position: fixed" in html
+    assert "filter-compact-head" in html
+    assert "syncFilterCompactState" in html
+    assert "product-thumb" in html
     assert "downloadSelectedImages" in html
     assert "deleteSelectedProducts" in html
     assert "product-placeholder" not in html

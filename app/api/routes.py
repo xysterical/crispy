@@ -4359,6 +4359,17 @@ def list_asset_products(
         latest_run_at = db.scalar(
             select(func.max(PipelineRun.created_at)).where(PipelineRun.product_code == product.product_code)
         )
+        thumbnail_uri = db.scalar(
+            select(Artifact.uri)
+            .join(PipelineRun, PipelineRun.id == Artifact.run_id)
+            .where(
+                PipelineRun.product_code == product.product_code,
+                Artifact.artifact_type.in_(["generated_image", "copy_image_bundle", "storyboard_frame"]),
+                Artifact.uri.isnot(None),
+            )
+            .order_by(desc(Artifact.created_at))
+            .limit(1)
+        )
         items.append(
             AssetProductItem(
                 product_id=product.id,
@@ -4366,6 +4377,7 @@ def list_asset_products(
                 name=product.name,
                 workspace_name=workspace_label,
                 project_name=project_label,
+                thumbnail_uri=thumbnail_uri,
                 run_count=run_count,
                 asset_count=asset_count,
                 memory_count=memory_count,

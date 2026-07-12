@@ -41,6 +41,12 @@
     padding: 12px;
     border-radius: 12px;
   }
+  .filter-compact-head { display:none; align-items:center; justify-content:space-between; gap:10px; }
+  .filter-summary { display:flex; gap:8px; flex-wrap:wrap; align-items:center; min-width:0; color:var(--muted); font-size:12px; }
+  .filter-summary strong { color:var(--text); font-size:13px; }
+  .asset-filter-card.is-compact { padding: 8px 10px; }
+  .asset-filter-card.is-compact .filter-compact-head { display:flex; }
+  .asset-filter-card.is-compact .filter-body { display:none; }
   .filters { display:grid; grid-template-columns: minmax(220px, 2fr) repeat(5, minmax(120px, 1fr)); gap:8px; align-items:end; }
   .filters-bottom {
     display:flex;
@@ -116,6 +122,23 @@
   .bulk-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
   .bulk-danger { color:#b91c1c; border-color:#fecaca; background:#fff7f7; }
   .product-title { font-size:15px; font-weight:750; line-height:1.25; }
+  .product-thumb {
+    width:100%;
+    height:118px;
+    border-radius:10px;
+    border:1px solid #e2e8f0;
+    background:#f8fafc;
+    object-fit:cover;
+    display:block;
+  }
+  .product-no-thumb {
+    padding:8px 10px;
+    border:1px dashed #c8dacd;
+    border-radius:10px;
+    background:#f8fcfa;
+    color:var(--muted);
+    font-size:12px;
+  }
   .product-code { margin-top:4px; color:#047857; font-family:var(--mono); font-size:12px; overflow-wrap:anywhere; }
   .product-meta { display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:8px; }
   .product-metric { border:1px solid #e2e8f0; border-radius:10px; padding:8px; background:#f8fafc; }
@@ -249,53 +272,59 @@
       </div>
     </div>
     <section class="card asset-filter-card">
-      <div class="filters">
-        <div><label>Search</label><input id="q" placeholder="run id / copy text / filename" /></div>
-        <div>
-          <label>Type</label>
-          <select id="artifact_types">
-            <option value="">All generated</option>
-            <option value="generated_image">generated_image</option>
-            <option value="copy_image_bundle">copy_image_bundle</option>
-            <option value="video_script_pack">video_script_pack</option>
-            <option value="storyboard_pack">storyboard_pack</option>
-            <option value="generated_video">generated_video</option>
-            <option value="video_bundle">video_bundle</option>
-            <option value="visual_quality_report">visual_quality_report</option>
-            <option value="evaluation_selection">evaluation_selection</option>
-          </select>
-        </div>
-      <div>
-        <label>Pipeline Mode</label>
-        <select id="pipeline_mode">
-          <option value="">All</option>
-          <option value="copy_image_only">copy_image_only</option>
-          <option value="dtc_site_image">dtc_site_image</option>
-          <option value="video_only">video_only</option>
-          <option value="full_multimodal">full_multimodal</option>
-        </select>
+      <div class="filter-compact-head">
+        <div id="filter-summary" class="filter-summary"><strong>Filters</strong><span>All generated</span></div>
+        <button type="button" onclick="expandFilters()">Open filters</button>
       </div>
-      <div><label>Product Code</label><input id="product_code" placeholder="DL-001" /></div>
-      <div>
-        <label>Sort By</label>
-        <select id="sort_by">
-          <option value="created_at">created_at</option>
-          <option value="score">score</option>
-          </select>
-        </div>
+      <div class="filter-body">
+        <div class="filters">
+          <div><label>Search</label><input id="q" placeholder="run id / copy text / filename" oninput="updateFilterSummary()" /></div>
+          <div>
+            <label>Type</label>
+            <select id="artifact_types" onchange="updateFilterSummary()">
+              <option value="">All generated</option>
+              <option value="generated_image">generated_image</option>
+              <option value="copy_image_bundle">copy_image_bundle</option>
+              <option value="video_script_pack">video_script_pack</option>
+              <option value="storyboard_pack">storyboard_pack</option>
+              <option value="generated_video">generated_video</option>
+              <option value="video_bundle">video_bundle</option>
+              <option value="visual_quality_report">visual_quality_report</option>
+              <option value="evaluation_selection">evaluation_selection</option>
+            </select>
+          </div>
         <div>
-          <label>Order</label>
-          <select id="sort_order">
-            <option value="desc">desc</option>
-            <option value="asc">asc</option>
+          <label>Pipeline Mode</label>
+          <select id="pipeline_mode" onchange="updateFilterSummary()">
+            <option value="">All</option>
+            <option value="copy_image_only">copy_image_only</option>
+            <option value="dtc_site_image">dtc_site_image</option>
+            <option value="video_only">video_only</option>
+            <option value="full_multimodal">full_multimodal</option>
           </select>
         </div>
-      </div>
-      <div class="filters-bottom">
-        <div><label>Date From</label><input id="date_from" type="date" /></div>
-        <div><label>Date To</label><input id="date_to" type="date" /></div>
-        <div><button onclick="refreshAssets()">Apply</button></div>
-        <div><button onclick="prevPage()">Prev</button> <button onclick="nextPage()">Next</button></div>
+        <div><label>Product Code</label><input id="product_code" placeholder="DL-001" oninput="updateFilterSummary()" /></div>
+        <div>
+          <label>Sort By</label>
+          <select id="sort_by" onchange="updateFilterSummary()">
+            <option value="created_at">created_at</option>
+            <option value="score">score</option>
+            </select>
+          </div>
+          <div>
+            <label>Order</label>
+            <select id="sort_order" onchange="updateFilterSummary()">
+              <option value="desc">desc</option>
+              <option value="asc">asc</option>
+            </select>
+          </div>
+        </div>
+        <div class="filters-bottom">
+          <div><label>Date From</label><input id="date_from" type="date" onchange="updateFilterSummary()" /></div>
+          <div><label>Date To</label><input id="date_to" type="date" onchange="updateFilterSummary()" /></div>
+          <div><button onclick="refreshAssets()">Apply</button></div>
+          <div><button onclick="prevPage()">Prev</button> <button onclick="nextPage()">Next</button></div>
+        </div>
       </div>
     </section>
     <section class="card">
@@ -321,6 +350,7 @@
     let page = 1;
     let pageSize = 20;
     let total = 0;
+    let filtersManuallyExpanded = false;
     const selectedAssets = new Set();
     const selectedProducts = new Set();
     function esc(v){ return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
@@ -411,8 +441,12 @@
         const el = document.createElement("article");
         el.className = "product-card";
         const latest = item.latest_run_at ? item.latest_run_at : "No runs yet";
+        const thumb = item.thumbnail_uri
+          ? `<a href="${mediaViewUrl(item.thumbnail_uri)}" target="_blank"><img class="product-thumb" src="${mediaUrl(item.thumbnail_uri)}" alt="${escAttr(item.name || item.product_code)}"/></a>`
+          : `<div class="product-no-thumb">No generated image yet</div>`;
         el.innerHTML = `
           <input class="card-check" type="checkbox" aria-label="Select product" onchange="toggleProductSelection('${escAttr(item.product_id)}', this.checked)" />
+          ${thumb}
           <div>
             <div class="product-title">${esc(item.name || item.product_code)}</div>
             <div class="product-code">${esc(item.product_code)}</div>
@@ -448,6 +482,32 @@
       document.getElementById("date_from").disabled = view === "products";
       document.getElementById("date_to").disabled = view === "products";
       refreshAssets();
+    }
+    function updateFilterSummary() {
+      const parts = [];
+      const q = document.getElementById("q").value.trim();
+      const type = document.getElementById("artifact_types").value || "All generated";
+      const mode = document.getElementById("pipeline_mode").value;
+      const code = document.getElementById("product_code").value.trim();
+      if (q) parts.push(`search: ${q}`);
+      parts.push(type);
+      if (mode) parts.push(mode);
+      if (code) parts.push(`SKU: ${code}`);
+      document.getElementById("filter-summary").innerHTML = `<strong>Filters</strong><span>${esc(parts.join(" · "))}</span>`;
+    }
+    function expandFilters() {
+      filtersManuallyExpanded = true;
+      document.querySelector(".asset-filter-card").classList.remove("is-compact");
+    }
+    function syncFilterCompactState() {
+      const card = document.querySelector(".asset-filter-card");
+      if (!card) return;
+      if (window.scrollY < 80) {
+        filtersManuallyExpanded = false;
+        card.classList.remove("is-compact");
+        return;
+      }
+      card.classList.toggle("is-compact", !filtersManuallyExpanded);
     }
     function toggleAssetSelection(id, checked) {
       if (checked) selectedAssets.add(id);
@@ -526,6 +586,8 @@
     function currentPageSize(){ return currentView === "products" ? 24 : pageSize; }
     function prevPage(){ if (page > 1) { page -= 1; refreshAssets(); } }
     function nextPage(){ if ((page * currentPageSize()) < total) { page += 1; refreshAssets(); } }
+    window.addEventListener("scroll", syncFilterCompactState, { passive: true });
+    updateFilterSummary();
     refreshAssets();
   </script>
 </body>

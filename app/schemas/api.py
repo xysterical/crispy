@@ -423,6 +423,7 @@ class AssetProductItem(BaseModel):
     name: str
     workspace_name: str
     project_name: str
+    thumbnail_uri: str | None = None
     run_count: int = 0
     asset_count: int = 0
     memory_count: int = 0
