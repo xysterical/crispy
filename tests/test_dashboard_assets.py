@@ -35,6 +35,7 @@ def _patch_valid_generated_images(monkeypatch):
 def test_dashboard_pages_share_global_rail(client):
     pages = {
         "/dashboard": "/dashboard",
+        "/dashboard/shops": "/dashboard/shops",
         "/dashboard/data": "/dashboard/data",
         "/dashboard/research": "/dashboard/research",
         "/dashboard/calendar": "/dashboard/calendar",
@@ -49,6 +50,16 @@ def test_dashboard_pages_share_global_rail(client):
         assert 'class="global-rail"' in resp.text
         assert f'class="rail-link active" href="{active_href}"' in resp.text
         assert "Back to Dashboard" not in resp.text
+
+
+def test_dashboard_data_source_selector_is_database_labeled(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "data-source-select" in html
+    data_source_block = html[html.index('<div class="data-source-block">'):html.index('<div class="table-wrap">')]
+    assert "Database</label>" in data_source_block
+    assert "Shop</label>" not in data_source_block
 
 
 def test_media_view_has_exit_controls(client):
