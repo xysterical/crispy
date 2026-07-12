@@ -305,8 +305,12 @@ def test_assets_page_has_product_view(client):
     assert "/asset-products?" in html
     assert "No products match current filters." in html
     assert "bulk-bar" in html
+    assert "asset-filter-card" in html
+    assert "position: sticky" in html
+    assert "position: fixed" in html
     assert "downloadSelectedImages" in html
     assert "deleteSelectedProducts" in html
+    assert "product-placeholder" not in html
 
 
 def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):

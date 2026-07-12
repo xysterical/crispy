@@ -22,7 +22,7 @@
       radial-gradient(circle at 90% -20%, #e0e7ff 0%, transparent 42%),
       linear-gradient(180deg, var(--bg-alt), var(--bg) 30%);
   }
-  .app-shell { width: min(1380px, calc(100% - 24px)); margin: 22px auto 30px auto; }
+  .app-shell { width: min(1380px, calc(100% - 24px)); margin: 22px auto 72px auto; }
   .card {
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -34,14 +34,24 @@
   }
   h1 { margin: 0; font-size: 27px; letter-spacing: -0.02em; line-height: 1.2; }
   .subtitle { margin-top: 6px; color: var(--muted); font-size: 14px; }
-  .filters { display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr; gap:10px; align-items:end; }
+  .asset-filter-card {
+    position: sticky;
+    top: 10px;
+    z-index: 8;
+    padding: 12px;
+    border-radius: 12px;
+  }
+  .filters { display:grid; grid-template-columns: minmax(220px, 2fr) repeat(5, minmax(120px, 1fr)); gap:8px; align-items:end; }
   .filters-bottom {
     display:flex;
-    gap:10px;
+    gap:8px;
     align-items:end;
-    margin-top:10px;
+    margin-top:8px;
     flex-wrap: wrap;
   }
+  .filters label { font-size: 12px; }
+  .filters input, .filters select, .filters-bottom input { padding: 7px 9px; border-radius: 8px; font-size: 12px; }
+  .filters-bottom button { min-height: 32px; padding: 7px 10px; border-radius: 8px; font-size: 12px; }
   .view-tabs { display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
   .view-tab {
     min-width: 112px;
@@ -71,8 +81,8 @@
     background:#fff;
     box-shadow: 0 4px 14px rgba(32, 75, 57, 0.04);
     display:grid;
-    gap:12px;
-    min-height: 210px;
+    gap:10px;
+    min-height: 168px;
     position: relative;
   }
   .card-check {
@@ -85,30 +95,26 @@
   }
   .bulk-bar {
     display:none;
+    position: fixed;
+    left: max(72px, calc((100vw - min(1380px, calc(100vw - 24px))) / 2));
+    right: 12px;
+    bottom: 14px;
+    z-index: 40;
     align-items:center;
     justify-content:space-between;
     gap:12px;
-    margin-bottom:12px;
-    padding:10px 12px;
+    max-width: 980px;
+    margin: 0 auto;
+    padding:12px 14px;
     border:1px solid #c9ddd1;
-    border-radius:12px;
-    background:#f7fcf8;
+    border-radius:14px;
+    background:rgba(247, 252, 248, 0.96);
+    box-shadow:0 14px 40px rgba(15, 23, 42, 0.18);
+    backdrop-filter: blur(10px);
   }
   .bulk-bar.active { display:flex; }
   .bulk-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
   .bulk-danger { color:#b91c1c; border-color:#fecaca; background:#fff7f7; }
-  .product-placeholder {
-    height: 74px;
-    border: 1px dashed #c8dacd;
-    border-radius: 10px;
-    background: linear-gradient(135deg, #f8fcfa, #f1f5f9);
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    color:#64748b;
-    font-family: var(--mono);
-    font-size: 12px;
-  }
   .product-title { font-size:15px; font-weight:750; line-height:1.25; }
   .product-code { margin-top:4px; color:#047857; font-family:var(--mono); font-size:12px; overflow-wrap:anywhere; }
   .product-meta { display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:8px; }
@@ -217,12 +223,14 @@
     background: #f8fcfa;
   }
   @media (max-width: 1040px) {
-    .filters { grid-template-columns: 1fr 1fr; }
+    .filters { grid-template-columns: 1fr 1fr 1fr; }
+    .bulk-bar { left: 70px; }
   }
   @media (max-width: 860px) {
     .app-shell { width: calc(100% - 12px); margin-top: 10px; }
-    .filters { grid-template-columns: 1fr; }
+    .filters { grid-template-columns: 1fr 1fr; }
     .toolbar { flex-direction: column; align-items: flex-start; }
+    .bulk-bar { left: 8px; right: 8px; flex-direction: column; align-items: stretch; }
   }
 {% endblock %}
 {% block body %}
@@ -240,7 +248,7 @@
         </div>
       </div>
     </div>
-    <section class="card">
+    <section class="card asset-filter-card">
       <div class="filters">
         <div><label>Search</label><input id="q" placeholder="run id / copy text / filename" /></div>
         <div>
@@ -291,22 +299,22 @@
       </div>
     </section>
     <section class="card">
-      <div id="bulk-bar" class="bulk-bar">
-        <div>
-          <strong id="bulk-count">0 selected</strong>
-          <div id="bulk-help" class="muted">Select assets to save or remove them from the library.</div>
-        </div>
-        <div class="bulk-actions">
-          <button id="bulk-save-images" type="button" onclick="downloadSelectedImages()">Save images</button>
-          <button id="bulk-delete-assets" class="bulk-danger" type="button" onclick="deleteSelectedAssets()">Delete assets</button>
-          <button id="bulk-delete-products" class="bulk-danger" type="button" onclick="deleteSelectedProducts()" style="display:none;">Delete products</button>
-          <button type="button" onclick="clearSelection()">Clear</button>
-        </div>
-      </div>
       <div id="stats" class="muted stats-line"></div>
       <div id="asset-grid" class="grid"></div>
       <div id="product-grid" class="product-grid" style="display:none;"></div>
     </section>
+    <div id="bulk-bar" class="bulk-bar">
+      <div>
+        <strong id="bulk-count">0 selected</strong>
+        <div id="bulk-help" class="muted">Select assets to save or remove them from the library.</div>
+      </div>
+      <div class="bulk-actions">
+        <button id="bulk-save-images" type="button" onclick="downloadSelectedImages()">Save images</button>
+        <button id="bulk-delete-assets" class="bulk-danger" type="button" onclick="deleteSelectedAssets()">Delete assets</button>
+        <button id="bulk-delete-products" class="bulk-danger" type="button" onclick="deleteSelectedProducts()" style="display:none;">Delete products</button>
+        <button type="button" onclick="clearSelection()">Clear</button>
+      </div>
+    </div>
   </main>
   <script>
     let currentView = "assets";
@@ -405,7 +413,6 @@
         const latest = item.latest_run_at ? item.latest_run_at : "No runs yet";
         el.innerHTML = `
           <input class="card-check" type="checkbox" aria-label="Select product" onchange="toggleProductSelection('${escAttr(item.product_id)}', this.checked)" />
-          <div class="product-placeholder">SKU</div>
           <div>
             <div class="product-title">${esc(item.name || item.product_code)}</div>
             <div class="product-code">${esc(item.product_code)}</div>
