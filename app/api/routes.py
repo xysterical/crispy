@@ -31,9 +31,12 @@ from app.templates import templates
 from app.schemas.api import (
     AgentApiConfigPatchRequest,
     AgentApiConfigView,
+    AssetProductItem,
+    AssetProductListResponse,
     AgentTraceEventView,
     ArtifactListItem,
     ArtifactListResponse,
+    BulkIdsRequest,
     DataSourceInfo,
     DataSourceListResponse,
     DataSourceSelectRequest,
@@ -2620,6 +2623,11 @@ def dashboard_page(request: Request) -> str:
     return _dashboard_html(request)
 
 
+@router.get("/dashboard/shops", response_class=HTMLResponse)
+def dashboard_shops_page(request: Request) -> str:
+    return templates.TemplateResponse(request, "shops.html")
+
+
 @router.get("/dashboard/assets", response_class=HTMLResponse)
 def dashboard_assets_page(request: Request) -> str:
     return templates.TemplateResponse(request, "assets.html")
@@ -2775,25 +2783,44 @@ def list_pipeline_modes() -> list[PipelineModeView]:
 # ── Shops & Categories ────────────────────────────────────────────
 
 def _serialize_shop(db: Session, workspace) -> dict:
-    from app.data.models import GmMemory, PipelineRun, Project
+    from app.data.models import GmMemory, PipelineRun, Product, Project
+    from app.services.gm_memory import memory_dirty_reasons
     from app.services.shop_analysis import RESEARCH_SOURCE_TYPES
 
+    project_ids = db.scalars(
+        select(Project.id).where(Project.workspace_id == workspace.id)
+    ).all()
     category_count = db.scalar(
         select(func.count(Project.id)).where(Project.workspace_id == workspace.id)
     ) or 0
+    product_count = 0
+    if project_ids:
+        product_count = db.scalar(
+            select(func.count(Product.id)).where(Product.project_id.in_(project_ids))
+        ) or 0
     run_count = db.scalar(
         select(func.count(PipelineRun.id)).where(PipelineRun.workspace_id == workspace.id)
     ) or 0
-    analysis_rows = db.scalars(
-        select(GmMemory).where(
-            GmMemory.memory_scope == "shop",
-            GmMemory.source_type.in_(RESEARCH_SOURCE_TYPES),
-        )
-    ).all()
-    analysis_count = sum(
-        1 for row in analysis_rows
-        if (row.content or {}).get("shop_id") == workspace.id
-    )
+    memory_rows = []
+    if project_ids:
+        raw_memory_rows = db.scalars(
+            select(GmMemory).where(
+                GmMemory.project_id.in_(project_ids),
+                GmMemory.memory_scope == "shop",
+                GmMemory.status == "active",
+            )
+        ).all()
+        memory_rows = [
+            row for row in raw_memory_rows
+            if (row.content or {}).get("shop_id") in {None, "", workspace.id}
+        ]
+    analysis_rows = [
+        row for row in memory_rows
+        if row.memory_type == "research_intelligence" and row.source_type in RESEARCH_SOURCE_TYPES
+    ]
+    memory_dirty = [(row, memory_dirty_reasons(row)) for row in memory_rows]
+    research_dirty = [(row, dirty) for row, dirty in memory_dirty if row in analysis_rows]
+    memory_conflict_count = sum(1 for row, dirty in memory_dirty if "unresolved_conflicts" in dirty)
     return ShopItem(
         id=workspace.id,
         name=workspace.name,
@@ -2801,8 +2828,15 @@ def _serialize_shop(db: Session, workspace) -> dict:
         store_url=workspace.store_url,
         description=workspace.description,
         category_count=category_count,
+        product_count=product_count,
         run_count=run_count,
-        analysis_count=analysis_count,
+        analysis_count=len(analysis_rows),
+        research_ready_count=sum(1 for row, dirty in research_dirty if not dirty),
+        research_blocked_count=sum(1 for row, dirty in research_dirty if dirty),
+        memory_count=len(memory_rows),
+        memory_safe_count=sum(1 for row, dirty in memory_dirty if not dirty),
+        memory_review_count=sum(1 for row, dirty in memory_dirty if dirty),
+        memory_conflict_count=memory_conflict_count,
         archived_at=workspace.archived_at,
         last_analyzed_at=workspace.last_analyzed_at,
     ).model_dump()
@@ -4204,6 +4238,180 @@ def list_artifacts(
         for row in rows
     ]
     return ArtifactListResponse(page=page, page_size=page_size, total=total, items=items)
+
+
+@router.post("/artifacts/images.zip")
+def download_artifact_images_zip(payload: BulkIdsRequest, db: Session = Depends(get_db)) -> StreamingResponse:
+    ids = [item for item in payload.ids if item]
+    if not ids:
+        raise HTTPException(status_code=400, detail="no artifact ids selected")
+    rows = db.scalars(
+        select(Artifact)
+        .where(Artifact.id.in_(ids))
+        .order_by(desc(Artifact.created_at))
+    ).all()
+    archive = io.BytesIO()
+    exported: list[dict] = []
+    skipped: list[dict] = []
+    with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for row in rows:
+            media_type = mimetypes.guess_type(row.uri)[0] or ""
+            if "image" not in row.artifact_type and not media_type.startswith("image/"):
+                skipped.append({"artifact_id": row.id, "uri": row.uri, "reason": "not_image"})
+                continue
+            try:
+                media_path = _resolve_media_path(row.uri)
+            except HTTPException:
+                skipped.append({"artifact_id": row.id, "uri": row.uri, "reason": "missing_file"})
+                continue
+            suffix = media_path.suffix or ".png"
+            export_name = f"{row.artifact_type}_{row.id}{suffix}".replace("/", "_")
+            zf.write(media_path, export_name)
+            exported.append({"artifact_id": row.id, "file": export_name, "uri": row.uri})
+        zf.writestr(
+            "manifest.json",
+            json.dumps(
+                {"selected_count": len(ids), "exported_count": len(exported), "skipped_count": len(skipped), "exported": exported, "skipped": skipped},
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
+    archive.seek(0)
+    return StreamingResponse(
+        archive,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="selected_asset_images.zip"'},
+    )
+
+
+@router.post("/artifacts/bulk-delete")
+def bulk_delete_artifacts(payload: BulkIdsRequest, db: Session = Depends(get_db)) -> dict:
+    ids = [item for item in payload.ids if item]
+    if not ids:
+        raise HTTPException(status_code=400, detail="no artifact ids selected")
+    rows = db.scalars(select(Artifact).where(Artifact.id.in_(ids))).all()
+    deleted_ids = [row.id for row in rows]
+    for row in rows:
+        db.delete(row)
+    db.commit()
+    return {"requested": len(ids), "deleted": len(deleted_ids), "deleted_ids": deleted_ids, "skipped": len(ids) - len(deleted_ids)}
+
+
+@router.get("/asset-products", response_model=AssetProductListResponse)
+def list_asset_products(
+    q: str | None = Query(default=None),
+    workspace_name: str | None = Query(default=None),
+    project_name: str | None = Query(default=None),
+    product_code: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=24, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> AssetProductListResponse:
+    query = (
+        select(Product, Project.name.label("project_name"), Workspace.name.label("workspace_name"))
+        .join(Project, Project.id == Product.project_id)
+        .join(Workspace, Workspace.id == Project.workspace_id)
+    )
+    if q:
+        pattern = f"%{q.lower()}%"
+        query = query.where(
+            or_(
+                func.lower(Product.name).like(pattern),
+                func.lower(Product.product_code).like(pattern),
+                func.lower(Project.name).like(pattern),
+                func.lower(Workspace.name).like(pattern),
+            )
+        )
+    if workspace_name:
+        query = query.where(Workspace.name == workspace_name)
+    if project_name:
+        query = query.where(Project.name == project_name)
+    if product_code:
+        query = query.where(Product.product_code == product_code)
+
+    total = int(db.scalar(select(func.count()).select_from(query.subquery())) or 0)
+    rows = db.execute(
+        query.order_by(Workspace.name, Project.name, Product.product_code)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+
+    items: list[AssetProductItem] = []
+    for product, project_label, workspace_label in rows:
+        run_count = db.scalar(
+            select(func.count(PipelineRun.id)).where(PipelineRun.product_code == product.product_code)
+        ) or 0
+        asset_count = db.scalar(
+            select(func.count(Artifact.id))
+            .join(PipelineRun, PipelineRun.id == Artifact.run_id)
+            .where(
+                PipelineRun.product_code == product.product_code,
+                Artifact.artifact_type.in_(DEFAULT_GENERATED_ARTIFACT_TYPES),
+            )
+        ) or 0
+        memory_count = db.scalar(
+            select(func.count(GmMemory.id)).where(
+                GmMemory.memory_scope == "product",
+                GmMemory.product_code == product.product_code,
+                GmMemory.status == "active",
+            )
+        ) or 0
+        latest_run_at = db.scalar(
+            select(func.max(PipelineRun.created_at)).where(PipelineRun.product_code == product.product_code)
+        )
+        thumbnail_uri = db.scalar(
+            select(Artifact.uri)
+            .join(PipelineRun, PipelineRun.id == Artifact.run_id)
+            .where(
+                PipelineRun.product_code == product.product_code,
+                Artifact.artifact_type.in_(["generated_image", "copy_image_bundle", "storyboard_frame"]),
+                Artifact.uri.isnot(None),
+            )
+            .order_by(desc(Artifact.created_at))
+            .limit(1)
+        )
+        items.append(
+            AssetProductItem(
+                product_id=product.id,
+                product_code=product.product_code,
+                name=product.name,
+                workspace_name=workspace_label,
+                project_name=project_label,
+                thumbnail_uri=thumbnail_uri,
+                run_count=run_count,
+                asset_count=asset_count,
+                memory_count=memory_count,
+                latest_run_at=latest_run_at,
+                created_at=product.created_at,
+            )
+        )
+    return AssetProductListResponse(page=page, page_size=page_size, total=total, items=items)
+
+
+@router.post("/asset-products/bulk-delete")
+def bulk_delete_asset_products(payload: BulkIdsRequest, db: Session = Depends(get_db)) -> dict:
+    ids = [item for item in payload.ids if item]
+    if not ids:
+        raise HTTPException(status_code=400, detail="no product ids selected")
+    rows = db.scalars(select(Product).where(Product.id.in_(ids))).all()
+    deleted_ids: list[str] = []
+    skipped: list[dict] = []
+    for product in rows:
+        run_count = db.scalar(select(func.count(PipelineRun.id)).where(PipelineRun.product_id == product.id)) or 0
+        campaign_count = db.scalar(select(func.count(Campaign.id)).where(Campaign.product_id == product.id)) or 0
+        if run_count or campaign_count:
+            skipped.append({
+                "product_id": product.id,
+                "product_code": product.product_code,
+                "reason": "has_history",
+                "run_count": run_count,
+                "campaign_count": campaign_count,
+            })
+            continue
+        deleted_ids.append(product.id)
+        db.delete(product)
+    db.commit()
+    return {"requested": len(ids), "deleted": len(deleted_ids), "deleted_ids": deleted_ids, "skipped": skipped}
 
 
 def get_stage_payload(db: Session, run_id: str, stage_name: str) -> dict:

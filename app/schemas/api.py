@@ -393,6 +393,10 @@ class DataSourceSelectRequest(BaseModel):
     url: str
 
 
+class BulkIdsRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+
+
 class ArtifactListItem(BaseModel):
     artifact_id: str
     run_id: str
@@ -411,6 +415,27 @@ class ArtifactListResponse(BaseModel):
     page_size: int
     total: int
     items: list[ArtifactListItem] = Field(default_factory=list)
+
+
+class AssetProductItem(BaseModel):
+    product_id: str
+    product_code: str
+    name: str
+    workspace_name: str
+    project_name: str
+    thumbnail_uri: str | None = None
+    run_count: int = 0
+    asset_count: int = 0
+    memory_count: int = 0
+    latest_run_at: datetime | None = None
+    created_at: datetime
+
+
+class AssetProductListResponse(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    items: list[AssetProductItem] = Field(default_factory=list)
 
 
 class GmMemoryItem(BaseModel):
@@ -752,8 +777,15 @@ class ShopItem(BaseModel):
     store_url: str | None = None
     description: str | None = None
     category_count: int = 0
+    product_count: int = 0
     run_count: int = 0
     analysis_count: int = 0
+    research_ready_count: int = 0
+    research_blocked_count: int = 0
+    memory_count: int = 0
+    memory_safe_count: int = 0
+    memory_review_count: int = 0
+    memory_conflict_count: int = 0
     archived_at: datetime | None = None
     last_analyzed_at: datetime | None = None
 

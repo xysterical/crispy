@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import zipfile
 from pathlib import Path
 
 from sqlalchemy import create_engine
@@ -35,6 +36,7 @@ def _patch_valid_generated_images(monkeypatch):
 def test_dashboard_pages_share_global_rail(client):
     pages = {
         "/dashboard": "/dashboard",
+        "/dashboard/shops": "/dashboard/shops",
         "/dashboard/data": "/dashboard/data",
         "/dashboard/research": "/dashboard/research",
         "/dashboard/calendar": "/dashboard/calendar",
@@ -49,6 +51,16 @@ def test_dashboard_pages_share_global_rail(client):
         assert 'class="global-rail"' in resp.text
         assert f'class="rail-link active" href="{active_href}"' in resp.text
         assert "Back to Dashboard" not in resp.text
+
+
+def test_dashboard_data_source_selector_is_database_labeled(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "data-source-select" in html
+    data_source_block = html[html.index('<div class="data-source-block">'):html.index('<div class="table-wrap">')]
+    assert "Database</label>" in data_source_block
+    assert "Shop</label>" not in data_source_block
 
 
 def test_media_view_has_exit_controls(client):
@@ -156,6 +168,188 @@ def test_artifacts_endpoint_filters_generated_outputs(client, monkeypatch):
     by_code_items = by_code_resp.json()["items"]
     assert len(by_code_items) > 0
     assert all(item["product_code"] == "DL-TEST-001" for item in by_code_items)
+
+
+def test_asset_products_endpoint_lists_skus_without_assets(client, db_session):
+    from app.data.models import Artifact, Product, Project, Workspace
+
+    workspace = Workspace(name="asset-products-shop", industry_code="general")
+    db_session.add(workspace)
+    db_session.flush()
+    project = Project(workspace_id=workspace.id, name="catalog")
+    db_session.add(project)
+    db_session.flush()
+    product = Product(project_id=project.id, name="No Thumbnail Product", product_code="SKU-NO-ASSET")
+    db_session.add(product)
+    db_session.commit()
+
+    resp = client.get("/asset-products", params={"q": "SKU-NO-ASSET"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    item = body["items"][0]
+    assert item["product_code"] == "SKU-NO-ASSET"
+    assert item["name"] == "No Thumbnail Product"
+    assert item["workspace_name"] == "asset-products-shop"
+    assert item["project_name"] == "catalog"
+    assert item["run_count"] == 0
+    assert item["asset_count"] == 0
+    assert item["thumbnail_uri"] is None
+
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "asset-thumb-shop",
+            "project_name": "asset-thumb-project",
+            "product_name": "Thumbnail Product",
+            "product_code": "SKU-WITH-THUMB",
+            "industry_code": "general",
+            "campaign_name": "asset-thumb-campaign",
+            "creative_preset": "meta_square_5s",
+            "pipeline_mode": "copy_image_only",
+            "business_context": {"target_audience": "operators"},
+        },
+    )
+    assert create_resp.status_code == 200
+    thumb_path = Path("assets/product_thumb.png")
+    thumb_path.parent.mkdir(parents=True, exist_ok=True)
+    thumb_path.write_bytes(b"fake image bytes")
+    db_session.add(
+        Artifact(
+            run_id=create_resp.json()["id"],
+            stage_name="copy_image_generation",
+            artifact_type="generated_image",
+            uri=str(thumb_path),
+            payload={"summary": "thumbnail"},
+        )
+    )
+    db_session.commit()
+
+    thumb_resp = client.get("/asset-products", params={"product_code": "SKU-WITH-THUMB"})
+
+    assert thumb_resp.status_code == 200
+    thumb_item = thumb_resp.json()["items"][0]
+    assert thumb_item["thumbnail_uri"] == str(thumb_path)
+
+
+def test_asset_bulk_image_zip_and_delete(client, db_session):
+    from app.data.models import Artifact
+
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "asset-bulk-shop",
+            "project_name": "asset-bulk-project",
+            "product_name": "bulk product",
+            "product_code": "BULK-ASSET-001",
+            "industry_code": "general",
+            "campaign_name": "asset-bulk-campaign",
+            "creative_preset": "meta_square_5s",
+            "pipeline_mode": "copy_image_only",
+            "business_context": {"target_audience": "operators"},
+        },
+    )
+    assert create_resp.status_code == 200
+    run_id = create_resp.json()["id"]
+    media_path = Path("assets/bulk_selected_image.png")
+    media_path.parent.mkdir(parents=True, exist_ok=True)
+    media_path.write_bytes(b"fake image bytes")
+    artifact = Artifact(
+        run_id=run_id,
+        stage_name="copy_image_generation",
+        artifact_type="generated_image",
+        uri=str(media_path),
+        payload={"summary": "bulk image"},
+    )
+    db_session.add(artifact)
+    db_session.commit()
+    artifact_id = artifact.id
+
+    zip_resp = client.post("/artifacts/images.zip", json={"ids": [artifact_id]})
+
+    assert zip_resp.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(zip_resp.content)) as zf:
+        assert "manifest.json" in zf.namelist()
+        assert any(name.endswith(".png") for name in zf.namelist())
+
+    delete_resp = client.post("/artifacts/bulk-delete", json={"ids": [artifact_id]})
+
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["deleted"] == 1
+    db_session.expire_all()
+    assert db_session.get(Artifact, artifact_id) is None
+
+
+def test_asset_products_bulk_delete_skips_products_with_history(client, db_session):
+    from sqlalchemy import select
+
+    from app.data.models import Product
+
+    deletable = client.post(
+        "/runs",
+        json={
+            "workspace_name": "asset-product-delete-shop",
+            "project_name": "asset-product-delete-project",
+            "product_name": "kept product",
+            "product_code": "PRODUCT-WITH-HISTORY",
+            "industry_code": "general",
+            "campaign_name": "asset-product-delete-campaign",
+            "creative_preset": "meta_square_5s",
+            "pipeline_mode": "copy_image_only",
+            "business_context": {"target_audience": "operators"},
+        },
+    )
+    assert deletable.status_code == 200
+    protected_product = db_session.scalar(
+        select(Product).where(Product.product_code == "PRODUCT-WITH-HISTORY")
+    )
+    assert protected_product is not None
+    protected_product_id = protected_product.id
+    workspace_name = protected_product.project.workspace.name
+    empty_product = Product(
+        project_id=protected_product.project_id,
+        name="Empty SKU",
+        product_code="PRODUCT-NO-HISTORY",
+    )
+    db_session.add(empty_product)
+    db_session.commit()
+    empty_product_id = empty_product.id
+
+    resp = client.post(
+        "/asset-products/bulk-delete",
+        json={"ids": [protected_product_id, empty_product_id]},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["deleted"] == 1
+    assert body["deleted_ids"] == [empty_product_id]
+    assert body["skipped"][0]["product_code"] == "PRODUCT-WITH-HISTORY"
+    db_session.expire_all()
+    assert db_session.get(Product, empty_product_id) is None
+    assert db_session.get(Product, protected_product_id) is not None
+    assert workspace_name == "asset-product-delete-shop"
+
+
+def test_assets_page_has_product_view(client):
+    resp = client.get("/dashboard/assets")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "Products</button>" in html
+    assert "product-grid" in html
+    assert "/asset-products?" in html
+    assert "No products match current filters." in html
+    assert "bulk-bar" in html
+    assert "asset-filter-card" in html
+    assert "position: sticky" in html
+    assert "position: fixed" in html
+    assert "filter-compact-head" in html
+    assert "syncFilterCompactState" in html
+    assert "product-thumb" in html
+    assert "downloadSelectedImages" in html
+    assert "deleteSelectedProducts" in html
+    assert "product-placeholder" not in html
 
 
 def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):

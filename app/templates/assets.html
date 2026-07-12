@@ -22,7 +22,7 @@
       radial-gradient(circle at 90% -20%, #e0e7ff 0%, transparent 42%),
       linear-gradient(180deg, var(--bg-alt), var(--bg) 30%);
   }
-  .app-shell { width: min(1380px, calc(100% - 24px)); margin: 22px auto 30px auto; }
+  .app-shell { width: min(1380px, calc(100% - 24px)); margin: 22px auto 72px auto; }
   .card {
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -34,23 +34,130 @@
   }
   h1 { margin: 0; font-size: 27px; letter-spacing: -0.02em; line-height: 1.2; }
   .subtitle { margin-top: 6px; color: var(--muted); font-size: 14px; }
-  .filters { display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr; gap:10px; align-items:end; }
+  .asset-filter-card {
+    position: sticky;
+    top: 10px;
+    z-index: 8;
+    padding: 12px;
+    border-radius: 12px;
+  }
+  .filter-compact-head { display:none; align-items:center; justify-content:space-between; gap:10px; }
+  .filter-summary { display:flex; gap:8px; flex-wrap:wrap; align-items:center; min-width:0; color:var(--muted); font-size:12px; }
+  .filter-summary strong { color:var(--text); font-size:13px; }
+  .asset-filter-card.is-compact { padding: 8px 10px; }
+  .asset-filter-card.is-compact .filter-compact-head { display:flex; }
+  .asset-filter-card.is-compact .filter-body { display:none; }
+  .filters { display:grid; grid-template-columns: minmax(220px, 2fr) repeat(5, minmax(120px, 1fr)); gap:8px; align-items:end; }
   .filters-bottom {
     display:flex;
-    gap:10px;
+    gap:8px;
     align-items:end;
-    margin-top:10px;
+    margin-top:8px;
     flex-wrap: wrap;
   }
+  .filters label { font-size: 12px; }
+  .filters input, .filters select, .filters-bottom input { padding: 7px 9px; border-radius: 8px; font-size: 12px; }
+  .filters-bottom button { min-height: 32px; padding: 7px 10px; border-radius: 8px; font-size: 12px; }
+  .view-tabs { display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
+  .view-tab {
+    min-width: 112px;
+    border-radius: 999px;
+    background: #fff;
+  }
+  .view-tab.active {
+    border-color: var(--accent);
+    background: #ecfdf5;
+    color: #047857;
+  }
   .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:12px; }
+  .product-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:12px; }
   .asset-card {
     border:1px solid #e2e8f0;
     border-radius:12px;
     padding:10px;
     background:#fff;
     box-shadow: 0 4px 14px rgba(32, 75, 57, 0.04);
+    position: relative;
   }
   .asset-card:hover { transform: translateY(-1px); transition: transform 160ms ease; }
+  .product-card {
+    border:1px solid #e2e8f0;
+    border-radius:12px;
+    padding:14px;
+    background:#fff;
+    box-shadow: 0 4px 14px rgba(32, 75, 57, 0.04);
+    display:grid;
+    gap:10px;
+    min-height: 168px;
+    position: relative;
+  }
+  .card-check {
+    position:absolute;
+    top:10px;
+    right:10px;
+    width:18px;
+    height:18px;
+    accent-color: var(--accent);
+  }
+  .bulk-bar {
+    display:none;
+    position: fixed;
+    left: max(72px, calc((100vw - min(1380px, calc(100vw - 24px))) / 2));
+    right: 12px;
+    bottom: 14px;
+    z-index: 40;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    max-width: 980px;
+    margin: 0 auto;
+    padding:12px 14px;
+    border:1px solid #c9ddd1;
+    border-radius:14px;
+    background:rgba(247, 252, 248, 0.96);
+    box-shadow:0 14px 40px rgba(15, 23, 42, 0.18);
+    backdrop-filter: blur(10px);
+  }
+  .bulk-bar.active { display:flex; }
+  .bulk-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+  .bulk-danger { color:#b91c1c; border-color:#fecaca; background:#fff7f7; }
+  .product-title { font-size:15px; font-weight:750; line-height:1.25; }
+  .product-thumb {
+    width:100%;
+    height:118px;
+    border-radius:10px;
+    border:1px solid #e2e8f0;
+    background:#f8fafc;
+    object-fit:cover;
+    display:block;
+  }
+  .product-no-thumb {
+    padding:8px 10px;
+    border:1px dashed #c8dacd;
+    border-radius:10px;
+    background:#f8fcfa;
+    color:var(--muted);
+    font-size:12px;
+  }
+  .product-code { margin-top:4px; color:#047857; font-family:var(--mono); font-size:12px; overflow-wrap:anywhere; }
+  .product-meta { display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:8px; }
+  .product-metric { border:1px solid #e2e8f0; border-radius:10px; padding:8px; background:#f8fafc; }
+  .product-metric strong { display:block; font-size:16px; line-height:1; }
+  .product-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:auto; }
+  .product-actions a, .product-actions button {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    min-height:30px;
+    padding:7px 9px;
+    border:1px solid #e2e8f0;
+    border-radius:10px;
+    background:#f8fafc;
+    color:#1e293b;
+    font-size:12px;
+    font-weight:650;
+    text-decoration:none;
+  }
   input, select {
     width: 100%;
     padding: 9px 10px;
@@ -139,12 +246,14 @@
     background: #f8fcfa;
   }
   @media (max-width: 1040px) {
-    .filters { grid-template-columns: 1fr 1fr; }
+    .filters { grid-template-columns: 1fr 1fr 1fr; }
+    .bulk-bar { left: 70px; }
   }
   @media (max-width: 860px) {
     .app-shell { width: calc(100% - 12px); margin-top: 10px; }
-    .filters { grid-template-columns: 1fr; }
+    .filters { grid-template-columns: 1fr 1fr; }
     .toolbar { flex-direction: column; align-items: flex-start; }
+    .bulk-bar { left: 8px; right: 8px; flex-direction: column; align-items: stretch; }
   }
 {% endblock %}
 {% block body %}
@@ -155,69 +264,97 @@
     <div class="toolbar">
       <div>
         <h1>Asset Library</h1>
-        <div class="subtitle">Browse generated outputs across runs, modes, and channels.</div>
+        <div class="subtitle">Browse generated outputs or use the SKU view as a temporary product page.</div>
+        <div class="view-tabs" aria-label="Asset library view">
+          <button class="view-tab active" id="tab-assets" type="button" onclick="switchView('assets')">Assets</button>
+          <button class="view-tab" id="tab-products" type="button" onclick="switchView('products')">Products</button>
+        </div>
       </div>
     </div>
-    <section class="card">
-      <div class="filters">
-        <div><label>Search</label><input id="q" placeholder="run id / copy text / filename" /></div>
-        <div>
-          <label>Type</label>
-          <select id="artifact_types">
-            <option value="">All generated</option>
-            <option value="generated_image">generated_image</option>
-            <option value="copy_image_bundle">copy_image_bundle</option>
-            <option value="video_script_pack">video_script_pack</option>
-            <option value="storyboard_pack">storyboard_pack</option>
-            <option value="generated_video">generated_video</option>
-            <option value="video_bundle">video_bundle</option>
-            <option value="visual_quality_report">visual_quality_report</option>
-            <option value="evaluation_selection">evaluation_selection</option>
-          </select>
-        </div>
-      <div>
-        <label>Pipeline Mode</label>
-        <select id="pipeline_mode">
-          <option value="">All</option>
-          <option value="copy_image_only">copy_image_only</option>
-          <option value="dtc_site_image">dtc_site_image</option>
-          <option value="video_only">video_only</option>
-          <option value="full_multimodal">full_multimodal</option>
-        </select>
+    <section class="card asset-filter-card">
+      <div class="filter-compact-head">
+        <div id="filter-summary" class="filter-summary"><strong>Filters</strong><span>All generated</span></div>
+        <button type="button" onclick="expandFilters()">Open filters</button>
       </div>
-      <div><label>Product Code</label><input id="product_code" placeholder="DL-001" /></div>
-      <div>
-        <label>Sort By</label>
-        <select id="sort_by">
-          <option value="created_at">created_at</option>
-          <option value="score">score</option>
-          </select>
-        </div>
+      <div class="filter-body">
+        <div class="filters">
+          <div><label>Search</label><input id="q" placeholder="run id / copy text / filename" oninput="updateFilterSummary()" /></div>
+          <div>
+            <label>Type</label>
+            <select id="artifact_types" onchange="updateFilterSummary()">
+              <option value="">All generated</option>
+              <option value="generated_image">generated_image</option>
+              <option value="copy_image_bundle">copy_image_bundle</option>
+              <option value="video_script_pack">video_script_pack</option>
+              <option value="storyboard_pack">storyboard_pack</option>
+              <option value="generated_video">generated_video</option>
+              <option value="video_bundle">video_bundle</option>
+              <option value="visual_quality_report">visual_quality_report</option>
+              <option value="evaluation_selection">evaluation_selection</option>
+            </select>
+          </div>
         <div>
-          <label>Order</label>
-          <select id="sort_order">
-            <option value="desc">desc</option>
-            <option value="asc">asc</option>
+          <label>Pipeline Mode</label>
+          <select id="pipeline_mode" onchange="updateFilterSummary()">
+            <option value="">All</option>
+            <option value="copy_image_only">copy_image_only</option>
+            <option value="dtc_site_image">dtc_site_image</option>
+            <option value="video_only">video_only</option>
+            <option value="full_multimodal">full_multimodal</option>
           </select>
         </div>
-      </div>
-      <div class="filters-bottom">
-        <div><label>Date From</label><input id="date_from" type="date" /></div>
-        <div><label>Date To</label><input id="date_to" type="date" /></div>
-        <div><button onclick="refreshAssets()">Apply</button></div>
-        <div><button onclick="prevPage()">Prev</button> <button onclick="nextPage()">Next</button></div>
+        <div><label>Product Code</label><input id="product_code" placeholder="DL-001" oninput="updateFilterSummary()" /></div>
+        <div>
+          <label>Sort By</label>
+          <select id="sort_by" onchange="updateFilterSummary()">
+            <option value="created_at">created_at</option>
+            <option value="score">score</option>
+            </select>
+          </div>
+          <div>
+            <label>Order</label>
+            <select id="sort_order" onchange="updateFilterSummary()">
+              <option value="desc">desc</option>
+              <option value="asc">asc</option>
+            </select>
+          </div>
+        </div>
+        <div class="filters-bottom">
+          <div><label>Date From</label><input id="date_from" type="date" onchange="updateFilterSummary()" /></div>
+          <div><label>Date To</label><input id="date_to" type="date" onchange="updateFilterSummary()" /></div>
+          <div><button onclick="refreshAssets()">Apply</button></div>
+          <div><button onclick="prevPage()">Prev</button> <button onclick="nextPage()">Next</button></div>
+        </div>
       </div>
     </section>
     <section class="card">
       <div id="stats" class="muted stats-line"></div>
       <div id="asset-grid" class="grid"></div>
+      <div id="product-grid" class="product-grid" style="display:none;"></div>
     </section>
+    <div id="bulk-bar" class="bulk-bar">
+      <div>
+        <strong id="bulk-count">0 selected</strong>
+        <div id="bulk-help" class="muted">Select assets to save or remove them from the library.</div>
+      </div>
+      <div class="bulk-actions">
+        <button id="bulk-save-images" type="button" onclick="downloadSelectedImages()">Save images</button>
+        <button id="bulk-delete-assets" class="bulk-danger" type="button" onclick="deleteSelectedAssets()">Delete assets</button>
+        <button id="bulk-delete-products" class="bulk-danger" type="button" onclick="deleteSelectedProducts()" style="display:none;">Delete products</button>
+        <button type="button" onclick="clearSelection()">Clear</button>
+      </div>
+    </div>
   </main>
   <script>
+    let currentView = "assets";
     let page = 1;
     let pageSize = 20;
     let total = 0;
+    let filtersManuallyExpanded = false;
+    const selectedAssets = new Set();
+    const selectedProducts = new Set();
     function esc(v){ return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
+    function escAttr(v){ return esc(v).replaceAll('"',"&quot;").replaceAll("'","&#39;");}
     function mediaUrl(path){ return `/media?path=${encodeURIComponent(path || "")}`; }
     function mediaViewUrl(path){ return `/media/view?path=${encodeURIComponent(path || "")}`; }
     function queryString(params){
@@ -229,6 +366,10 @@
       return q.toString();
     }
     async function refreshAssets() {
+      if (currentView === "products") {
+        await refreshProducts();
+        return;
+      }
       const params = {
         q: document.getElementById("q").value,
         artifact_types: document.getElementById("artifact_types").value,
@@ -248,6 +389,8 @@
       document.getElementById("stats").textContent = `total=${data.total}, page=${data.page}, page_size=${data.page_size}`;
       const grid = document.getElementById("asset-grid");
       grid.innerHTML = "";
+      selectedAssets.clear();
+      updateBulkBar();
       if (!data.items.length) {
         grid.innerHTML = '<div class="empty">No assets match current filters.</div>';
         return;
@@ -263,6 +406,7 @@
             ? `<a href="${mediaViewUrl(item.uri)}" target="_blank" class="muted">Open video</a><video controls playsinline class="media-preview video" src="${mediaUrl(item.uri)}"></video>`
             : `<div class="muted">No direct preview.</div>`;
         el.innerHTML = `
+          <input class="card-check" type="checkbox" aria-label="Select asset" onchange="toggleAssetSelection('${escAttr(item.artifact_id)}', this.checked)" />
           <div><span class="pill">${esc(item.artifact_type)}</span><span class="pill">${esc(item.pipeline_mode)}</span><span class="pill">${esc(item.product_code || "-")}</span></div>
           <div class="muted">run: <a href="/dashboard#run=${esc(item.run_id)}">${esc(item.run_id)}</a></div>
           ${media}
@@ -273,8 +417,177 @@
         grid.appendChild(el);
       });
     }
+    async function refreshProducts() {
+      const params = {
+        q: document.getElementById("q").value,
+        product_code: document.getElementById("product_code").value,
+        page,
+        page_size: 24,
+      };
+      const resp = await fetch(`/asset-products?${queryString(params)}`);
+      if (!resp.ok) throw new Error(await resp.text());
+      const data = await resp.json();
+      total = data.total;
+      document.getElementById("stats").textContent = `products=${data.total}, page=${data.page}, page_size=${data.page_size}`;
+      const grid = document.getElementById("product-grid");
+      grid.innerHTML = "";
+      selectedProducts.clear();
+      updateBulkBar();
+      if (!data.items.length) {
+        grid.innerHTML = '<div class="empty">No products match current filters.</div>';
+        return;
+      }
+      data.items.forEach((item) => {
+        const el = document.createElement("article");
+        el.className = "product-card";
+        const latest = item.latest_run_at ? item.latest_run_at : "No runs yet";
+        const thumb = item.thumbnail_uri
+          ? `<a href="${mediaViewUrl(item.thumbnail_uri)}" target="_blank"><img class="product-thumb" src="${mediaUrl(item.thumbnail_uri)}" alt="${escAttr(item.name || item.product_code)}"/></a>`
+          : `<div class="product-no-thumb">No generated image yet</div>`;
+        el.innerHTML = `
+          <input class="card-check" type="checkbox" aria-label="Select product" onchange="toggleProductSelection('${escAttr(item.product_id)}', this.checked)" />
+          ${thumb}
+          <div>
+            <div class="product-title">${esc(item.name || item.product_code)}</div>
+            <div class="product-code">${esc(item.product_code)}</div>
+            <div class="muted">${esc(item.workspace_name)} / ${esc(item.project_name)}</div>
+          </div>
+          <div class="product-meta">
+            <div class="product-metric"><strong>${esc(item.run_count || 0)}</strong><span class="muted">Runs</span></div>
+            <div class="product-metric"><strong>${esc(item.asset_count || 0)}</strong><span class="muted">Assets</span></div>
+            <div class="product-metric"><strong>${esc(item.memory_count || 0)}</strong><span class="muted">Memory</span></div>
+          </div>
+          <div class="muted">latest: ${esc(latest)}</div>
+          <div class="product-actions">
+            <button type="button" onclick="showProductAssets('${escAttr(item.product_code)}')">View assets</button>
+            <a href="/dashboard?shop=${encodeURIComponent(item.workspace_name)}">Create Run</a>
+            <a href="/dashboard/data?shop=${encodeURIComponent(item.workspace_name)}">Data</a>
+          </div>
+        `;
+        grid.appendChild(el);
+      });
+    }
+    function switchView(view) {
+      currentView = view;
+      page = 1;
+      clearSelection();
+      document.getElementById("tab-assets").classList.toggle("active", view === "assets");
+      document.getElementById("tab-products").classList.toggle("active", view === "products");
+      document.getElementById("asset-grid").style.display = view === "assets" ? "" : "none";
+      document.getElementById("product-grid").style.display = view === "products" ? "" : "none";
+      document.getElementById("artifact_types").disabled = view === "products";
+      document.getElementById("pipeline_mode").disabled = view === "products";
+      document.getElementById("sort_by").disabled = view === "products";
+      document.getElementById("sort_order").disabled = view === "products";
+      document.getElementById("date_from").disabled = view === "products";
+      document.getElementById("date_to").disabled = view === "products";
+      refreshAssets();
+    }
+    function updateFilterSummary() {
+      const parts = [];
+      const q = document.getElementById("q").value.trim();
+      const type = document.getElementById("artifact_types").value || "All generated";
+      const mode = document.getElementById("pipeline_mode").value;
+      const code = document.getElementById("product_code").value.trim();
+      if (q) parts.push(`search: ${q}`);
+      parts.push(type);
+      if (mode) parts.push(mode);
+      if (code) parts.push(`SKU: ${code}`);
+      document.getElementById("filter-summary").innerHTML = `<strong>Filters</strong><span>${esc(parts.join(" · "))}</span>`;
+    }
+    function expandFilters() {
+      filtersManuallyExpanded = true;
+      document.querySelector(".asset-filter-card").classList.remove("is-compact");
+    }
+    function syncFilterCompactState() {
+      const card = document.querySelector(".asset-filter-card");
+      if (!card) return;
+      if (window.scrollY < 80) {
+        filtersManuallyExpanded = false;
+        card.classList.remove("is-compact");
+        return;
+      }
+      card.classList.toggle("is-compact", !filtersManuallyExpanded);
+    }
+    function toggleAssetSelection(id, checked) {
+      if (checked) selectedAssets.add(id);
+      else selectedAssets.delete(id);
+      updateBulkBar();
+    }
+    function toggleProductSelection(id, checked) {
+      if (checked) selectedProducts.add(id);
+      else selectedProducts.delete(id);
+      updateBulkBar();
+    }
+    function clearSelection() {
+      selectedAssets.clear();
+      selectedProducts.clear();
+      document.querySelectorAll(".card-check").forEach((el) => { el.checked = false; });
+      updateBulkBar();
+    }
+    function updateBulkBar() {
+      const count = currentView === "products" ? selectedProducts.size : selectedAssets.size;
+      document.getElementById("bulk-bar").classList.toggle("active", count > 0);
+      document.getElementById("bulk-count").textContent = `${count} selected`;
+      document.getElementById("bulk-help").textContent = currentView === "products"
+        ? "Selected SKUs can be removed only when they have no run or campaign history."
+        : "Selected assets can be saved as image zip or removed from the library.";
+      document.getElementById("bulk-save-images").style.display = currentView === "assets" ? "" : "none";
+      document.getElementById("bulk-delete-assets").style.display = currentView === "assets" ? "" : "none";
+      document.getElementById("bulk-delete-products").style.display = currentView === "products" ? "" : "none";
+    }
+    async function postJson(path, body) {
+      const resp = await fetch(path, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      return resp;
+    }
+    async function downloadSelectedImages() {
+      const ids = [...selectedAssets];
+      if (!ids.length) return;
+      const resp = await postJson("/artifacts/images.zip", {ids});
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "selected_asset_images.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+    async function deleteSelectedAssets() {
+      const ids = [...selectedAssets];
+      if (!ids.length) return;
+      if (!confirm(`Delete ${ids.length} selected assets from the library? Files on disk are kept.`)) return;
+      const resp = await postJson("/artifacts/bulk-delete", {ids});
+      const result = await resp.json();
+      clearSelection();
+      await refreshAssets();
+      document.getElementById("stats").textContent += ` | deleted=${result.deleted || 0}, skipped=${result.skipped || 0}`;
+    }
+    async function deleteSelectedProducts() {
+      const ids = [...selectedProducts];
+      if (!ids.length) return;
+      if (!confirm(`Delete ${ids.length} selected products? Products with run or campaign history will be skipped.`)) return;
+      const resp = await postJson("/asset-products/bulk-delete", {ids});
+      const result = await resp.json();
+      clearSelection();
+      await refreshProducts();
+      document.getElementById("stats").textContent += ` | deleted=${result.deleted || 0}, skipped=${(result.skipped || []).length}`;
+    }
+    function showProductAssets(productCode) {
+      document.getElementById("product_code").value = productCode;
+      switchView("assets");
+    }
+    function currentPageSize(){ return currentView === "products" ? 24 : pageSize; }
     function prevPage(){ if (page > 1) { page -= 1; refreshAssets(); } }
-    function nextPage(){ if ((page * pageSize) < total) { page += 1; refreshAssets(); } }
+    function nextPage(){ if ((page * currentPageSize()) < total) { page += 1; refreshAssets(); } }
+    window.addEventListener("scroll", syncFilterCompactState, { passive: true });
+    updateFilterSummary();
     refreshAssets();
   </script>
 </body>

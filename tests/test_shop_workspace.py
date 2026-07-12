@@ -9,6 +9,15 @@ def test_list_shops_returns_array(client):
     body = resp.json()
     assert "shops" in body
     assert isinstance(body["shops"], list)
+    assert {
+        "product_count",
+        "research_ready_count",
+        "research_blocked_count",
+        "memory_count",
+        "memory_safe_count",
+        "memory_review_count",
+        "memory_conflict_count",
+    }.issubset(body["shops"][0].keys())
 
 
 def test_list_categories_for_unknown_shop(client):
@@ -41,6 +50,26 @@ def test_create_run_form_has_shop_labels(client):
     assert "category-list" in html
     # Shop is now a <select> (managed list), not a free-text datalist
     assert '<select id="workspace_name"' in html
+
+
+def test_shop_management_page_renders_workflow_layout(client):
+    resp = client.get("/dashboard/shops")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "Shops" in html
+    assert "Create Shop" in html
+    assert "Shop workflow help" in html
+    assert "shop-list" in html
+    assert "shops-list-tools" in html
+    assert "create-shop-toggle" in html
+    assert "setCreateCollapsed(shops.length > 0)" in html
+    assert "renderShopWorkspace" in html
+    assert "displayShopName" in html
+    assert "summary-grid" in html
+    assert "Research Context" in html
+    assert "Memory Health" in html
+    assert "workflow-card" not in html
+    assert 'href="/dashboard/shops"' in html
 
 
 def test_shop_crud_lifecycle(client):
@@ -104,15 +133,12 @@ def test_cannot_delete_last_shop(client):
         assert resp.status_code == 409
 
 
-def test_shop_management_panel_on_page(client):
-    """Verify Shop Management panel renders on shop-analysis page."""
+def test_shop_analysis_links_to_shop_management_page(client):
+    """Verify research keeps shop selection but sends management to the Shops page."""
     resp = client.get("/dashboard/shop-analysis")
     assert resp.status_code == 200
     html = resp.text
-    assert "Shops" in html
-    assert "shop-list-mgmt" in html
-    assert "addShop" in html
-    assert "shop-sort-key" in html
-    assert "toggleShopSortDirection" in html
-    assert "data-action=\"select-shop\"" in html
+    assert "Manage Shops" in html
+    assert "/dashboard/shops" in html
+    assert "shop-list-mgmt" not in html
     assert 'Archive shop ""' not in html

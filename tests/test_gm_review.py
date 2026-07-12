@@ -210,6 +210,7 @@ def test_gm_review_page_and_dashboard_link_load(client):
     assert "Export Markdown" in html
     assert "reviewMemory" in html
     assert "Resolve conflicts" in html
+    assert 'params.get("shop")' in html
 
 
 def test_gm_review_research_memory_actions_affect_planning(client, db_session):

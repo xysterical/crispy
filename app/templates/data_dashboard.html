@@ -149,7 +149,7 @@
     <div class="app-body">
     <aside class="sidebar">
       <div class="card">
-        <div style="margin-bottom:8px;"><label>Workspace</label><select id="ws-select" onchange="onWorkspaceChange()"></select></div>
+        <div style="margin-bottom:8px;"><label>Shop</label><select id="ws-select" onchange="onWorkspaceChange()"></select></div>
         <div style="margin-bottom:8px;"><label>Project</label><select id="proj-select" onchange="onProjectChange()"></select></div>
       </div>
       <div class="card">
@@ -241,7 +241,15 @@
       const data=await api("/shops?limit=50");
       workspaces=(data.shops||data.items||[]);
       const sel=document.getElementById("ws-select");
-      sel.innerHTML='<option value="">Select workspace</option>'+workspaces.map(w=>`<option value="${esc(w.name)}">${esc(w.name)}</option>`).join("");
+      sel.innerHTML='<option value="">Select shop</option>'+workspaces.map(w=>`<option value="${esc(w.name)}">${esc(w.name)}</option>`).join("");
+      const requestedShop = new URLSearchParams(window.location.search).get("shop");
+      if(requestedShop && workspaces.some(w=>w.name===requestedShop)) {
+        sel.value=requestedShop;
+        await onWorkspaceChange();
+      } else if(workspaces[0]) {
+        sel.value=workspaces[0].name;
+        await onWorkspaceChange();
+      }
     }
     async function onWorkspaceChange(){
       currentWs=document.getElementById("ws-select").value;

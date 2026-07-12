@@ -1061,7 +1061,10 @@ CREATE_RUN_JS = """
                 '<option value="' + s.name.replace(/"/g, '&quot;') + '" data-industry="' + (s.industry_code || 'general') + '">' + s.name.replace(/</g, '&lt;') + '</option>'
               ).join("");
               if (allShops.length > 0) {
-                sel.value = allShops[0].name;
+                const requestedShop = new URLSearchParams(window.location.search).get("shop");
+                sel.value = requestedShop && allShops.some(s => s.name === requestedShop)
+                  ? requestedShop
+                  : allShops[0].name;
                 onShopChange();
               }
             } catch (err) {
