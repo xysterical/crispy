@@ -310,6 +310,9 @@ CREATE_RUN_HTML = """
                       <option value="autonomous_web">Run autonomous web research</option>
                     </select>
                     <div id="research-hint" class="hint muted"></div>
+                    <div id="research-context-card" class="hint" style="margin-top:8px;padding:10px;border:1px solid #dbe4ee;border-radius:8px;background:#f8fafc;">
+                      Research context: loading current shop memory...
+                    </div>
                     <label>Validated Research Notes (optional)</label>
                     <textarea id="manual_research_brief" rows="3" placeholder="Paste your manually validated market notes..."></textarea>
                     <label>Reference URLs (one per line)</label>

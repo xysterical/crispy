@@ -117,6 +117,7 @@ class RunView(BaseModel):
     status_explanation: RunStatusExplanation
     latest_scorecard: ScoreCard | None = None
     latest_forecast: ConversionForecast | None = None
+    research_context: dict = Field(default_factory=dict)
 
 
 class RunSummary(BaseModel):

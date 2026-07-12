@@ -796,7 +796,7 @@ def _gm_memory_priority(row: GmMemory) -> tuple[int, int, float, float]:
     )
 
 
-def _gm_memory_trace_payload(gm_lessons: list[dict]) -> dict:
+def _gm_memory_trace_payload(gm_lessons: list[dict], research_context: dict | None = None) -> dict:
     references = []
     for item in gm_lessons[:5]:
         content = item.get("content") or {}
@@ -814,6 +814,8 @@ def _gm_memory_trace_payload(gm_lessons: list[dict]) -> dict:
     return {
         "memory_count": len(gm_lessons),
         "references": references,
+        "research_context": research_context or {},
+        "excluded_research": (research_context or {}).get("excluded", [])[:10],
         "influence": "included in planning gm_lessons prompt context",
     }
 
@@ -931,8 +933,21 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
     }
     payload = base
     if task.stage_name == "planning":
+        from app.services.research_context import build_research_context
+
         gm_lessons = _recent_gm_lessons(db, run) + _analytics_insights(db, run)
-        payload = {**base, "intake": _stage_output_optional(db, run.id, "intake"), "gm_lessons": gm_lessons}
+        research_context = build_research_context(
+            db,
+            project_id=run.project_id,
+            shop_id=run.workspace_id,
+            industry_code=run.industry_code,
+        )
+        payload = {
+            **base,
+            "intake": _stage_output_optional(db, run.id, "intake"),
+            "gm_lessons": gm_lessons,
+            "research_context": research_context,
+        }
     elif task.stage_name == "divergence":
         payload = {**base, "planning": _stage_output_optional(db, run.id, "planning")}
     elif task.stage_name == "copy_image_generation":
@@ -1740,12 +1755,13 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 message=f"Planning applied {len(gm_lessons)} GM memory entries.",
                 provider_name=provider_name,
                 model_name=model_name,
-                payload=_gm_memory_trace_payload(gm_lessons),
+                payload=_gm_memory_trace_payload(gm_lessons, task.input_payload.get("research_context") or {}),
             )
             output = runtime.run_planning(
                 run.id,
                 intake,
                 gm_lessons=gm_lessons,
+                research_context=task.input_payload.get("research_context") or {},
                 gm_policy=task.input_payload.get("gm_policy", {}),
                 creative_specs=task.input_payload.get("creative_specs", {}),
                 enable_research=bool(task.input_payload.get("enable_research")),

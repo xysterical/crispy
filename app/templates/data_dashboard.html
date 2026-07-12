@@ -325,6 +325,7 @@
           <div class="kpi-card"><div class="kpi-value">${data.overall_roas?.toFixed(2)||"0.00"}x</div><div class="kpi-label">ROAS</div></div>
           <div class="kpi-card"><div class="kpi-value">${data.overall_ctr?.toFixed(2)||"0.00"}%</div><div class="kpi-label">CTR</div></div>
           <div class="kpi-card"><div class="kpi-value">${data.product_count||0}</div><div class="kpi-label">Products</div></div>
+          <div class="kpi-card"><div class="kpi-value">${data.research_context?.summary?.included_count||0}/${data.research_context?.summary?.candidate_count||0}</div><div class="kpi-label">Research Context</div></div>
         `;
         const trend=data.daily_trend||[];
         renderChart("revenue","revenue-chart",{type:"line",data:{labels:trend.map(t=>t.date),datasets:[{label:"Revenue",data:trend.map(t=>t.revenue),borderColor:"#059669",backgroundColor:"rgba(31,122,98,0.08)",fill:true,tension:0.3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});

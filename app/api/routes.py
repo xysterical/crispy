@@ -451,6 +451,15 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
         for event in run_trace_events(db, run.id, limit=200)
     ]
 
+    from app.services.research_context import build_research_context
+
+    research_context = build_research_context(
+        db,
+        project_id=run.project_id,
+        shop_id=run.workspace_id,
+        industry_code=run.industry_code,
+    )
+
     return RunView(
         id=run.id,
         status=run.status,
@@ -483,6 +492,7 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
         status_explanation=_run_status_explanation(run, tasks),
         latest_scorecard=scorecard,
         latest_forecast=forecast,
+        research_context=research_context,
     )
 
 
@@ -2325,6 +2335,7 @@ def _dashboard_shared_js() -> str:
                 <div style="margin-top:8px;"><button onclick="refreshAsyncAssets('${run.id}')">Refresh async assets</button></div>
               </div>
               ${renderStatusExplanation(run)}
+              ${renderResearchContext(run.research_context || {})}
               ${renderReviewChecklist(run)}
               ${renderExecutionMemory(executionMemory)}
               ${renderDeliverables(deliverables)}
@@ -2335,6 +2346,22 @@ def _dashboard_shared_js() -> str:
               ${renderTimeline(run)}
               ${scoreSection}
             `;
+          }
+
+          function renderResearchContext(ctx){
+            const summary = ctx.summary || {};
+            const included = ctx.included || [];
+            const excluded = ctx.excluded || [];
+            const sourceCounts = Object.entries(summary.source_counts || {}).map(([k,v]) => `${esc(k)}=${esc(v)}`).join(" · ") || "none";
+            const excludedReasons = (ctx.planning_guidance?.excluded_reasons || []).join(", ") || "none";
+            return `<section class="run-panel" style="margin-top:10px;">
+              <h3 style="margin:0 0 6px;">Research Context</h3>
+              <div class="muted">Included=${esc(summary.included_count || 0)} · Excluded=${esc(summary.excluded_count || 0)} · Evidence=${esc(summary.evidence_count || 0)} · Avg quality=${esc(summary.average_quality || 0)}</div>
+              <div class="muted">Types: ${sourceCounts}</div>
+              <div class="muted">Excluded reasons: ${esc(excludedReasons)}</div>
+              ${included.length ? `<div class="muted">Used: ${included.slice(0,3).map(item => esc(item.source_type + ": " + (item.summary || "").slice(0,80))).join("<br>")}</div>` : ""}
+              ${excluded.length ? `<div class="muted">Held for review: ${excluded.slice(0,3).map(item => esc(item.source_type + " (" + (item.dirty_reasons || []).join(", ") + ")")).join("<br>")}</div>` : ""}
+            </section>`;
           }
 
           async function selectRun(runId){
@@ -2390,6 +2417,23 @@ def _dashboard_shared_js() -> str:
               hint.textContent = "Autonomous web research will run in planning and may be slower due to online fetches.";
             } else {
               hint.textContent = "Planning will rely on your manual notes and uploaded assets only (recommended for fast debugging).";
+            }
+            refreshResearchContextCard();
+          }
+
+          async function refreshResearchContextCard(){
+            const card = document.getElementById("research-context-card");
+            if (!card) return;
+            const workspace = document.getElementById("workspace_name")?.value || "workspace_demo";
+            const project = document.getElementById("project_name")?.value || "shop_analysis";
+            try {
+              const ctx = await api(`/research-context?workspace_name=${encodeURIComponent(workspace)}&project_name=${encodeURIComponent(project)}`);
+              const summary = ctx.summary || {};
+              const sourceCounts = Object.entries(summary.source_counts || {}).map(([k,v]) => `${esc(k)}=${esc(v)}`).join(" · ") || "none";
+              const excludedReasons = (ctx.planning_guidance?.excluded_reasons || []).join(", ") || "none";
+              card.innerHTML = `<b>Research context</b>: ${summary.ready_for_planning ? "ready" : "not ready"} · included=${esc(summary.included_count || 0)} · excluded=${esc(summary.excluded_count || 0)} · avg quality=${esc(summary.average_quality || 0)}<br><span class="muted">types: ${sourceCounts} · excluded reasons: ${esc(excludedReasons)}</span>`;
+            } catch (err) {
+              card.textContent = "Research context unavailable for this workspace/project.";
             }
           }
 
@@ -2924,6 +2968,37 @@ def shop_analysis_preflight(db: Session = Depends(get_db)) -> dict:
     has_external_research = tool_status["tavily"]["available"] or tool_status["firecrawl"]["available"]
     severity = "ok" if has_llm and has_external_research else "warn" if has_llm else "error"
     return {"ok": has_llm, "severity": severity, "checks": checks}
+
+
+@router.get("/research-context")
+def research_context(
+    workspace_name: str = Query(default="workspace_demo"),
+    project_name: str = Query(default="shop_analysis"),
+    shop_id: str | None = Query(default=None),
+    industry_code: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.research_context import build_research_context
+    from app.services.shop_analysis import _get_or_create_workspace_project
+
+    if shop_id:
+        shop = _get_shop_by_id_or_name(db, shop_id)
+        if not shop:
+            raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+        _, project = _get_or_create_workspace_project(db, shop.name, project_name or "shop_analysis")
+        return build_research_context(
+            db,
+            project_id=project.id,
+            shop_id=shop.id,
+            industry_code=industry_code or shop.industry_code,
+        )
+    workspace, project = _get_or_create_workspace_project(db, workspace_name, project_name)
+    return build_research_context(
+        db,
+        project_id=project.id,
+        shop_id=workspace.id,
+        industry_code=industry_code or workspace.industry_code,
+    )
 
 
 @router.post("/shop-analysis/run", response_model=ShopAnalysisResponse)
@@ -4807,6 +4882,7 @@ def data_dashboard_summary(
     total_clicks = sum(int((s.metrics or {}).get("clicks", 0)) for s in recent_snapshots)
 
     import os
+    from app.services.research_context import build_research_context
 
     return {
         "workspace_name": workspace_name,
@@ -4839,6 +4915,12 @@ def data_dashboard_summary(
             "shopify_last_sync_at": workspace.shopify_last_sync_at.isoformat() if workspace.shopify_last_sync_at else None,
             "meta_last_sync_at": workspace.meta_last_sync_at.isoformat() if workspace.meta_last_sync_at else None,
         },
+        "research_context": build_research_context(
+            db,
+            project_id=project.id,
+            shop_id=workspace.id,
+            industry_code=workspace.industry_code,
+        ),
         "daily_trend": _daily_revenue_trend(recent_snapshots),
     }
 

@@ -109,6 +109,7 @@
         </div>
       </div>
       <div id="gm-msg" class="status-msg muted" style="min-height:18px;margin-top:10px;"></div>
+      <div id="research-review-context" class="muted" style="margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#f8fafc;">Research review context: select a project.</div>
     </section>
 
     <section class="card" style="margin-bottom:16px;">
@@ -292,6 +293,7 @@
     }
     function onProjectChange() {
       loadMemories();
+      loadResearchReviewContext();
     }
     function currentProject() {
       const name = document.getElementById("gm-project").value;
@@ -411,12 +413,31 @@
       setMemoryMsg("Loading memories...");
       try {
         const scoped = await api("/gm-memory?" + memoryQuery(project));
+        await loadResearchReviewContext();
         document.getElementById("memory-list").innerHTML = scoped.length
           ? scoped.map(renderMemory).join("")
           : '<div class="empty">No memories match these filters.</div>';
         setMemoryMsg(`${scoped.length} memories loaded.`, "ok");
       } catch (err) {
         setMemoryMsg("Failed to load memories: " + err.message, "error");
+      }
+    }
+    async function loadResearchReviewContext() {
+      const project = currentProject();
+      const workspace = currentWorkspace();
+      const el = document.getElementById("research-review-context");
+      if (!project || !workspace) {
+        el.textContent = "Research review context: select a workspace and project.";
+        return;
+      }
+      try {
+        const ctx = await api(`/research-context?workspace_name=${encodeURIComponent(workspace.name)}&project_name=${encodeURIComponent(project.name)}`);
+        const summary = ctx.summary || {};
+        const reasons = (ctx.planning_guidance?.excluded_reasons || []).join(", ") || "none";
+        const sourceCounts = Object.entries(summary.source_counts || {}).map(([k,v]) => `${esc(k)}=${esc(v)}`).join(" · ") || "none";
+        el.innerHTML = `<b>Research review context</b>: ready=${summary.ready_for_planning ? "yes" : "no"} · included=${esc(summary.included_count || 0)} · held=${esc(summary.excluded_count || 0)} · avg quality=${esc(summary.average_quality || 0)}<br>Types: ${sourceCounts}<br>Held reasons: ${esc(reasons)}`;
+      } catch (err) {
+        el.textContent = "Research review context unavailable.";
       }
     }
     async function updateMemory(id, payload) {

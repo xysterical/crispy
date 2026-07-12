@@ -2038,6 +2038,7 @@ class AgentsRuntime:
         intake: ProductIntake,
         *,
         gm_lessons: list[dict],
+        research_context: dict | None = None,
         gm_policy: dict | None = None,
         creative_specs: dict | None = None,
         enable_research: bool,
@@ -2047,6 +2048,7 @@ class AgentsRuntime:
     ) -> StageOutput:
         mode = "online_research_enabled" if enable_research else "manual_research_only"
         gm_policy = gm_policy or {}
+        research_context = research_context or {}
         creative_specs = creative_specs or {}
         policy_excerpt = gm_policy.get("stage_guidance") or {}
         surface_strategy = self._dtc_site_surface_strategy(creative_specs)
@@ -2055,7 +2057,9 @@ class AgentsRuntime:
             agent_role="Planning Agent",
             task_instruction=(
                 f"Build planning brief in {mode}. intake={intake.model_dump()} "
-                f"gm_lessons={gm_lessons[:3]}. gm_policy={policy_excerpt}. dtc_surface_strategy={surface_strategy}. Return concise strategy, constraints, hypotheses, risk boundaries, "
+                f"gm_lessons={gm_lessons[:3]}. research_context={research_context}. "
+                f"Use only included research_context entries; treat excluded_research as unavailable unless pinned/reviewed. "
+                f"gm_policy={policy_excerpt}. dtc_surface_strategy={surface_strategy}. Return concise strategy, constraints, hypotheses, risk boundaries, "
                 "creative director plan, scene arc, reference strategy, segment continuity plan, quality gates, and reviewer decision questions."
             ),
         )

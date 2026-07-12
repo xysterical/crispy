@@ -18,6 +18,16 @@ def test_research_page_loads(client):
     assert "/dashboard/gm-review" in html
 
 
+def test_research_adaptation_surfaces_render(client):
+    create_page = client.get("/dashboard").text
+    assert "research-context-card" in create_page
+    agent_page = client.get("/dashboard/agent-apis").text
+    assert "Research Intelligence Tool Needs" in agent_page
+    assert "Audience Pain Points" in agent_page
+    gm_page = client.get("/dashboard/gm-review").text
+    assert "research-review-context" in gm_page
+
+
 def test_legacy_shop_analysis_page_loads(client):
     resp = client.get("/dashboard/shop-analysis")
     assert resp.status_code == 200
@@ -784,6 +794,84 @@ def test_expired_research_memory_is_excluded_from_planning_unless_pinned(client,
     db_session.flush()
     task_input = _build_task_input(db_session, run, planning_task)
     assert expired.id in {item["id"] for item in task_input["gm_lessons"]}
+
+
+def test_research_context_api_and_planning_input_classify_included_and_excluded(client, db_session):
+    from datetime import UTC, datetime, timedelta
+
+    from app.data.models import GmMemory, Workspace
+    from app.schemas.api import RunCreateRequest
+    from app.services.runs import _build_task_input, create_run
+
+    shop = Workspace(name="research-context-shop", industry_code="pet_accessories")
+    db_session.add(shop)
+    db_session.flush()
+    run = create_run(
+        db_session,
+        RunCreateRequest(
+            workspace_name="research-context-shop",
+            project_name="research-context-project",
+            product_name="utility leash",
+            product_code="CTX-RESEARCH",
+            industry_code="pet_accessories",
+            campaign_name="research-context-campaign",
+            creative_preset="custom",
+            creative_specs={"image_size": "1:1", "video_size": "1:1", "resolution": "720p", "video_duration_seconds": 5},
+        ),
+    )
+    included = GmMemory(
+        project_id=run.project_id,
+        memory_scope="shop",
+        industry_code="pet_accessories",
+        source_type="audience_pain_points",
+        memory_type="research_intelligence",
+        content={
+            "shop_id": shop.id,
+            "summary": "Audience wants stronger utility proof.",
+            "findings": {"pain_points": ["Need proof."]},
+            "evidence": [{"source": "tavily", "url": "https://reviews.example", "summary": "Review evidence.", "status": "ok", "quality_score": 0.8}],
+            "evidence_quality": {"aggregate_score": 0.8, "quality_tier": "high"},
+            "research_status": "complete",
+            "expires_at": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
+            "confidence": 0.8,
+        },
+    )
+    excluded = GmMemory(
+        project_id=run.project_id,
+        memory_scope="shop",
+        industry_code="pet_accessories",
+        source_type="compliance_scan",
+        memory_type="research_intelligence",
+        content={
+            "shop_id": shop.id,
+            "summary": "Expired compliance scan.",
+            "findings": {"flagged_terms": ["guarantee"]},
+            "evidence": [{"source": "tavily", "url": "https://policy.example", "summary": "Policy evidence.", "status": "ok", "quality_score": 0.8}],
+            "evidence_quality": {"aggregate_score": 0.8, "quality_tier": "high"},
+            "research_status": "complete",
+            "expires_at": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
+            "confidence": 0.8,
+        },
+    )
+    db_session.add_all([included, excluded])
+    db_session.commit()
+
+    ctx_resp = client.get("/research-context", params={"workspace_name": shop.name, "project_name": "research-context-project"})
+    assert ctx_resp.status_code == 200
+    ctx = ctx_resp.json()
+    assert ctx["summary"]["included_count"] == 1
+    assert ctx["summary"]["excluded_count"] == 1
+    assert ctx["included"][0]["source_type"] == "audience_pain_points"
+    assert "expired_research" in ctx["excluded"][0]["dirty_reasons"]
+
+    planning_task = next(task for task in run.stage_tasks if task.stage_name == "planning")
+    task_input = _build_task_input(db_session, run, planning_task)
+    assert task_input["research_context"]["summary"]["included_count"] == 1
+    assert task_input["research_context"]["summary"]["excluded_count"] == 1
+
+    dashboard = client.get("/data-dashboard/summary", params={"workspace_name": shop.name, "project_name": "research-context-project"})
+    assert dashboard.status_code == 200
+    assert dashboard.json()["research_context"]["summary"]["included_count"] == 1
 
 
 def test_due_research_refreshes_are_queued_and_deduped(client, db_session):
