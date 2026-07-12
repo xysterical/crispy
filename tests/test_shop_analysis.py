@@ -26,6 +26,8 @@ def test_research_adaptation_surfaces_render(client):
     assert "Audience Pain Points" in agent_page
     gm_page = client.get("/dashboard/gm-review").text
     assert "research-review-context" in gm_page
+    data_page = client.get("/dashboard/data").text
+    assert "Research Context" in data_page
 
 
 def test_legacy_shop_analysis_page_loads(client):
@@ -618,7 +620,7 @@ def test_focused_compliance_research_uses_policy_sources(client, db_session, mon
 
 def test_create_run_planning_input_includes_shop_memory(client, db_session):
     from app.data.models import GmMemory, Workspace
-    from app.services.runs import _build_task_input, create_run
+    from app.services.runs import _build_task_input, _gm_memory_trace_payload, create_run
     from app.schemas.api import RunCreateRequest
 
     shop = Workspace(
@@ -801,7 +803,7 @@ def test_research_context_api_and_planning_input_classify_included_and_excluded(
 
     from app.data.models import GmMemory, Workspace
     from app.schemas.api import RunCreateRequest
-    from app.services.runs import _build_task_input, create_run
+    from app.services.runs import _build_task_input, _gm_memory_trace_payload, create_run
 
     shop = Workspace(name="research-context-shop", industry_code="pet_accessories")
     db_session.add(shop)
@@ -872,6 +874,13 @@ def test_research_context_api_and_planning_input_classify_included_and_excluded(
     dashboard = client.get("/data-dashboard/summary", params={"workspace_name": shop.name, "project_name": "research-context-project"})
     assert dashboard.status_code == 200
     assert dashboard.json()["research_context"]["summary"]["included_count"] == 1
+
+    run_view = client.get(f"/runs/{run.id}")
+    assert run_view.status_code == 200
+    assert run_view.json()["research_context"]["summary"]["included_count"] == 1
+    trace_payload = _gm_memory_trace_payload(task_input["gm_lessons"], task_input["research_context"])
+    assert trace_payload["research_context"]["summary"]["included_count"] == 1
+    assert trace_payload["excluded_research"][0]["source_type"] == "compliance_scan"
 
 
 def test_due_research_refreshes_are_queued_and_deduped(client, db_session):
