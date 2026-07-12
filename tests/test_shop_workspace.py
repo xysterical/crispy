@@ -9,6 +9,15 @@ def test_list_shops_returns_array(client):
     body = resp.json()
     assert "shops" in body
     assert isinstance(body["shops"], list)
+    assert {
+        "product_count",
+        "research_ready_count",
+        "research_blocked_count",
+        "memory_count",
+        "memory_safe_count",
+        "memory_review_count",
+        "memory_conflict_count",
+    }.issubset(body["shops"][0].keys())
 
 
 def test_list_categories_for_unknown_shop(client):
@@ -56,6 +65,9 @@ def test_shop_management_page_renders_workflow_layout(client):
     assert "setCreateCollapsed(shops.length > 0)" in html
     assert "renderShopWorkspace" in html
     assert "displayShopName" in html
+    assert "summary-grid" in html
+    assert "Research Context" in html
+    assert "Memory Health" in html
     assert "workflow-card" not in html
     assert 'href="/dashboard/shops"' in html
 

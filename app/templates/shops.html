@@ -49,6 +49,24 @@
   .metric-label { color: var(--muted); font-size: 11px; font-weight: 740; text-transform: uppercase; letter-spacing: 0.04em; }
   .metric-value { margin-top: 4px; font-size: 22px; line-height: 1; font-weight: 820; font-variant-numeric: tabular-nums; }
   .metric-note { margin-top: 4px; color: var(--muted); font-size: 11px; }
+  .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .summary-card { border: 1px solid var(--line); border-radius: var(--radius); background: #fff; padding: 14px; display: grid; gap: 12px; min-height: 178px; }
+  .summary-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .summary-title { font-size: 14px; font-weight: 800; color: var(--text); }
+  .summary-kicker { margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.35; }
+  .summary-value { font-size: 24px; line-height: 1; font-weight: 840; font-variant-numeric: tabular-nums; }
+  .summary-rows { display: grid; gap: 7px; }
+  .summary-row { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; }
+  .summary-row strong { color: var(--text-secondary); font-weight: 760; font-variant-numeric: tabular-nums; }
+  .summary-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: auto; }
+  .summary-actions a { display: inline-flex; min-height: 30px; align-items: center; justify-content: center; padding: 7px 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--gray-50); color: var(--text); font-size: 12px; font-weight: 720; text-decoration: none; }
+  .summary-actions a:hover { background: #fff; text-decoration: none; }
+  .status-dot { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 760; white-space: nowrap; }
+  .status-dot::before { content: ""; width: 7px; height: 7px; border-radius: 999px; background: var(--muted); }
+  .status-dot.ok { color: var(--accent-dark); }
+  .status-dot.ok::before { background: var(--accent); }
+  .status-dot.warn { color: #9a6700; }
+  .status-dot.warn::before { background: #d97706; }
   .workflow-list { display: grid; gap: 8px; }
   .workflow-item { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 9px; align-items: start; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--gray-50); }
   .workflow-index { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 999px; background: var(--green-50); color: var(--accent-dark); font-size: 12px; font-weight: 800; }
@@ -67,7 +85,7 @@
   .archived-toggle { display: inline-flex; align-items: center; gap: 6px; margin: 0 6px 0 0; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
   .archived-toggle input { width: auto; }
   @media (max-width: 980px) {
-    .shops-layout, .shop-detail-top, .shop-edit-grid { grid-template-columns: 1fr; }
+    .shops-layout, .shop-detail-top, .shop-edit-grid, .summary-grid { grid-template-columns: 1fr; }
     .shops-sidebar { position: static; }
     .shops-list { max-height: 380px; }
   }
@@ -284,6 +302,48 @@
         + metricBox("Runs", shop.run_count, "Creative pipelines")
         + metricBox("Research", shop.analysis_count, "Memory inputs")
         + '</div></section>'
+        + '<section class="summary-grid" aria-label="Shop context summaries">'
+        + summaryCard(
+          "Products",
+          summaryStatus(Number(shop.product_count || 0) > 0, "Catalog ready", "No products"),
+          Number(shop.product_count || 0),
+          "Products tracked for this shop.",
+          [
+            ["Categories", Number(shop.category_count || 0)],
+            ["Creative runs", Number(shop.run_count || 0)]
+          ],
+          [
+            ["Create Run", "/dashboard?shop=" + encodeURIComponent(shop.name)],
+            ["View Data", "/dashboard/data?shop=" + encodeURIComponent(shop.name)]
+          ]
+        )
+        + summaryCard(
+          "Research Context",
+          summaryStatus(Number(shop.research_ready_count || 0) > 0, "Ready", "Needs research"),
+          Number(shop.analysis_count || 0),
+          "Evidence-backed background available to planning.",
+          [
+            ["Ready", Number(shop.research_ready_count || 0)],
+            ["Needs review", Number(shop.research_blocked_count || 0)]
+          ],
+          [
+            ["Run Research", "/dashboard/research?shop_id=" + encodeURIComponent(shop.id || "")]
+          ]
+        )
+        + summaryCard(
+          "Memory Health",
+          summaryStatus(Number(shop.memory_review_count || 0) === 0 && Number(shop.memory_count || 0) > 0, "Clean", Number(shop.memory_count || 0) ? "Review needed" : "No memory"),
+          Number(shop.memory_safe_count || 0) + "/" + Number(shop.memory_count || 0),
+          "Strategy-safe memory stays governed in GM Review.",
+          [
+            ["Needs review", Number(shop.memory_review_count || 0)],
+            ["Conflicts", Number(shop.memory_conflict_count || 0)]
+          ],
+          [
+            ["Open GM Review", "/dashboard/gm-review?shop=" + encodeURIComponent(shop.name)]
+          ]
+        )
+        + '</section>'
         + '<section class="card shop-edit-card"><h2>Shop Details</h2>'
         + '<div class="shop-edit-grid">'
         + '<div><label>Name</label><input id="edit-shop-name" value="' + escAttr(shop.name) + '" /></div>'
@@ -299,6 +359,22 @@
 
     function metricBox(label, value, note) {
       return '<div class="metric-box"><div class="metric-label">' + escHtml(label) + '</div><div class="metric-value">' + Number(value || 0) + '</div><div class="metric-note">' + escHtml(note) + '</div></div>';
+    }
+
+    function summaryStatus(ok, okLabel, warnLabel) {
+      return { tone: ok ? "ok" : "warn", label: ok ? okLabel : warnLabel };
+    }
+
+    function summaryCard(title, status, value, copy, rows, actions) {
+      const rowHtml = rows.map(row => '<div class="summary-row"><span>' + escHtml(row[0]) + '</span><strong>' + escHtml(row[1]) + '</strong></div>').join("");
+      const actionHtml = actions.map(action => '<a href="' + escAttr(action[1]) + '">' + escHtml(action[0]) + '</a>').join("");
+      return '<article class="summary-card">'
+        + '<div class="summary-head"><div><div class="summary-title">' + escHtml(title) + '</div><div class="summary-kicker">' + escHtml(copy) + '</div></div>'
+        + '<span class="status-dot ' + escAttr(status.tone) + '">' + escHtml(status.label) + '</span></div>'
+        + '<div class="summary-value">' + escHtml(value) + '</div>'
+        + '<div class="summary-rows">' + rowHtml + '</div>'
+        + '<div class="summary-actions">' + actionHtml + '</div>'
+        + '</article>';
     }
 
     function setCreateCollapsed(collapsed) {

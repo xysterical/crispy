@@ -2780,25 +2780,44 @@ def list_pipeline_modes() -> list[PipelineModeView]:
 # ── Shops & Categories ────────────────────────────────────────────
 
 def _serialize_shop(db: Session, workspace) -> dict:
-    from app.data.models import GmMemory, PipelineRun, Project
+    from app.data.models import GmMemory, PipelineRun, Product, Project
+    from app.services.gm_memory import memory_dirty_reasons
     from app.services.shop_analysis import RESEARCH_SOURCE_TYPES
 
+    project_ids = db.scalars(
+        select(Project.id).where(Project.workspace_id == workspace.id)
+    ).all()
     category_count = db.scalar(
         select(func.count(Project.id)).where(Project.workspace_id == workspace.id)
     ) or 0
+    product_count = 0
+    if project_ids:
+        product_count = db.scalar(
+            select(func.count(Product.id)).where(Product.project_id.in_(project_ids))
+        ) or 0
     run_count = db.scalar(
         select(func.count(PipelineRun.id)).where(PipelineRun.workspace_id == workspace.id)
     ) or 0
-    analysis_rows = db.scalars(
-        select(GmMemory).where(
-            GmMemory.memory_scope == "shop",
-            GmMemory.source_type.in_(RESEARCH_SOURCE_TYPES),
-        )
-    ).all()
-    analysis_count = sum(
-        1 for row in analysis_rows
-        if (row.content or {}).get("shop_id") == workspace.id
-    )
+    memory_rows = []
+    if project_ids:
+        raw_memory_rows = db.scalars(
+            select(GmMemory).where(
+                GmMemory.project_id.in_(project_ids),
+                GmMemory.memory_scope == "shop",
+                GmMemory.status == "active",
+            )
+        ).all()
+        memory_rows = [
+            row for row in raw_memory_rows
+            if (row.content or {}).get("shop_id") in {None, "", workspace.id}
+        ]
+    analysis_rows = [
+        row for row in memory_rows
+        if row.memory_type == "research_intelligence" and row.source_type in RESEARCH_SOURCE_TYPES
+    ]
+    memory_dirty = [(row, memory_dirty_reasons(row)) for row in memory_rows]
+    research_dirty = [(row, dirty) for row, dirty in memory_dirty if row in analysis_rows]
+    memory_conflict_count = sum(1 for row, dirty in memory_dirty if "unresolved_conflicts" in dirty)
     return ShopItem(
         id=workspace.id,
         name=workspace.name,
@@ -2806,8 +2825,15 @@ def _serialize_shop(db: Session, workspace) -> dict:
         store_url=workspace.store_url,
         description=workspace.description,
         category_count=category_count,
+        product_count=product_count,
         run_count=run_count,
-        analysis_count=analysis_count,
+        analysis_count=len(analysis_rows),
+        research_ready_count=sum(1 for row, dirty in research_dirty if not dirty),
+        research_blocked_count=sum(1 for row, dirty in research_dirty if dirty),
+        memory_count=len(memory_rows),
+        memory_safe_count=sum(1 for row, dirty in memory_dirty if not dirty),
+        memory_review_count=sum(1 for row, dirty in memory_dirty if dirty),
+        memory_conflict_count=memory_conflict_count,
         archived_at=workspace.archived_at,
         last_analyzed_at=workspace.last_analyzed_at,
     ).model_dump()

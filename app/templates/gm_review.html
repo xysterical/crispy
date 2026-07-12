@@ -275,6 +275,17 @@
       gmWorkspaces = data.shops || data.items || [];
       const sel = document.getElementById("gm-ws");
       sel.innerHTML = '<option value="">Select shop</option>' + gmWorkspaces.map((item) => `<option value="${esc(item.name)}">${esc(item.name)}</option>`).join("");
+      const params = new URLSearchParams(window.location.search);
+      const requestedShop = params.get("shop") || params.get("workspace_name") || "";
+      if (requestedShop && gmWorkspaces.some((item) => item.name === requestedShop)) {
+        sel.value = requestedShop;
+        await onWorkspaceChange();
+        const requestedProject = params.get("project_name") || "";
+        if (requestedProject && gmProjects.some((item) => item.name === requestedProject)) {
+          document.getElementById("gm-project").value = requestedProject;
+          onProjectChange();
+        }
+      }
     }
     async function onWorkspaceChange() {
       const ws = document.getElementById("gm-ws").value;

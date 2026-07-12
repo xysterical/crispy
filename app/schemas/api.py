@@ -752,8 +752,15 @@ class ShopItem(BaseModel):
     store_url: str | None = None
     description: str | None = None
     category_count: int = 0
+    product_count: int = 0
     run_count: int = 0
     analysis_count: int = 0
+    research_ready_count: int = 0
+    research_blocked_count: int = 0
+    memory_count: int = 0
+    memory_safe_count: int = 0
+    memory_review_count: int = 0
+    memory_conflict_count: int = 0
     archived_at: datetime | None = None
     last_analyzed_at: datetime | None = None
 
