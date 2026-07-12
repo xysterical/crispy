@@ -62,7 +62,7 @@
     <section class="card" style="margin-bottom:16px;">
       <div class="filter-grid">
         <div>
-          <label>Workspace</label>
+          <label>Shop</label>
           <select id="gm-ws" onchange="onWorkspaceChange()"><option value="">Loading...</option></select>
         </div>
         <div>
@@ -175,7 +175,7 @@
         </div>
       </div>
       <div id="memory-msg" class="muted" style="min-height:18px;margin-bottom:10px;"></div>
-      <div id="memory-list" class="memory-list"><div class="empty">Select workspace and project to load memory.</div></div>
+      <div id="memory-list" class="memory-list"><div class="empty">Select shop and project to load memory.</div></div>
     </section>
 
     <section class="card" style="margin-bottom:16px;">
@@ -274,7 +274,7 @@
       const data = await api("/shops?limit=50");
       gmWorkspaces = data.shops || data.items || [];
       const sel = document.getElementById("gm-ws");
-      sel.innerHTML = '<option value="">Select workspace</option>' + gmWorkspaces.map((item) => `<option value="${esc(item.name)}">${esc(item.name)}</option>`).join("");
+      sel.innerHTML = '<option value="">Select shop</option>' + gmWorkspaces.map((item) => `<option value="${esc(item.name)}">${esc(item.name)}</option>`).join("");
     }
     async function onWorkspaceChange() {
       const ws = document.getElementById("gm-ws").value;
@@ -407,7 +407,7 @@
     async function loadMemories() {
       const project = currentProject();
       if (!project) {
-        document.getElementById("memory-list").innerHTML = '<div class="empty">Select workspace and project to load memory.</div>';
+        document.getElementById("memory-list").innerHTML = '<div class="empty">Select shop and project to load memory.</div>';
         return;
       }
       setMemoryMsg("Loading memories...");
@@ -427,7 +427,7 @@
       const workspace = currentWorkspace();
       const el = document.getElementById("research-review-context");
       if (!project || !workspace) {
-        el.textContent = "Research review context: select a workspace and project.";
+        el.textContent = "Research review context: select a shop and project.";
         return;
       }
       try {
@@ -466,7 +466,7 @@
     async function compactMemory() {
       const project = currentProject();
       if (!project) {
-        setMemoryMsg("Select workspace and project first.", "error");
+        setMemoryMsg("Select shop and project first.", "error");
         return;
       }
       const scope = document.getElementById("mem-scope").value;
@@ -580,7 +580,7 @@
       const ws = document.getElementById("gm-ws").value;
       const project = document.getElementById("gm-project").value;
       if (!ws || !project) {
-        setMsg("Select workspace and project first.", "error");
+        setMsg("Select shop and project first.", "error");
         return;
       }
       setMsg("Generating review...");
@@ -596,7 +596,7 @@
       const ws = document.getElementById("gm-ws").value;
       const project = document.getElementById("gm-project").value;
       if (!ws || !project) {
-        setMsg("Select workspace and project first.", "error");
+        setMsg("Select shop and project first.", "error");
         return;
       }
       window.location.href = "/gm-review/report.md?" + queryString();

@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+{% block title %}Crispy Shops{% endblock %}
+{% block styles %}
+  {{ super() }}
+  .shops-shell { max-width: 1320px; }
+  .shops-header { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 16px; }
+  .shops-kicker { color: var(--accent-dark); font-size: 12px; font-weight: 750; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+  .shops-layout { display: grid; grid-template-columns: minmax(280px, 380px) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .shops-sidebar { display: grid; gap: 12px; position: sticky; top: 16px; }
+  .shops-create-card { padding: 16px; }
+  .shops-list-card { padding: 0; overflow: hidden; }
+  .shops-list-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); background: #fff; }
+  .shops-list-title { font-size: 14px; font-weight: 760; }
+  .shops-list-tools { display: flex; gap: 6px; align-items: center; }
+  .shops-list-tools select, .shops-list-tools button { width: auto; min-width: 0; padding: 6px 8px; font-size: 12px; }
+  .shops-list { max-height: calc(100vh - 280px); min-height: 320px; overflow: auto; background: #fff; }
+  .shop-list-item { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--line-light); border-radius: 0; text-align: left; background: #fff; }
+  .shop-list-item:hover { background: var(--gray-50); }
+  .shop-list-item.active { background: var(--green-50); box-shadow: inset 3px 0 0 var(--accent); }
+  .shop-list-name { font-size: 14px; font-weight: 760; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .shop-list-meta { margin-top: 2px; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .shop-count-stack { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+  .shop-count-chip { min-width: 34px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--text-secondary); font-size: 11px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
+  .shops-workspace { display: grid; gap: 16px; }
+  .shop-detail-top { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(240px, 0.8fr); gap: 14px; align-items: stretch; }
+  .shop-profile-card { min-height: 220px; }
+  .shop-profile-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
+  .shop-profile-title { font-size: 22px; font-weight: 820; letter-spacing: -0.02em; line-height: 1.2; }
+  .shop-profile-url { margin-top: 4px; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+  .shop-profile-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .shop-profile-actions button, .shop-profile-actions a { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 8px 11px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fff; color: var(--text); font-size: 12px; font-weight: 700; text-decoration: none; }
+  .shop-profile-actions a:hover { background: var(--gray-50); text-decoration: none; }
+  .shop-profile-actions .primary-link { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .shop-profile-actions .primary-link:hover { background: var(--accent-dark); color: #fff; }
+  .metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+  .metric-box { border: 1px solid var(--line); border-radius: var(--radius); background: var(--gray-50); padding: 11px; min-height: 74px; }
+  .metric-label { color: var(--muted); font-size: 11px; font-weight: 740; text-transform: uppercase; letter-spacing: 0.04em; }
+  .metric-value { margin-top: 4px; font-size: 22px; line-height: 1; font-weight: 820; font-variant-numeric: tabular-nums; }
+  .metric-note { margin-top: 4px; color: var(--muted); font-size: 11px; }
+  .workflow-card { background: #fff; }
+  .workflow-list { display: grid; gap: 8px; }
+  .workflow-item { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 9px; align-items: start; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--gray-50); }
+  .workflow-index { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 999px; background: var(--green-50); color: var(--accent-dark); font-size: 12px; font-weight: 800; }
+  .workflow-title { font-weight: 760; font-size: 13px; }
+  .workflow-copy { margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 1.35; }
+  .shop-edit-card { display: grid; gap: 12px; }
+  .shop-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .shop-edit-grid .full { grid-column: 1 / -1; }
+  .shop-edit-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .danger-text { color: var(--danger); }
+  .shop-status-line { min-height: 18px; color: var(--muted); font-size: 12px; font-weight: 650; }
+  .shop-status-line.ok { color: var(--accent-dark); }
+  .shop-status-line.error { color: var(--danger); }
+  .empty-shop-state { min-height: 420px; display: grid; place-items: center; text-align: center; color: var(--muted); }
+  .empty-shop-state strong { display: block; color: var(--text); font-size: 16px; margin-bottom: 4px; }
+  .archived-toggle { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--muted); font-size: 12px; font-weight: 650; }
+  .archived-toggle input { width: auto; }
+  @media (max-width: 980px) {
+    .shops-layout, .shop-detail-top, .shop-edit-grid { grid-template-columns: 1fr; }
+    .shops-sidebar { position: static; }
+    .shops-list { max-height: 380px; }
+  }
+  @media (max-width: 560px) {
+    .shops-header, .shop-profile-head, .shop-edit-actions { align-items: flex-start; flex-direction: column; }
+    .metric-grid { grid-template-columns: 1fr; }
+    .shop-profile-actions { justify-content: flex-start; }
+  }
+{% endblock %}
+{% block body %}
+<body class="has-global-rail">
+  {% set rail_active = 'shops' %}
+  {% include "_global_rail.html" %}
+  <main class="app-shell shops-shell">
+    <header class="shops-header">
+      <div>
+        <div class="shops-kicker">Commerce workspace</div>
+        <h1>Shops</h1>
+        <div class="subtitle">Manage the store entity used by research, creative runs, GM memory, data sync, and scheduling.</div>
+      </div>
+      <div class="action-row">
+        <a class="nav-link" href="/dashboard/research">Research</a>
+        <a class="nav-link" href="/dashboard">Create Run</a>
+        <a class="nav-link" href="/dashboard/data">Data</a>
+      </div>
+    </header>
+
+    <div class="shops-layout">
+      <aside class="shops-sidebar">
+        <section class="card shops-create-card">
+          <h2>Create Shop</h2>
+          <div class="row">
+            <div><label>Name</label><input id="new-shop-name" placeholder="e.g. pawtifo-store" /></div>
+          </div>
+          <div class="row" style="margin-top:10px;">
+            <div><label>Industry</label><input id="new-shop-industry" placeholder="general" /></div>
+          </div>
+          <div class="row" style="margin-top:10px;">
+            <div><label>Storefront URL</label><input id="new-shop-url" type="url" placeholder="https://example.com" /></div>
+          </div>
+          <button class="primary" id="btn-create-shop" type="button" onclick="createShop()" style="width:100%;margin-top:12px;">Create Shop</button>
+          <label class="archived-toggle"><input id="include-archived" type="checkbox" onchange="loadShops()" /> Show archived</label>
+          <div id="create-status" class="shop-status-line"></div>
+        </section>
+
+        <section class="card shops-list-card">
+          <div class="shops-list-head">
+            <div class="shops-list-title">Shop List</div>
+            <div class="shops-list-tools">
+              <select id="shop-sort-key" onchange="renderShopList()">
+                <option value="name">Name</option>
+                <option value="run_count">Runs</option>
+                <option value="analysis_count">Research</option>
+                <option value="category_count">Categories</option>
+              </select>
+              <button id="shop-sort-dir" type="button" onclick="toggleSortDirection()">A-Z</button>
+            </div>
+          </div>
+          <div id="shop-list" class="shops-list"><div class="loading">Loading shops...</div></div>
+        </section>
+      </aside>
+
+      <section class="shops-workspace" id="shop-workspace">
+        <div class="card empty-shop-state">
+          <div><strong>Select or create a shop</strong><span>Shop details, workflow status, and next actions will appear here.</span></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    let shops = [];
+    let selectedShopId = "";
+    let shopSortDirection = "asc";
+
+    async function api(url, options) {
+      const resp = await fetch(url, Object.assign({ headers: { "Content-Type": "application/json" } }, options || {}));
+      if (!resp.ok) {
+        let msg = resp.statusText;
+        try {
+          const body = await resp.json();
+          msg = body.detail || msg;
+        } catch (err) {}
+        throw new Error(msg);
+      }
+      if (resp.status === 204) return {};
+      return resp.json();
+    }
+
+    function escHtml(value) {
+      return String(value == null ? "" : value).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+    }
+
+    function escAttr(value) {
+      return escHtml(value);
+    }
+
+    function setStatus(id, message, tone) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = message || "";
+      el.className = "shop-status-line" + (tone ? " " + tone : "");
+    }
+
+    function selectedShop() {
+      return shops.find(shop => shop.id === selectedShopId) || null;
+    }
+
+    function sortedShops() {
+      const key = document.getElementById("shop-sort-key").value || "name";
+      const direction = shopSortDirection === "desc" ? -1 : 1;
+      return [...shops].sort((a, b) => {
+        if (key === "name") {
+          return direction * String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
+        }
+        const av = Number(a[key] || 0);
+        const bv = Number(b[key] || 0);
+        if (av === bv) return String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
+        return direction * (av - bv);
+      });
+    }
+
+    function updateSortLabel() {
+      const key = document.getElementById("shop-sort-key").value || "name";
+      document.getElementById("shop-sort-dir").textContent = key === "name"
+        ? (shopSortDirection === "asc" ? "A-Z" : "Z-A")
+        : (shopSortDirection === "asc" ? "Low-High" : "High-Low");
+    }
+
+    function toggleSortDirection() {
+      shopSortDirection = shopSortDirection === "asc" ? "desc" : "asc";
+      renderShopList();
+    }
+
+    async function loadShops() {
+      const includeArchived = document.getElementById("include-archived").checked;
+      const data = await api("/shops" + (includeArchived ? "?include_archived=true" : ""));
+      shops = data.shops || [];
+      if (!selectedShopId || !shops.some(shop => shop.id === selectedShopId)) {
+        selectedShopId = shops.length ? shops[0].id : "";
+      }
+      renderShopList();
+      renderShopWorkspace();
+    }
+
+    function renderShopList() {
+      updateSortLabel();
+      const list = document.getElementById("shop-list");
+      const rows = sortedShops();
+      if (!rows.length) {
+        list.innerHTML = '<div class="empty-shop-state"><div><strong>No shops</strong><span>Create the first shop to start research and runs.</span></div></div>';
+        return;
+      }
+      list.innerHTML = rows.map(shop => {
+        const active = shop.id === selectedShopId ? " active" : "";
+        const archived = shop.archived_at ? " · archived" : "";
+        return '<button type="button" class="shop-list-item' + active + '" data-shop-id="' + escAttr(shop.id) + '">'
+          + '<span><span class="shop-list-name">' + escHtml(shop.name) + '</span>'
+          + '<span class="shop-list-meta">' + escHtml(shop.store_url || "No storefront URL") + archived + '</span></span>'
+          + '<span class="shop-count-stack">'
+          + '<span class="shop-count-chip" title="Categories">' + Number(shop.category_count || 0) + '</span>'
+          + '<span class="shop-count-chip" title="Runs">' + Number(shop.run_count || 0) + '</span>'
+          + '<span class="shop-count-chip" title="Research runs">' + Number(shop.analysis_count || 0) + '</span>'
+          + '</span></button>';
+      }).join("");
+      list.querySelectorAll(".shop-list-item").forEach(btn => {
+        btn.addEventListener("click", () => {
+          selectedShopId = btn.dataset.shopId || "";
+          renderShopList();
+          renderShopWorkspace();
+        });
+      });
+    }
+
+    function renderShopWorkspace() {
+      const shop = selectedShop();
+      const workspace = document.getElementById("shop-workspace");
+      if (!shop) {
+        workspace.innerHTML = '<div class="card empty-shop-state"><div><strong>Select or create a shop</strong><span>Shop details, workflow status, and next actions will appear here.</span></div></div>';
+        return;
+      }
+      const archiveLabel = shop.archived_at ? "Restore" : "Archive";
+      const archiveClass = shop.archived_at ? "" : "danger-text";
+      workspace.innerHTML = ''
+        + '<div class="shop-detail-top">'
+        + '<section class="card shop-profile-card">'
+        + '<div class="shop-profile-head">'
+        + '<div><div class="shop-profile-title">' + escHtml(shop.name) + '</div>'
+        + '<div class="shop-profile-url">' + escHtml(shop.store_url || "No storefront URL saved") + '</div></div>'
+        + '<div class="shop-profile-actions">'
+        + '<a class="primary-link" href="/dashboard/research?shop_id=' + escAttr(shop.id) + '">Run Research</a>'
+        + '<a href="/dashboard?shop=' + encodeURIComponent(shop.name) + '">Create Run</a>'
+        + '<a href="/dashboard/data?shop=' + encodeURIComponent(shop.name) + '">View Data</a>'
+        + '</div></div>'
+        + '<div class="metric-grid">'
+        + metricBox("Categories", shop.category_count, "Project groups")
+        + metricBox("Runs", shop.run_count, "Creative pipelines")
+        + metricBox("Research", shop.analysis_count, "Memory inputs")
+        + '</div></section>'
+        + '<section class="card workflow-card"><h2>Operating Flow</h2><div class="workflow-list">'
+        + workflowItem("1", "Define shop", shop.store_url ? "Storefront URL and industry are ready." : "Add the storefront URL before research.")
+        + workflowItem("2", "Research context", Number(shop.analysis_count || 0) ? "Research memory exists for planning." : "Run research to seed GM memory.")
+        + workflowItem("3", "Generate assets", Number(shop.run_count || 0) ? "Runs exist for this shop." : "Create a run after the shop context is ready.")
+        + '</div></section></div>'
+        + '<section class="card shop-edit-card"><h2>Shop Details</h2>'
+        + '<div class="shop-edit-grid">'
+        + '<div><label>Name</label><input id="edit-shop-name" value="' + escAttr(shop.name) + '" /></div>'
+        + '<div><label>Industry</label><input id="edit-shop-industry" value="' + escAttr(shop.industry_code || "general") + '" /></div>'
+        + '<div class="full"><label>Storefront URL</label><input id="edit-shop-url" type="url" value="' + escAttr(shop.store_url || "") + '" placeholder="https://example.com" /></div>'
+        + '<div class="full"><label>Description</label><textarea id="edit-shop-description" rows="3" placeholder="Positioning, catalog focus, target buyer, known constraints...">' + escHtml(shop.description || "") + '</textarea></div>'
+        + '</div>'
+        + '<div class="shop-edit-actions">'
+        + '<div class="action-row"><button class="primary" type="button" onclick="saveSelectedShop()">Save Details</button><button class="' + archiveClass + '" type="button" onclick="toggleArchiveSelectedShop()">' + archiveLabel + ' Shop</button></div>'
+        + '<div id="detail-status" class="shop-status-line"></div>'
+        + '</div></section>';
+    }
+
+    function metricBox(label, value, note) {
+      return '<div class="metric-box"><div class="metric-label">' + escHtml(label) + '</div><div class="metric-value">' + Number(value || 0) + '</div><div class="metric-note">' + escHtml(note) + '</div></div>';
+    }
+
+    function workflowItem(index, title, copy) {
+      return '<div class="workflow-item"><div class="workflow-index">' + escHtml(index) + '</div><div><div class="workflow-title">' + escHtml(title) + '</div><div class="workflow-copy">' + escHtml(copy) + '</div></div></div>';
+    }
+
+    async function createShop() {
+      const name = document.getElementById("new-shop-name").value.trim();
+      if (!name) {
+        setStatus("create-status", "Enter a shop name first.", "error");
+        return;
+      }
+      const btn = document.getElementById("btn-create-shop");
+      btn.disabled = true;
+      setStatus("create-status", "Creating...");
+      try {
+        const created = await api("/shops", { method: "POST", body: JSON.stringify({
+          name: name,
+          industry_code: document.getElementById("new-shop-industry").value.trim() || "general",
+          store_url: document.getElementById("new-shop-url").value.trim() || null,
+          description: null
+        }) });
+        document.getElementById("new-shop-name").value = "";
+        document.getElementById("new-shop-industry").value = "";
+        document.getElementById("new-shop-url").value = "";
+        selectedShopId = created.id;
+        await loadShops();
+        setStatus("create-status", "Created " + created.name + ".", "ok");
+      } catch (err) {
+        setStatus("create-status", "Could not create shop: " + err.message, "error");
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function saveSelectedShop() {
+      const shop = selectedShop();
+      if (!shop) return;
+      setStatus("detail-status", "Saving...");
+      try {
+        const updated = await api("/shops/" + encodeURIComponent(shop.id), { method: "PATCH", body: JSON.stringify({
+          name: document.getElementById("edit-shop-name").value.trim(),
+          industry_code: document.getElementById("edit-shop-industry").value.trim() || "general",
+          store_url: document.getElementById("edit-shop-url").value.trim() || null,
+          description: document.getElementById("edit-shop-description").value.trim() || null
+        }) });
+        selectedShopId = updated.id;
+        await loadShops();
+        setStatus("detail-status", "Saved.", "ok");
+      } catch (err) {
+        setStatus("detail-status", "Could not save: " + err.message, "error");
+      }
+    }
+
+    async function toggleArchiveSelectedShop() {
+      const shop = selectedShop();
+      if (!shop) return;
+      const archived = !shop.archived_at;
+      if (archived && !confirm('Archive shop "' + shop.name + '"? Historical runs and GM memory will remain available.')) return;
+      setStatus("detail-status", archived ? "Archiving..." : "Restoring...");
+      try {
+        const updated = await api("/shops/" + encodeURIComponent(shop.id), { method: "PATCH", body: JSON.stringify({ archived: archived }) });
+        selectedShopId = updated.id;
+        if (archived) document.getElementById("include-archived").checked = true;
+        await loadShops();
+        setStatus("detail-status", archived ? "Archived." : "Restored.", "ok");
+      } catch (err) {
+        setStatus("detail-status", "Could not update archive state: " + err.message, "error");
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      loadShops().catch(err => {
+        document.getElementById("shop-list").innerHTML = '<div class="empty-shop-state"><div><strong>Could not load shops</strong><span>' + escHtml(err.message) + '</span></div></div>';
+      });
+    });
+  </script>
+</body>
+{% endblock %}

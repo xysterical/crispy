@@ -43,6 +43,18 @@ def test_create_run_form_has_shop_labels(client):
     assert '<select id="workspace_name"' in html
 
 
+def test_shop_management_page_renders_workflow_layout(client):
+    resp = client.get("/dashboard/shops")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "Shops" in html
+    assert "Create Shop" in html
+    assert "Operating Flow" in html
+    assert "shop-list" in html
+    assert "renderShopWorkspace" in html
+    assert 'href="/dashboard/shops"' in html
+
+
 def test_shop_crud_lifecycle(client):
     """Test create, rename, and delete a shop. Delete may be blocked if runs exist."""
     # Create
@@ -104,15 +116,12 @@ def test_cannot_delete_last_shop(client):
         assert resp.status_code == 409
 
 
-def test_shop_management_panel_on_page(client):
-    """Verify Shop Management panel renders on shop-analysis page."""
+def test_shop_analysis_links_to_shop_management_page(client):
+    """Verify research keeps shop selection but sends management to the Shops page."""
     resp = client.get("/dashboard/shop-analysis")
     assert resp.status_code == 200
     html = resp.text
-    assert "Shops" in html
-    assert "shop-list-mgmt" in html
-    assert "addShop" in html
-    assert "shop-sort-key" in html
-    assert "toggleShopSortDirection" in html
-    assert "data-action=\"select-shop\"" in html
+    assert "Manage Shops" in html
+    assert "/dashboard/shops" in html
+    assert "shop-list-mgmt" not in html
     assert 'Archive shop ""' not in html

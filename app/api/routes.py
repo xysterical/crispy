@@ -2620,6 +2620,11 @@ def dashboard_page(request: Request) -> str:
     return _dashboard_html(request)
 
 
+@router.get("/dashboard/shops", response_class=HTMLResponse)
+def dashboard_shops_page(request: Request) -> str:
+    return templates.TemplateResponse(request, "shops.html")
+
+
 @router.get("/dashboard/assets", response_class=HTMLResponse)
 def dashboard_assets_page(request: Request) -> str:
     return templates.TemplateResponse(request, "assets.html")

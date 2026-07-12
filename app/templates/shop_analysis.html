@@ -396,45 +396,14 @@
       </div>
     </header>
 
-    <section class="card" id="shop-mgmt-card">
-      <div class="shop-manager-head">
-        <div>
-          <h2 class="shop-manager-title">Shops</h2>
-          <div class="shop-manager-copy">Create a shop, run research for it, then choose that shop in Create Run so GM can reuse the research context.</div>
-        </div>
-        <button onclick="toggleShopMgmt()" style="font-size:12px;padding:4px 10px;" id="btn-toggle-shops">-</button>
-      </div>
-      <div id="shop-mgmt-body">
-        <div class="shop-toolbar">
-          <label for="shop-sort-key">Sort</label>
-          <select id="shop-sort-key" onchange="renderShopMgmt()">
-            <option value="name">Name</option>
-            <option value="run_count">Runs</option>
-            <option value="analysis_count">Research runs</option>
-            <option value="category_count">Categories</option>
-          </select>
-          <button type="button" id="shop-sort-dir" onclick="toggleShopSortDirection()">A-Z</button>
-        </div>
-        <div id="shop-list-mgmt" class="shop-list"></div>
-        <div class="shop-create-row">
-          <div>
-            <label>New Shop</label>
-            <input id="new-shop-name" placeholder="Shop name" />
-          </div>
-          <div>
-            <label>Industry</label>
-            <input id="new-shop-industry" placeholder="general" />
-          </div>
-          <div>
-            <button id="btn-add-shop" onclick="addShop()">Add Shop</button>
-          </div>
-        </div>
-        <div id="shop-mgmt-status" class="shop-status"></div>
-      </div>
-    </section>
-
     <section class="card">
-      <h2>New Research Run</h2>
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px;">
+        <div>
+          <h2>New Research Run</h2>
+          <div class="subtitle" style="margin-top:-6px;">Manage shop profiles in <a href="/dashboard/shops">Shops</a>, then run research here to update GM memory.</div>
+        </div>
+        <a class="nav-link" href="/dashboard/shops">Manage Shops</a>
+      </div>
       <div class="readiness-strip" id="research-readiness">
         <div class="readiness-copy">
           <div class="readiness-title">Research readiness</div>
@@ -569,7 +538,6 @@
     }
 
     let analysisShops = [];
-    let shopSortDirection = "asc";
     let selectedResearchFocus = "full_intelligence";
     let pendingRefreshReason = null;
     const researchFocusCopy = {
@@ -609,11 +577,6 @@
     }
     function escAttr(v) {
       return escHtml(v).replace(/"/g, "&quot;");
-    }
-    function setShopStatus(message, kind = "") {
-      const el = document.getElementById("shop-mgmt-status");
-      el.textContent = message || "";
-      el.className = "shop-status" + (kind ? " " + kind : "");
     }
 
     function setResearchFocus(focus) {
@@ -790,49 +753,7 @@
       return value ? " · conflicts=" + value : "";
     }
 
-    // ── Shop Management ──
-    async function loadShopMgmt() {
-      try {
-        const data = await api("/shops");
-        analysisShops = data.shops || [];
-        renderShopMgmt();
-        renderShopSelect();
-        if (!document.getElementById("shop-name").value && analysisShops.length) {
-          document.getElementById("shop-name").value = analysisShops[0].id;
-        }
-        onShopAnalysisShopChange();
-      } catch (err) {
-        setShopStatus("Failed to load shops: " + err.message, "error");
-      }
-    }
-
-    function sortedShops() {
-      const key = document.getElementById("shop-sort-key")?.value || "name";
-      const direction = shopSortDirection === "desc" ? -1 : 1;
-      return [...analysisShops].sort((a, b) => {
-        if (key === "name") {
-          return direction * String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
-        }
-        const av = Number(a[key] || 0);
-        const bv = Number(b[key] || 0);
-        if (av === bv) return String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
-        return direction * (av - bv);
-      });
-    }
-
-    function toggleShopSortDirection() {
-      shopSortDirection = shopSortDirection === "asc" ? "desc" : "asc";
-      updateShopSortLabel();
-      renderShopMgmt();
-    }
-
-    function updateShopSortLabel() {
-      const key = document.getElementById("shop-sort-key")?.value || "name";
-      document.getElementById("shop-sort-dir").textContent = key === "name"
-        ? (shopSortDirection === "asc" ? "A-Z" : "Z-A")
-        : (shopSortDirection === "asc" ? "Low-High" : "High-Low");
-    }
-
+    // ── Shop selection ──
     function renderShopSelect() {
       const sel = document.getElementById("shop-name");
       const current = sel.value || document.getElementById("shop-id").value;
@@ -844,115 +765,16 @@
       }
     }
 
-    function renderShopMgmt() {
-      const list = document.getElementById("shop-list-mgmt");
-      updateShopSortLabel();
-      const shops = sortedShops();
-      if (!shops.length) {
-        list.innerHTML = '<div class="shop-row"><div><div class="shop-name">No shops yet</div><div class="shop-meta">Create one below, then run research for it.</div></div></div>';
-        return;
-      }
-      list.innerHTML = shops.map(s => {
-        const details = [
-          (s.category_count || 0) + " categories",
-          (s.run_count || 0) + " runs",
-          (s.analysis_count || 0) + " research runs"
-        ].join(" · ");
-        return '<div class="shop-row" data-shop-id="' + escAttr(s.id) + '">'
-          + '<div><div class="shop-name">' + escHtml(s.name) + '</div><div class="shop-meta">' + escHtml(s.store_url || "No store URL saved") + '</div></div>'
-          + '<div><div class="shop-name">' + escHtml(s.industry_code || "general") + '</div><div class="shop-meta">' + escHtml(details) + '</div></div>'
-          + '<div class="shop-actions">'
-          + '<button type="button" data-action="select-shop" data-shop-id="' + escAttr(s.id) + '">Use</button>'
-          + '<button type="button" data-action="rename-shop" data-shop-id="' + escAttr(s.id) + '">Rename</button>'
-          + '<button type="button" class="danger" data-action="archive-shop" data-shop-id="' + escAttr(s.id) + '">Archive</button>'
-          + '</div></div>';
-      }).join("");
-      list.querySelectorAll("button[data-action]").forEach(btn => {
-        btn.addEventListener("click", () => {
-          const action = btn.dataset.action;
-          const shopId = btn.dataset.shopId;
-          if (action === "select-shop") selectShop(shopId);
-          if (action === "rename-shop") renameShopPrompt(shopId);
-          if (action === "archive-shop") archiveShopConfirm(shopId);
-        });
-      });
-    }
-
-    async function addShop() {
-      const input = document.getElementById("new-shop-name");
-      const name = input.value.trim();
-      if (!name) { setShopStatus("Enter a shop name first.", "error"); return; }
-      const btn = document.getElementById("btn-add-shop");
-      btn.disabled = true;
-      setShopStatus("Creating shop...");
-      try {
-        const created = await api("/shops", { method: "POST", body: JSON.stringify({
-          name: name,
-          industry_code: document.getElementById("new-shop-industry").value.trim() || document.getElementById("industry-code").value.trim() || "general",
-          store_url: document.getElementById("store-url").value.trim() || null,
-          description: document.getElementById("store-description").value.trim() || null
-        }) });
-        input.value = "";
-        document.getElementById("new-shop-industry").value = "";
-        await loadShopMgmt();
-        selectShop(created.id);
-        setShopStatus("Created shop: " + created.name, "ok");
-      } catch (err) {
-        setShopStatus("Could not create shop: " + err.message, "error");
-      } finally {
-        btn.disabled = false;
-      }
-    }
-
-    function selectShop(shopId) {
-      const shop = analysisShops.find(s => s.id === shopId);
-      if (!shop) return;
-      document.getElementById("shop-name").value = shop.id;
-      onShopAnalysisShopChange();
-      setShopStatus("Selected shop: " + shop.name, "ok");
-    }
-
-    function renameShopPrompt(shopId) {
-      const shop = analysisShops.find(s => s.id === shopId);
-      if (!shop) return;
-      const newName = prompt("Rename shop:", shop.name);
-      if (!newName || newName === shop.name) return;
-      api("/shops/" + encodeURIComponent(shopId), { method: "PATCH", body: JSON.stringify({ name: newName }) })
-        .then(() => loadShopMgmt())
-        .then(() => setShopStatus("Renamed shop.", "ok"))
-        .catch(err => setShopStatus("Could not rename shop: " + err.message, "error"));
-    }
-
-    function archiveShopConfirm(shopId) {
-      const shop = analysisShops.find(s => s.id === shopId);
-      if (!shop) return;
-      if (!confirm('Archive shop "' + shop.name + '"? Historical runs and GM memory will remain available.')) return;
-      api("/shops/" + encodeURIComponent(shopId), { method: "PATCH", body: JSON.stringify({ archived: true }) })
-        .then(() => {
-          if (document.getElementById("shop-id").value === shopId) {
-            document.getElementById("shop-name").value = "";
-            document.getElementById("shop-id").value = "";
-          }
-          return loadShopMgmt();
-        })
-        .then(() => setShopStatus("Archived shop: " + shop.name, "ok"))
-        .catch(err => setShopStatus("Could not archive shop: " + err.message, "error"));
-    }
-
-    function toggleShopMgmt() {
-      const body = document.getElementById("shop-mgmt-body");
-      const btn = document.getElementById("btn-toggle-shops");
-      if (body.style.display === "none") { body.style.display = "block"; btn.textContent = "-"; }
-      else { body.style.display = "none"; btn.textContent = "+"; }
-    }
-
     async function loadShopAnalysisShops() {
       try {
         const data = await api("/shops");
         analysisShops = data.shops || [];
-        renderShopMgmt();
         renderShopSelect();
-        if (!document.getElementById("shop-name").value && analysisShops.length) {
+        const params = new URLSearchParams(window.location.search);
+        const requestedShopId = params.get("shop_id") || "";
+        if (requestedShopId && analysisShops.some(s => s.id === requestedShopId)) {
+          document.getElementById("shop-name").value = requestedShopId;
+        } else if (!document.getElementById("shop-name").value && analysisShops.length) {
           document.getElementById("shop-name").value = analysisShops[0].id;
         }
         onShopAnalysisShopChange();
@@ -1179,7 +1001,7 @@
         btn.addEventListener("click", () => setResearchFocus(btn.dataset.focus));
       });
       setResearchFocus(selectedResearchFocus);
-      loadShopMgmt();
+      loadShopAnalysisShops();
       loadHistory();
       loadResearchReadiness();
     });
