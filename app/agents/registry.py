@@ -42,7 +42,7 @@ AGENT_SPECS: tuple[AgentSpec, ...] = (
     ),
     AgentSpec(
         name="shop_analyst",
-        display_name="Shop Analyst",
+        display_name="Research Intelligence Agent",
         stage="research",
         role="store_industry_research",
         relative_path="stages/shop_analyst.md",

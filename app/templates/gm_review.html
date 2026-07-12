@@ -109,6 +109,7 @@
         </div>
       </div>
       <div id="gm-msg" class="status-msg muted" style="min-height:18px;margin-top:10px;"></div>
+      <div id="research-review-context" class="muted" style="margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#f8fafc;">Research review context: select a project.</div>
     </section>
 
     <section class="card" style="margin-bottom:16px;">
@@ -145,6 +146,7 @@
           <select id="mem-type" onchange="loadMemories()">
             <option value="">All</option>
             <option value="summary">Summary</option>
+            <option value="research_intelligence">Research intelligence</option>
             <option value="store_intelligence">Store intelligence</option>
             <option value="product_intelligence">Product intelligence</option>
             <option value="strategy">Strategy</option>
@@ -291,6 +293,7 @@
     }
     function onProjectChange() {
       loadMemories();
+      loadResearchReviewContext();
     }
     function currentProject() {
       const name = document.getElementById("gm-project").value;
@@ -358,7 +361,7 @@
       const reasons = [];
       if ((content.conflicts || []).some((x) => (x || {}).status !== "resolved")) reasons.push("unresolved conflicts");
       if (typeof content.confidence === "number" && content.confidence < 0.45) reasons.push("low confidence");
-      const hasContent = ["summary", "winning_patterns", "avoid_patterns", "top_variants", "underperformers", "profile", "report", "total_revenue", "overall_roas"].some((k) => {
+      const hasContent = ["summary", "winning_patterns", "avoid_patterns", "top_variants", "underperformers", "profile", "report", "findings", "strategic_implications", "evidence", "total_revenue", "overall_roas"].some((k) => {
         const v = content[k];
         return Array.isArray(v) ? v.length : Boolean(v);
       });
@@ -374,6 +377,8 @@
       const pinLabel = item.pinned ? "Unpin" : "Pin";
       const statusAction = item.status === "active" ? "Archive" : "Activate";
       const nextStatus = item.status === "active" ? "archived" : "active";
+      const isResearch = item.memory_type === "research_intelligence";
+      const reviewStatus = content.review_status || "unreviewed";
       return `<div class="memory-item">
         <div class="pill-row">
           <span class="badge ${item.status === "active" ? "badge-ok" : "badge-muted"}">${esc(item.status)}</span>
@@ -381,6 +386,7 @@
           <span class="pill mono">${esc(item.memory_type)}</span>
           <span class="pill mono">${esc(item.source_type)}</span>
           ${item.pinned ? '<span class="badge badge-warn">Pinned</span>' : ''}
+          ${isResearch ? `<span class="pill mono">review=${esc(reviewStatus)}</span>` : ''}
           ${dirtyReasons.length ? `<span class="badge badge-warn">Dirty</span>` : ''}
           ${conflicts.length ? `<span class="badge badge-warn">${conflicts.length} conflicts</span>` : ''}
         </div>
@@ -389,6 +395,9 @@
         ${conflicts.length ? `<div class="muted">Conflicts: ${conflicts.map((item) => esc(item.pattern_key || item.reason)).join(", ")}</div>` : ''}
         <div class="muted mono">${esc(item.id)} · score=${item.score_hint ?? "-"} · confidence=${confidence} · evidence=${evidence}</div>
         <div class="memory-actions">
+          ${isResearch ? `<button onclick="reviewMemory('${esc(item.id)}', 'approve')">Approve</button>` : ''}
+          ${isResearch && conflicts.length ? `<button onclick="reviewMemory('${esc(item.id)}', 'resolve_conflicts')">Resolve conflicts</button>` : ''}
+          ${isResearch ? `<button class="danger" onclick="reviewMemory('${esc(item.id)}', 'reject')">Reject</button>` : ''}
           <button onclick="updateMemory('${esc(item.id)}', {pinned: ${item.pinned ? "false" : "true"}})">${pinLabel}</button>
           <button onclick="updateMemory('${esc(item.id)}', {status: '${nextStatus}'})">${statusAction}</button>
           <button class="danger" onclick="updateMemory('${esc(item.id)}', {status: 'superseded'})">Supersede</button>
@@ -404,12 +413,31 @@
       setMemoryMsg("Loading memories...");
       try {
         const scoped = await api("/gm-memory?" + memoryQuery(project));
+        await loadResearchReviewContext();
         document.getElementById("memory-list").innerHTML = scoped.length
           ? scoped.map(renderMemory).join("")
           : '<div class="empty">No memories match these filters.</div>';
         setMemoryMsg(`${scoped.length} memories loaded.`, "ok");
       } catch (err) {
         setMemoryMsg("Failed to load memories: " + err.message, "error");
+      }
+    }
+    async function loadResearchReviewContext() {
+      const project = currentProject();
+      const workspace = currentWorkspace();
+      const el = document.getElementById("research-review-context");
+      if (!project || !workspace) {
+        el.textContent = "Research review context: select a workspace and project.";
+        return;
+      }
+      try {
+        const ctx = await api(`/research-context?workspace_name=${encodeURIComponent(workspace.name)}&project_name=${encodeURIComponent(project.name)}`);
+        const summary = ctx.summary || {};
+        const reasons = (ctx.planning_guidance?.excluded_reasons || []).join(", ") || "none";
+        const sourceCounts = Object.entries(summary.source_counts || {}).map(([k,v]) => `${esc(k)}=${esc(v)}`).join(" · ") || "none";
+        el.innerHTML = `<b>Research review context</b>: ready=${summary.ready_for_planning ? "yes" : "no"} · included=${esc(summary.included_count || 0)} · held=${esc(summary.excluded_count || 0)} · avg quality=${esc(summary.average_quality || 0)}<br>Types: ${sourceCounts}<br>Held reasons: ${esc(reasons)}`;
+      } catch (err) {
+        el.textContent = "Research review context unavailable.";
       }
     }
     async function updateMemory(id, payload) {
@@ -419,6 +447,20 @@
         await loadMemories();
       } catch (err) {
         setMemoryMsg("Failed to update memory: " + err.message, "error");
+      }
+    }
+    async function reviewMemory(id, action) {
+      const notes = action === "resolve_conflicts" ? "Resolved in GM Review." : "";
+      setMemoryMsg("Reviewing research memory...");
+      try {
+        await api(`/gm-memory/${encodeURIComponent(id)}/review`, {
+          method: "POST",
+          body: JSON.stringify({action, notes, changed_by: "gm_review"})
+        });
+        await loadMemories();
+        setMemoryMsg("Research memory reviewed.", "ok");
+      } catch (err) {
+        setMemoryMsg("Failed to review memory: " + err.message, "error");
       }
     }
     async function compactMemory() {

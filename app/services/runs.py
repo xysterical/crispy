@@ -72,6 +72,7 @@ from app.services.execution_memory import (
     write_variant_review_memory,
 )
 from app.services.gm_memory import memory_dirty_reasons, memory_is_strategy_safe
+from app.services.shop_analysis import RESEARCH_SOURCE_TYPES
 from app.services.marketplace_qa import MARKETPLACE_REVIEW_TAGS, is_marketplace_main_image
 from app.services.personas import get_persona
 from app.services.gm_evolution import compile_run_outcome_reflection, resolve_active_gm_policy
@@ -743,7 +744,7 @@ def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[di
         select(GmMemory)
         .where(
             GmMemory.memory_scope == "shop",
-            GmMemory.source_type.in_(["shop_profile", "competitor_analysis", "shopify_sync", "meta_sync"]),
+            GmMemory.source_type.in_([*RESEARCH_SOURCE_TYPES, "shopify_sync", "meta_sync"]),
             GmMemory.status == "active",
         )
         .order_by(desc(GmMemory.score_hint), desc(GmMemory.created_at))
@@ -795,7 +796,7 @@ def _gm_memory_priority(row: GmMemory) -> tuple[int, int, float, float]:
     )
 
 
-def _gm_memory_trace_payload(gm_lessons: list[dict]) -> dict:
+def _gm_memory_trace_payload(gm_lessons: list[dict], research_context: dict | None = None) -> dict:
     references = []
     for item in gm_lessons[:5]:
         content = item.get("content") or {}
@@ -805,11 +806,16 @@ def _gm_memory_trace_payload(gm_lessons: list[dict]) -> dict:
             "source_type": item.get("source_type"),
             "memory_type": item.get("memory_type"),
             "summary": content.get("summary") or content.get("source") or "",
+            "research_status": content.get("research_status"),
+            "evidence_count": len(content.get("evidence") or []),
+            "expires_at": content.get("expires_at"),
             "reason": "matched product/shop/industry planning context",
         })
     return {
         "memory_count": len(gm_lessons),
         "references": references,
+        "research_context": research_context or {},
+        "excluded_research": (research_context or {}).get("excluded", [])[:10],
         "influence": "included in planning gm_lessons prompt context",
     }
 
@@ -927,8 +933,21 @@ def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
     }
     payload = base
     if task.stage_name == "planning":
+        from app.services.research_context import build_research_context
+
         gm_lessons = _recent_gm_lessons(db, run) + _analytics_insights(db, run)
-        payload = {**base, "intake": _stage_output_optional(db, run.id, "intake"), "gm_lessons": gm_lessons}
+        research_context = build_research_context(
+            db,
+            project_id=run.project_id,
+            shop_id=run.workspace_id,
+            industry_code=run.industry_code,
+        )
+        payload = {
+            **base,
+            "intake": _stage_output_optional(db, run.id, "intake"),
+            "gm_lessons": gm_lessons,
+            "research_context": research_context,
+        }
     elif task.stage_name == "divergence":
         payload = {**base, "planning": _stage_output_optional(db, run.id, "planning")}
     elif task.stage_name == "copy_image_generation":
@@ -1736,12 +1755,13 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 message=f"Planning applied {len(gm_lessons)} GM memory entries.",
                 provider_name=provider_name,
                 model_name=model_name,
-                payload=_gm_memory_trace_payload(gm_lessons),
+                payload=_gm_memory_trace_payload(gm_lessons, task.input_payload.get("research_context") or {}),
             )
             output = runtime.run_planning(
                 run.id,
                 intake,
                 gm_lessons=gm_lessons,
+                research_context=task.input_payload.get("research_context") or {},
                 gm_policy=task.input_payload.get("gm_policy", {}),
                 creative_specs=task.input_payload.get("creative_specs", {}),
                 enable_research=bool(task.input_payload.get("enable_research")),

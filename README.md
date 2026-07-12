@@ -10,6 +10,8 @@ Crispy is a product-first creative operations system for e-commerce teams. It ge
 
 **Self-improving memory** — Performance feedback is stored as product-level and industry-level memory. The planning agent automatically references past winners and avoids past failures.
 
+**Research Intelligence** — Collects store, competitor, industry, audience, and compliance context with Tavily/Firecrawl-backed evidence. Approved research is stored as GM memory and surfaced in Create Run, Run Detail, GM Review, Data Dashboard, and planning prompts.
+
 **Human-in-the-loop** — Every creative stage can pause for review. Promote variants, request regeneration, or set winners before publishing.
 
 **Notion calendar sync** — Schedule approved creatives to a Notion database. Channel, date, status, and crispy links are synced bidirectionally.
@@ -69,6 +71,10 @@ export CRISPY_API_KEY_SHOPIFY="shpat_..."
 # Meta Ads data sync (optional — for campaigns, ads, and performance memory)
 export CRISPY_API_KEY_META="EAAB..."
 export CRISPY_API_KEY_META_ACCOUNT="1234567890"
+
+# Research Intelligence search tools (optional but recommended)
+export CRISPY_API_KEY_TAVILY="tvly-..."
+export CRISPY_API_KEY_FIRECRAWL="fc-..."
 ```
 
 All keys use the `CRISPY_API_KEY_*` prefix and are auto-discovered.
@@ -114,9 +120,10 @@ curl -X POST "http://localhost:8849/integrations/meta/sync?workspace_name=Defaul
 | Page | What it does |
 |---|---|
 | **Dashboard** (home) | Run list, create runs, review & approve/reject stages, view generated creatives |
-| **API & Integration Configs** | Assign LLM providers and models to each agent. Save All button at bottom-right |
-| **Shop Analysis** | Analyze Shopify stores — products, categories, competitor research |
+| **API & Integration Configs** | Assign LLM providers and models to each agent. Shows Research Intelligence tool needs for store, competitor, audience, and compliance tasks |
+| **Research Intelligence** | Run store, competitor, industry, audience, and compliance research. Queued research writes evidence-backed GM memory |
 | **Data Dashboard** | Import performance CSVs, view creative leaderboard, sync Shopify/Meta data |
+| **GM Review** | Review research memory, resolve conflicts, pin trusted context, and keep unsafe research out of planning |
 | **Content Calendar** | Schedule approved creatives to publishing channels. Syncs with Notion |
 | **Asset Library** | Browse all generated images and videos across runs |
 | **Personas** | View and edit agent prompt personas |
@@ -124,12 +131,13 @@ curl -X POST "http://localhost:8849/integrations/meta/sync?workspace_name=Defaul
 ## Core Workflow
 
 1. **Configure agents** — Go to API & Integration Configs, pick providers/models for each agent![API configures](other/image.png)
-2. **Add useful background information** -- Use Shop Analysis to acquire basic information strategy-wise.![Shop Analysis](other/iShot_2026-05-06_13.27.44.png)
+2. **Add useful background information** -- Use Research Intelligence to collect store context, competitors, industry baseline, audience pain points, and compliance risk. Approved research becomes GM memory.
 3. **Create a run** — Click the + button, fill in product info, upload reference images/videos![Screenshot](other/iShot_2026-05-06_13.25.47.png)
-4. **Review outputs** — Each stage pauses for human approval (or use semi_auto/full_auto mode)![completed result](other/completedimage.png)
-5. **Schedule winners** — Push approved creatives to Notion Calendar with publish dates![pickvariant](other/iShot_2026-07-11_12.19.59.png)
-6. **Import feedback** — Use supplementary information and ad performance data (impressions, clicks, spend, conversions, revenue) from syncing.
-7. **Next run improves** — The planning agent automatically uses winning patterns from past feedback
+4. **Check research context** — Create Run and Run Detail show which research memory is included, excluded, stale, or held for review.
+5. **Review outputs** — Each stage pauses for human approval (or use semi_auto/full_auto mode)![completed result](other/completedimage.png)
+6. **Schedule winners** — Push approved creatives to Notion Calendar with publish dates![pickvariant](other/iShot_2026-07-11_12.19.59.png)
+7. **Import feedback** — Use supplementary information and ad performance data (impressions, clicks, spend, conversions, revenue) from syncing.
+8. **Next run improves** — The planning agent uses safe GM memory from performance feedback, analytics, and approved research context.
 
 ## Pipeline Modes
 

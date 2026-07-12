@@ -36,10 +36,10 @@ def test_dashboard_pages_share_global_rail(client):
     pages = {
         "/dashboard": "/dashboard",
         "/dashboard/data": "/dashboard/data",
+        "/dashboard/research": "/dashboard/research",
         "/dashboard/calendar": "/dashboard/calendar",
         "/dashboard/assets": "/dashboard/assets",
         "/dashboard/gm-review": "/dashboard/gm-review",
-        "/dashboard/shop-analysis": "/dashboard/shop-analysis",
         "/dashboard/personas": "/dashboard/personas",
         "/dashboard/agent-apis": "/dashboard/agent-apis",
     }

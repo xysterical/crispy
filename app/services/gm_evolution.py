@@ -19,6 +19,7 @@ from app.data.models import (
     VariantScore,
 )
 from app.schemas.contracts import FeedbackRow
+from app.services.shop_analysis import RESEARCH_SOURCE_TYPES
 
 
 def utcnow() -> datetime:
@@ -91,7 +92,7 @@ def _shop_thesis(db: Session, *, project_id: str, industry_code: str | None, sho
         select(GmMemory)
         .where(
             GmMemory.project_id == project_id,
-            GmMemory.source_type.in_(["shop_profile", "competitor_analysis"]),
+            GmMemory.source_type.in_(RESEARCH_SOURCE_TYPES),
         )
         .order_by(desc(GmMemory.created_at))
         .limit(20)

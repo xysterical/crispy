@@ -2038,6 +2038,7 @@ class AgentsRuntime:
         intake: ProductIntake,
         *,
         gm_lessons: list[dict],
+        research_context: dict | None = None,
         gm_policy: dict | None = None,
         creative_specs: dict | None = None,
         enable_research: bool,
@@ -2047,6 +2048,7 @@ class AgentsRuntime:
     ) -> StageOutput:
         mode = "online_research_enabled" if enable_research else "manual_research_only"
         gm_policy = gm_policy or {}
+        research_context = research_context or {}
         creative_specs = creative_specs or {}
         policy_excerpt = gm_policy.get("stage_guidance") or {}
         surface_strategy = self._dtc_site_surface_strategy(creative_specs)
@@ -2055,7 +2057,9 @@ class AgentsRuntime:
             agent_role="Planning Agent",
             task_instruction=(
                 f"Build planning brief in {mode}. intake={intake.model_dump()} "
-                f"gm_lessons={gm_lessons[:3]}. gm_policy={policy_excerpt}. dtc_surface_strategy={surface_strategy}. Return concise strategy, constraints, hypotheses, risk boundaries, "
+                f"gm_lessons={gm_lessons[:3]}. research_context={research_context}. "
+                f"Use only included research_context entries; treat excluded_research as unavailable unless pinned/reviewed. "
+                f"gm_policy={policy_excerpt}. dtc_surface_strategy={surface_strategy}. Return concise strategy, constraints, hypotheses, risk boundaries, "
                 "creative director plan, scene arc, reference strategy, segment continuity plan, quality gates, and reviewer decision questions."
             ),
         )
@@ -4647,25 +4651,54 @@ class AgentsRuntime:
         store_content = ""
         tavily_results: dict = {}
         search_errors: list[str] = []
+        evidence: list[dict] = []
+        source_queries: list[str] = []
 
         if firecrawl_api_key:
             try:
                 fc = FirecrawlClient(api_key=firecrawl_api_key)
                 result = fc.scrape(store_url)
                 store_content = result.markdown[:8000]
+                evidence.append({
+                    "source": "firecrawl",
+                    "url": store_url,
+                    "title": result.title,
+                    "summary": result.markdown[:500],
+                    "fetched_at": datetime.now(UTC).isoformat(),
+                    "status": "ok",
+                })
             except Exception as exc:
                 search_errors.append(f"firecrawl_scrape: {exc}")
+                evidence.append({
+                    "source": "firecrawl",
+                    "url": store_url,
+                    "summary": str(exc),
+                    "fetched_at": datetime.now(UTC).isoformat(),
+                    "status": "failed",
+                })
 
         if tavily_api_key:
             try:
                 tv = TavilyClient(api_key=tavily_api_key)
                 search_query = f"{description or store_url} brand positioning reviews target audience"
+                source_queries.append(search_query)
                 tavily_results = tv.search_raw(search_query, max_results=5)
+                for row in tavily_results.get("results") or []:
+                    evidence.append({
+                        "source": "tavily",
+                        "url": row.get("url", ""),
+                        "title": row.get("title", ""),
+                        "summary": row.get("content", ""),
+                        "score": row.get("score"),
+                        "query": search_query,
+                        "fetched_at": datetime.now(UTC).isoformat(),
+                        "status": "ok",
+                    })
             except Exception as exc:
                 search_errors.append(f"tavily_search: {exc}")
 
         prompt_parts = [
-            f"{self._business_strategy_system_prompt('Shop Analyst')}",
+            f"{self._business_strategy_system_prompt('Research Intelligence Analyst')}",
             f"Research this store: {store_url}",
             f"Operator description: {description or 'None provided'}.",
         ]
@@ -4701,6 +4734,8 @@ class AgentsRuntime:
             "profile": profile,
             "model_used": model_used,
             "estimated_cost": estimated_cost,
+            "evidence": evidence,
+            "source_queries": source_queries,
             "search_errors": search_errors if search_errors else None,
         }
 
@@ -4722,6 +4757,8 @@ class AgentsRuntime:
         search_errors: list[str] = []
         competitor_search_results: dict = {}
         competitor_pages: list[str] = []
+        evidence: list[dict] = []
+        source_queries: list[str] = []
 
         if tavily_api_key:
             try:
@@ -4730,9 +4767,20 @@ class AgentsRuntime:
                 categories = store_profile.get("product_categories", [])
                 cat_str = ", ".join(categories[:3]) if categories else ""
                 query = f"competitors similar to {positioning} {cat_str} online store"
+                source_queries.append(query)
                 competitor_search_results = tv.search_raw(query, max_results=5)
                 for r in (competitor_search_results.get("results") or []):
                     url = r.get("url", "")
+                    evidence.append({
+                        "source": "tavily",
+                        "url": url,
+                        "title": r.get("title", ""),
+                        "summary": r.get("content", ""),
+                        "score": r.get("score"),
+                        "query": query,
+                        "fetched_at": datetime.now(UTC).isoformat(),
+                        "status": "ok",
+                    })
                     if url and url != store_url:
                         competitor_pages.append(url)
             except Exception as exc:
@@ -4748,13 +4796,28 @@ class AgentsRuntime:
                         competitor_content.append(
                             f"URL: {comp_url}\nTITLE: {result.title}\n{result.markdown[:4000]}"
                         )
+                        evidence.append({
+                            "source": "firecrawl",
+                            "url": comp_url,
+                            "title": result.title,
+                            "summary": result.markdown[:500],
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "ok",
+                        })
                     except Exception:
                         competitor_content.append(f"URL: {comp_url}\n[Scrape failed]")
+                        evidence.append({
+                            "source": "firecrawl",
+                            "url": comp_url,
+                            "summary": "Scrape failed",
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "failed",
+                        })
             except Exception as exc:
                 search_errors.append(f"firecrawl_competitor: {exc}")
 
         prompt_parts = [
-            f"{self._business_strategy_system_prompt('Shop Analyst')}",
+            f"{self._business_strategy_system_prompt('Research Intelligence Analyst')}",
             f"Store profile: {json.dumps(store_profile)}",
             f"Store URL: {store_url}",
             f"Operator notes: {description or 'None provided'}.",
@@ -4782,5 +4845,249 @@ class AgentsRuntime:
             "report": summary,
             "model_used": model_used,
             "estimated_cost": estimated_cost,
+            "evidence": evidence,
+            "source_queries": source_queries,
+            "search_errors": search_errors if search_errors else None,
+        }
+
+    def run_audience_pain_point_research(
+        self,
+        store_url: str,
+        description: str,
+        store_profile: dict,
+        competitor_report: str,
+        *,
+        provider: str,
+        model: str,
+        runtime_config: dict | None = None,
+        tavily_api_key: str | None = None,
+        firecrawl_api_key: str | None = None,
+    ) -> dict:
+        """Research public reviews and community discussions for audience pain points."""
+        from app.search import FirecrawlClient, TavilyClient
+
+        search_errors: list[str] = []
+        search_results: list[dict] = []
+        community_pages: list[str] = []
+        evidence: list[dict] = []
+        source_queries: list[str] = []
+        target = str(store_profile.get("target_audience") or description or store_url)
+        categories = store_profile.get("product_categories") or []
+        cat_str = ", ".join(str(item) for item in categories[:3])
+        queries = [
+            f"{target} {cat_str} customer reviews complaints pain points",
+            f"{target} {cat_str} reddit forum problems objections",
+            f"{description or store_url} reviews negative feedback alternatives",
+        ]
+
+        if tavily_api_key:
+            try:
+                tv = TavilyClient(api_key=tavily_api_key)
+                for query in queries:
+                    source_queries.append(query)
+                    raw = tv.search_raw(query, max_results=4)
+                    search_results.append(raw)
+                    for row in raw.get("results") or []:
+                        url = row.get("url", "")
+                        evidence.append({
+                            "source": "tavily",
+                            "url": url,
+                            "title": row.get("title", ""),
+                            "summary": row.get("content", ""),
+                            "score": row.get("score"),
+                            "query": query,
+                            "evidence_category": "review_community",
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "ok",
+                        })
+                        if url and any(token in url.lower() for token in ["reddit", "forum", "review", "amazon", "walmart", "trustpilot"]):
+                            community_pages.append(url)
+            except Exception as exc:
+                search_errors.append(f"tavily_audience_search: {exc}")
+
+        community_content: list[str] = []
+        if firecrawl_api_key and community_pages:
+            try:
+                fc = FirecrawlClient(api_key=firecrawl_api_key)
+                for page_url in community_pages[:3]:
+                    try:
+                        result = fc.scrape(page_url)
+                        community_content.append(f"URL: {page_url}\nTITLE: {result.title}\n{result.markdown[:3000]}")
+                        evidence.append({
+                            "source": "firecrawl",
+                            "url": page_url,
+                            "title": result.title,
+                            "summary": result.markdown[:500],
+                            "evidence_category": "review_community",
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "ok",
+                        })
+                    except Exception:
+                        evidence.append({
+                            "source": "firecrawl",
+                            "url": page_url,
+                            "summary": "Community page scrape failed",
+                            "evidence_category": "review_community",
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "failed",
+                        })
+            except Exception as exc:
+                search_errors.append(f"firecrawl_audience_pages: {exc}")
+
+        prompt_parts = [
+            f"{self._business_strategy_system_prompt('Audience Research Analyst')}",
+            f"Store URL: {store_url}",
+            f"Operator notes: {description or 'None provided'}.",
+            f"Store profile: {json.dumps(store_profile)}",
+            f"Competitor context: {competitor_report[:3000]}",
+        ]
+        if search_results:
+            prompt_parts.append(f"REVIEW AND COMMUNITY SEARCH RESULTS: {json.dumps(search_results, indent=2)}")
+        if community_content:
+            prompt_parts.append("COMMUNITY/REVIEW PAGE CONTENT:\n" + "\n---\n".join(community_content))
+        if search_errors:
+            prompt_parts.append(f"Search errors (partial data): {'; '.join(search_errors)}")
+        prompt_parts.append(
+            "Return ONLY valid JSON with keys: summary, findings, strategic_implications. "
+            "findings must include target_audience, pain_points (list), objections (list), review_phrases (list), "
+            "community_sources (list of source names or URLs), confidence_notes."
+        )
+        summary, model_used, estimated_cost = self._chat_complete(provider, model, "\n".join(prompt_parts), runtime_config)
+        try:
+            brief = json.loads(summary)
+        except json.JSONDecodeError:
+            match = re.search(r'\{[\s\S]*\}', summary)
+            brief = json.loads(match.group(0)) if match else {
+                "summary": f"Audience pain point research for {target}.",
+                "findings": {"target_audience": target, "pain_points": [], "raw_response": summary},
+                "strategic_implications": [],
+            }
+        return {
+            "brief": brief,
+            "model_used": model_used,
+            "estimated_cost": estimated_cost,
+            "evidence": evidence,
+            "source_queries": source_queries,
+            "search_errors": search_errors if search_errors else None,
+        }
+
+    def run_compliance_policy_research(
+        self,
+        store_url: str,
+        description: str,
+        store_profile: dict,
+        competitor_report: str,
+        *,
+        provider: str,
+        model: str,
+        runtime_config: dict | None = None,
+        tavily_api_key: str | None = None,
+        firecrawl_api_key: str | None = None,
+    ) -> dict:
+        """Research platform policy and regulatory sources for claim/compliance risks."""
+        from app.search import FirecrawlClient, TavilyClient
+
+        search_errors: list[str] = []
+        policy_results: list[dict] = []
+        policy_pages: list[str] = []
+        evidence: list[dict] = []
+        source_queries: list[str] = []
+        categories = store_profile.get("product_categories") or []
+        cat_str = ", ".join(str(item) for item in categories[:3]) or description or store_url
+        queries = [
+            f"Meta advertising policies claims before after guarantee {cat_str}",
+            f"TikTok Shop product listing policy restricted claims {cat_str}",
+            f"FTC advertising substantiation endorsement review claims {cat_str}",
+            f"Shopify prohibited items acceptable use policy {cat_str}",
+        ]
+
+        if tavily_api_key:
+            try:
+                tv = TavilyClient(api_key=tavily_api_key)
+                for query in queries:
+                    source_queries.append(query)
+                    raw = tv.search_raw(query, max_results=4)
+                    policy_results.append(raw)
+                    for row in raw.get("results") or []:
+                        url = row.get("url", "")
+                        evidence.append({
+                            "source": "tavily",
+                            "url": url,
+                            "title": row.get("title", ""),
+                            "summary": row.get("content", ""),
+                            "score": row.get("score"),
+                            "query": query,
+                            "evidence_category": "policy_regulatory",
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "ok",
+                        })
+                        if url and any(domain in url.lower() for domain in ["facebook", "meta", "tiktok", "ftc.gov", "shopify"]):
+                            policy_pages.append(url)
+            except Exception as exc:
+                search_errors.append(f"tavily_policy_search: {exc}")
+
+        policy_content: list[str] = []
+        if firecrawl_api_key and policy_pages:
+            try:
+                fc = FirecrawlClient(api_key=firecrawl_api_key)
+                for page_url in policy_pages[:4]:
+                    try:
+                        result = fc.scrape(page_url)
+                        policy_content.append(f"URL: {page_url}\nTITLE: {result.title}\n{result.markdown[:3000]}")
+                        evidence.append({
+                            "source": "firecrawl",
+                            "url": page_url,
+                            "title": result.title,
+                            "summary": result.markdown[:500],
+                            "evidence_category": "policy_regulatory",
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "ok",
+                        })
+                    except Exception:
+                        evidence.append({
+                            "source": "firecrawl",
+                            "url": page_url,
+                            "summary": "Policy page scrape failed",
+                            "evidence_category": "policy_regulatory",
+                            "fetched_at": datetime.now(UTC).isoformat(),
+                            "status": "failed",
+                        })
+            except Exception as exc:
+                search_errors.append(f"firecrawl_policy_pages: {exc}")
+
+        prompt_parts = [
+            f"{self._business_strategy_system_prompt('Compliance Research Analyst')}",
+            f"Store URL: {store_url}",
+            f"Operator notes: {description or 'None provided'}.",
+            f"Store profile: {json.dumps(store_profile)}",
+            f"Competitor context: {competitor_report[:3000]}",
+        ]
+        if policy_results:
+            prompt_parts.append(f"POLICY AND REGULATORY SEARCH RESULTS: {json.dumps(policy_results, indent=2)}")
+        if policy_content:
+            prompt_parts.append("POLICY/REGULATORY PAGE CONTENT:\n" + "\n---\n".join(policy_content))
+        if search_errors:
+            prompt_parts.append(f"Search errors (partial data): {'; '.join(search_errors)}")
+        prompt_parts.append(
+            "Return ONLY valid JSON with keys: summary, findings, strategic_implications. "
+            "findings must include policy_sources (list), flagged_terms (list), claims_to_verify (list), "
+            "platform_risks (list), required_evidence (list), confidence_notes."
+        )
+        summary, model_used, estimated_cost = self._chat_complete(provider, model, "\n".join(prompt_parts), runtime_config)
+        try:
+            brief = json.loads(summary)
+        except json.JSONDecodeError:
+            match = re.search(r'\{[\s\S]*\}', summary)
+            brief = json.loads(match.group(0)) if match else {
+                "summary": f"Compliance policy research for {store_url}.",
+                "findings": {"policy_sources": [], "flagged_terms": [], "raw_response": summary},
+                "strategic_implications": [],
+            }
+        return {
+            "brief": brief,
+            "model_used": model_used,
+            "estimated_cost": estimated_cost,
+            "evidence": evidence,
+            "source_queries": source_queries,
             "search_errors": search_errors if search_errors else None,
         }

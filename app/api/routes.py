@@ -79,10 +79,14 @@ from app.schemas.api import (
     RunTemplateCreate,
     RunTemplateUpdate,
     RunTemplateView,
+    GmMemoryReviewActionRequest,
     ShopAnalysisRequest,
     ShopAnalysisResponse,
+    ShopAnalysisPreflightResponse,
     ShopAnalysisListItem,
     ShopAnalysisHistoryResponse,
+    ResearchTaskHistoryResponse,
+    ResearchTaskItem,
     ShopItem,
     ShopListResponse,
     ShopPatchRequest,
@@ -447,6 +451,15 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
         for event in run_trace_events(db, run.id, limit=200)
     ]
 
+    from app.services.research_context import build_research_context
+
+    research_context = build_research_context(
+        db,
+        project_id=run.project_id,
+        shop_id=run.workspace_id,
+        industry_code=run.industry_code,
+    )
+
     return RunView(
         id=run.id,
         status=run.status,
@@ -479,6 +492,7 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
         status_explanation=_run_status_explanation(run, tasks),
         latest_scorecard=scorecard,
         latest_forecast=forecast,
+        research_context=research_context,
     )
 
 
@@ -2321,6 +2335,7 @@ def _dashboard_shared_js() -> str:
                 <div style="margin-top:8px;"><button onclick="refreshAsyncAssets('${run.id}')">Refresh async assets</button></div>
               </div>
               ${renderStatusExplanation(run)}
+              ${renderResearchContext(run.research_context || {})}
               ${renderReviewChecklist(run)}
               ${renderExecutionMemory(executionMemory)}
               ${renderDeliverables(deliverables)}
@@ -2331,6 +2346,22 @@ def _dashboard_shared_js() -> str:
               ${renderTimeline(run)}
               ${scoreSection}
             `;
+          }
+
+          function renderResearchContext(ctx){
+            const summary = ctx.summary || {};
+            const included = ctx.included || [];
+            const excluded = ctx.excluded || [];
+            const sourceCounts = Object.entries(summary.source_counts || {}).map(([k,v]) => `${esc(k)}=${esc(v)}`).join(" · ") || "none";
+            const excludedReasons = (ctx.planning_guidance?.excluded_reasons || []).join(", ") || "none";
+            return `<section class="run-panel" style="margin-top:10px;">
+              <h3 style="margin:0 0 6px;">Research Context</h3>
+              <div class="muted">Included=${esc(summary.included_count || 0)} · Excluded=${esc(summary.excluded_count || 0)} · Evidence=${esc(summary.evidence_count || 0)} · Avg quality=${esc(summary.average_quality || 0)}</div>
+              <div class="muted">Types: ${sourceCounts}</div>
+              <div class="muted">Excluded reasons: ${esc(excludedReasons)}</div>
+              ${included.length ? `<div class="muted">Used: ${included.slice(0,3).map(item => esc(item.source_type + ": " + (item.summary || "").slice(0,80))).join("<br>")}</div>` : ""}
+              ${excluded.length ? `<div class="muted">Held for review: ${excluded.slice(0,3).map(item => esc(item.source_type + " (" + (item.dirty_reasons || []).join(", ") + ")")).join("<br>")}</div>` : ""}
+            </section>`;
           }
 
           async function selectRun(runId){
@@ -2386,6 +2417,23 @@ def _dashboard_shared_js() -> str:
               hint.textContent = "Autonomous web research will run in planning and may be slower due to online fetches.";
             } else {
               hint.textContent = "Planning will rely on your manual notes and uploaded assets only (recommended for fast debugging).";
+            }
+            refreshResearchContextCard();
+          }
+
+          async function refreshResearchContextCard(){
+            const card = document.getElementById("research-context-card");
+            if (!card) return;
+            const workspace = document.getElementById("workspace_name")?.value || "workspace_demo";
+            const project = document.getElementById("project_name")?.value || "shop_analysis";
+            try {
+              const ctx = await api(`/research-context?workspace_name=${encodeURIComponent(workspace)}&project_name=${encodeURIComponent(project)}`);
+              const summary = ctx.summary || {};
+              const sourceCounts = Object.entries(summary.source_counts || {}).map(([k,v]) => `${esc(k)}=${esc(v)}`).join(" · ") || "none";
+              const excludedReasons = (ctx.planning_guidance?.excluded_reasons || []).join(", ") || "none";
+              card.innerHTML = `<b>Research context</b>: ${summary.ready_for_planning ? "ready" : "not ready"} · included=${esc(summary.included_count || 0)} · excluded=${esc(summary.excluded_count || 0)} · avg quality=${esc(summary.average_quality || 0)}<br><span class="muted">types: ${sourceCounts} · excluded reasons: ${esc(excludedReasons)}</span>`;
+            } catch (err) {
+              card.textContent = "Research context unavailable for this workspace/project.";
             }
           }
 
@@ -2542,6 +2590,11 @@ def _dashboard_shared_js() -> str:
           }
         </script>
     """
+@router.get("/dashboard/research", response_class=HTMLResponse)
+def dashboard_research(request: Request) -> str:
+    return templates.TemplateResponse(request=request, name="shop_analysis.html")
+
+
 @router.get("/dashboard/shop-analysis", response_class=HTMLResponse)
 def dashboard_shop_analysis(request: Request) -> str:
     return templates.TemplateResponse(request=request, name="shop_analysis.html")
@@ -2723,6 +2776,7 @@ def list_pipeline_modes() -> list[PipelineModeView]:
 
 def _serialize_shop(db: Session, workspace) -> dict:
     from app.data.models import GmMemory, PipelineRun, Project
+    from app.services.shop_analysis import RESEARCH_SOURCE_TYPES
 
     category_count = db.scalar(
         select(func.count(Project.id)).where(Project.workspace_id == workspace.id)
@@ -2733,7 +2787,7 @@ def _serialize_shop(db: Session, workspace) -> dict:
     analysis_rows = db.scalars(
         select(GmMemory).where(
             GmMemory.memory_scope == "shop",
-            GmMemory.source_type.in_(["shop_profile", "competitor_analysis"]),
+            GmMemory.source_type.in_(RESEARCH_SOURCE_TYPES),
         )
     ).all()
     analysis_count = sum(
@@ -2893,17 +2947,72 @@ def delete_shop(shop_name: str, db: Session = Depends(get_db)):
 
 # ── Shop Analysis ─────────────────────────────────────────────────
 
+def _shop_analysis_tool_status(config: dict) -> dict:
+    from app.services.shop_analysis import shop_analysis_tool_status
+
+    return shop_analysis_tool_status(config)
+
+
+@router.get("/shop-analysis/preflight", response_model=ShopAnalysisPreflightResponse)
+def shop_analysis_preflight(db: Session = Depends(get_db)) -> dict:
+    from app.services.agent_api_configs import resolve_agent_config
+
+    config = resolve_agent_config(db, agent_name="shop_analyst", run_provider="", run_model="")
+    tool_status = _shop_analysis_tool_status(config)
+    checks = [
+        {"key": "shop_analyst.llm", "severity": "ok" if tool_status["llm"]["available"] else "error", **tool_status["llm"]},
+        {"key": "shop_analyst.tavily", "severity": "ok" if tool_status["tavily"]["available"] else "warn", **tool_status["tavily"]},
+        {"key": "shop_analyst.firecrawl", "severity": "ok" if tool_status["firecrawl"]["available"] else "warn", **tool_status["firecrawl"]},
+    ]
+    has_llm = tool_status["llm"]["available"]
+    has_external_research = tool_status["tavily"]["available"] or tool_status["firecrawl"]["available"]
+    severity = "ok" if has_llm and has_external_research else "warn" if has_llm else "error"
+    return {"ok": has_llm, "severity": severity, "checks": checks}
+
+
+@router.get("/research-context")
+def research_context(
+    workspace_name: str = Query(default="workspace_demo"),
+    project_name: str = Query(default="shop_analysis"),
+    shop_id: str | None = Query(default=None),
+    industry_code: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.research_context import build_research_context
+    from app.services.shop_analysis import _get_or_create_workspace_project
+
+    if shop_id:
+        shop = _get_shop_by_id_or_name(db, shop_id)
+        if not shop:
+            raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+        _, project = _get_or_create_workspace_project(db, shop.name, project_name or "shop_analysis")
+        return build_research_context(
+            db,
+            project_id=project.id,
+            shop_id=shop.id,
+            industry_code=industry_code or shop.industry_code,
+        )
+    workspace, project = _get_or_create_workspace_project(db, workspace_name, project_name)
+    return build_research_context(
+        db,
+        project_id=project.id,
+        shop_id=workspace.id,
+        industry_code=industry_code or workspace.industry_code,
+    )
+
+
 @router.post("/shop-analysis/run", response_model=ShopAnalysisResponse)
 def run_shop_analysis(
     payload: ShopAnalysisRequest,
     db: Session = Depends(get_db),
 ) -> dict:
-    from app.agents.runtime import AgentsRuntime
-    from app.services.agent_api_configs import resolve_agent_config, resolve_agent_runtime
+    from app.services.agent_api_configs import resolve_agent_config
     from app.services.shop_analysis import (
         _get_or_create_workspace_project,
-        save_shop_profile,
-        save_competitor_analysis,
+        create_research_task,
+        execute_research_task,
+        research_task_to_dict,
+        shop_analysis_tool_status,
     )
     from app.data.models import Workspace
 
@@ -2925,98 +3034,39 @@ def run_shop_analysis(
             db, payload.workspace_name, payload.project_name
         )
         shop = workspace
-    runtime = AgentsRuntime()
     config = resolve_agent_config(db, agent_name="shop_analyst", run_provider="", run_model="")
-    provider = config["provider_name"]
-    model = config["model_name"]
-    runtime_config = resolve_agent_runtime(config)
-
-    # Extract search tool API keys from config extra
-    extra = config.get("extra") or {}
-    tavily_cfg = extra.get("tavily_config") or {}
-    firecrawl_cfg = extra.get("firecrawl_config") or {}
-    import os
-    tavily_api_key = os.getenv(tavily_cfg.get("api_key_env", "")) if tavily_cfg.get("api_key_env") else None
-    firecrawl_api_key = os.getenv(firecrawl_cfg.get("api_key_env", "")) if firecrawl_cfg.get("api_key_env") else None
-
-    analysis_id = str(uuid.uuid4())
-    errors: list[str] = []
-
-    # Phase 1: Store profile
-    profile_result = None
-    try:
-        result = runtime.run_shop_profile_analysis(
-            store_url=payload.store_url,
-            description=payload.description,
-            provider=provider,
-            model=model,
-            runtime_config=runtime_config,
-            tavily_api_key=tavily_api_key,
-            firecrawl_api_key=firecrawl_api_key,
-        )
-        entry = save_shop_profile(
-            db,
-            project_id=project.id,
-            industry_code=payload.industry_code,
-            store_url=payload.store_url,
-            profile_data=result["profile"],
-            shop_id=shop.id if shop else None,
-            shop_name=shop.name if shop else None,
-        )
-        profile_result = {
-            "source_type": "shop_profile",
-            "content": entry.content,
-            "summary": result["profile"].get("positioning", payload.store_url),
-        }
-    except Exception as exc:
-        errors.append(f"shop_profile: {exc}")
-
-    # Phase 2: Competitor analysis (depends on profile success)
-    competitor_result = None
-    if profile_result:
-        try:
-            result = runtime.run_competitor_analysis(
-                store_url=payload.store_url,
-                description=payload.description,
-                store_profile=profile_result["content"].get("profile", {}),
-                provider=provider,
-                model=model,
-                runtime_config=runtime_config,
-                tavily_api_key=tavily_api_key,
-                firecrawl_api_key=firecrawl_api_key,
-            )
-            entry = save_competitor_analysis(
-                db,
-                project_id=project.id,
-                industry_code=payload.industry_code,
-                store_url=payload.store_url,
-                analysis_markdown=result["report"],
-                shop_id=shop.id if shop else None,
-                shop_name=shop.name if shop else None,
-            )
-            competitor_result = {
-                "source_type": "competitor_analysis",
-                "content": entry.content,
-                "summary": result["report"][:120] + "..." if len(result["report"]) > 120 else result["report"],
-            }
-        except Exception as exc:
-            errors.append(f"competitor_analysis: {exc}")
-
-    if shop and (profile_result or competitor_result):
-        shop.last_analyzed_at = datetime.now(UTC)
-    db.commit()
-
-    status = "failed" if not profile_result and not competitor_result else "completed"
-    return ShopAnalysisResponse(
-        id=analysis_id,
+    tool_status = shop_analysis_tool_status(config)
+    task = create_research_task(
+        db,
+        project_id=project.id,
         shop_id=shop.id if shop else None,
         shop_name=shop.name if shop else None,
         store_url=payload.store_url,
         industry_code=payload.industry_code,
-        profile=profile_result,
-        competitor_analysis=competitor_result,
-        status=status,
-        error_message="; ".join(errors) if errors else None,
+        task_type=payload.research_focus,
+        source="manual",
+        refresh_reason=payload.refresh_reason,
+        payload=payload.model_dump(mode="json"),
+    )
+    db.commit()
+
+    if payload.execution_mode == "sync":
+        return execute_research_task(db, task.id)
+
+    return ShopAnalysisResponse(
+        id=task.id,
+        shop_id=shop.id if shop else None,
+        shop_name=shop.name if shop else None,
+        store_url=payload.store_url,
+        industry_code=payload.industry_code,
+        profile=None,
+        competitor_analysis=None,
+        extended_results=[],
+        status="queued",
+        research_focus=payload.research_focus,
+        task=research_task_to_dict(task),
+        tool_status=tool_status,
+        error_message=None,
         created_at=datetime.now(UTC),
     ).model_dump(mode="json")
 
@@ -3040,6 +3090,101 @@ def shop_analysis_history(
         _, project = _get_or_create_workspace_project(db, workspace_name, project_name)
         items = list_shop_analyses(db, project.id, limit=limit)
     return {"items": items}
+
+
+@router.get("/shop-analysis/tasks", response_model=ResearchTaskHistoryResponse)
+def shop_analysis_tasks(
+    shop_id: str | None = Query(default=None),
+    workspace_name: str = Query(default="workspace_demo"),
+    project_name: str = Query(default=""),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.shop_analysis import _get_or_create_workspace_project, list_research_tasks
+
+    if shop_id:
+        shop = _get_shop_by_id_or_name(db, shop_id)
+        if not shop:
+            raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+        _, project = _get_or_create_workspace_project(db, shop.name, "shop_analysis")
+        items = list_research_tasks(db, project_id=project.id, shop_id=shop.id, limit=limit)
+    else:
+        _, project = _get_or_create_workspace_project(db, workspace_name, project_name)
+        items = list_research_tasks(db, project_id=project.id, limit=limit)
+    return {"items": items}
+
+
+@router.get("/shop-analysis/queue/status")
+def shop_analysis_queue_status() -> dict:
+    from app.orchestrator.research_worker import research_worker
+
+    return research_worker.get_status()
+
+
+@router.post("/shop-analysis/refresh-due")
+def queue_due_shop_analysis_refreshes(
+    shop_id: str | None = Query(default=None),
+    workspace_name: str = Query(default="workspace_demo"),
+    project_name: str = Query(default="shop_analysis"),
+    include_refresh_soon: bool = Query(default=True),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.shop_analysis import _get_or_create_workspace_project, enqueue_due_research_refreshes
+
+    if shop_id:
+        shop = _get_shop_by_id_or_name(db, shop_id)
+        if not shop:
+            raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+        _, project = _get_or_create_workspace_project(db, shop.name, "shop_analysis")
+        result = enqueue_due_research_refreshes(
+            db,
+            project_id=project.id,
+            shop_id=shop.id,
+            include_refresh_soon=include_refresh_soon,
+            limit=limit,
+        )
+    else:
+        _, project = _get_or_create_workspace_project(db, workspace_name, project_name)
+        result = enqueue_due_research_refreshes(
+            db,
+            project_id=project.id,
+            include_refresh_soon=include_refresh_soon,
+            limit=limit,
+        )
+    db.commit()
+    return result
+
+
+@router.get("/shop-analysis/tasks/{task_id}", response_model=ResearchTaskItem)
+def get_shop_analysis_task(
+    task_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.shop_analysis import get_research_task, research_task_to_dict
+
+    task = get_research_task(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"research task not found: {task_id}")
+    return research_task_to_dict(task)
+
+
+@router.post("/shop-analysis/tasks/{task_id}/execute", response_model=ShopAnalysisResponse)
+def execute_shop_analysis_task(
+    task_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.shop_analysis import execute_research_task, get_research_task
+
+    task = get_research_task(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"research task not found: {task_id}")
+    if task.status not in {"queued", "failed", "running", "completed"}:
+        raise HTTPException(status_code=409, detail=f"research task cannot be executed from status={task.status}")
+    try:
+        return execute_research_task(db, task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 # ── Creative Preset CRUD ──────────────────────────────────────────
@@ -3323,6 +3468,70 @@ def update_gm_memory(
         content["superseded_by_id"] = payload.superseded_by_id
         row.content = content
         row.status = "superseded"
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _gm_memory_item(row)
+
+
+@router.post("/gm-memory/{memory_id}/review", response_model=GmMemoryItem)
+def review_research_memory(
+    memory_id: str,
+    payload: GmMemoryReviewActionRequest,
+    db: Session = Depends(get_db),
+) -> GmMemoryItem:
+    row = db.get(GmMemory, memory_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="GM memory not found")
+    if row.memory_type != "research_intelligence":
+        raise HTTPException(status_code=400, detail="Review actions are only supported for research_intelligence memory")
+
+    content = dict(row.content or {})
+    review_log = list(content.get("review_log") or [])
+    review_event = {
+        "action": payload.action,
+        "changed_by": payload.changed_by,
+        "notes": payload.notes or "",
+        "reviewed_at": datetime.now(UTC).isoformat(),
+    }
+    review_log.append(review_event)
+
+    if payload.action == "approve":
+        row.status = "active"
+        row.pinned = True
+        content["review_status"] = "approved"
+    elif payload.action == "pin":
+        row.pinned = True
+        content["review_status"] = content.get("review_status") or "pinned"
+    elif payload.action == "unpin":
+        row.pinned = False
+        content["review_status"] = content.get("review_status") or "unreviewed"
+    elif payload.action == "reject":
+        row.status = "archived"
+        row.pinned = False
+        content["review_status"] = "rejected"
+    elif payload.action == "resolve_conflicts":
+        resolved = []
+        for conflict in content.get("conflicts") or []:
+            item = dict(conflict or {})
+            item["status"] = "resolved"
+            item["resolved_by"] = payload.changed_by
+            item["resolved_at"] = review_event["reviewed_at"]
+            if payload.notes:
+                item["resolution_notes"] = payload.notes
+            resolved.append(item)
+        content["conflicts"] = resolved
+        content["conflict_count"] = 0
+        content["review_status"] = "conflicts_resolved"
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported review action")
+
+    content["review_log"] = review_log
+    content["reviewed_at"] = review_event["reviewed_at"]
+    content["reviewed_by"] = payload.changed_by
+    if payload.notes:
+        content["review_notes"] = payload.notes
+    row.content = content
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -4673,6 +4882,7 @@ def data_dashboard_summary(
     total_clicks = sum(int((s.metrics or {}).get("clicks", 0)) for s in recent_snapshots)
 
     import os
+    from app.services.research_context import build_research_context
 
     return {
         "workspace_name": workspace_name,
@@ -4705,6 +4915,12 @@ def data_dashboard_summary(
             "shopify_last_sync_at": workspace.shopify_last_sync_at.isoformat() if workspace.shopify_last_sync_at else None,
             "meta_last_sync_at": workspace.meta_last_sync_at.isoformat() if workspace.meta_last_sync_at else None,
         },
+        "research_context": build_research_context(
+            db,
+            project_id=project.id,
+            shop_id=workspace.id,
+            industry_code=workspace.industry_code,
+        ),
         "daily_trend": _daily_revenue_trend(recent_snapshots),
     }
 

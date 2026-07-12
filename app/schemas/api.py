@@ -117,6 +117,7 @@ class RunView(BaseModel):
     status_explanation: RunStatusExplanation
     latest_scorecard: ScoreCard | None = None
     latest_forecast: ConversionForecast | None = None
+    research_context: dict = Field(default_factory=dict)
 
 
 class RunSummary(BaseModel):
@@ -434,6 +435,12 @@ class GmMemoryUpdateRequest(BaseModel):
     superseded_by_id: str | None = None
 
 
+class GmMemoryReviewActionRequest(BaseModel):
+    action: Literal["approve", "pin", "unpin", "reject", "resolve_conflicts"]
+    notes: str | None = None
+    changed_by: str = "operator"
+
+
 class GmMemoryCompactRequest(BaseModel):
     project_id: str
     memory_scope: Literal["shop", "product", "industry"]
@@ -646,12 +653,46 @@ class ShopAnalysisRequest(BaseModel):
     industry_code: str = Field(default="general", description="Industry code for GmMemory association")
     workspace_name: str = Field(default="workspace_demo")
     project_name: str = Field(default="")
+    refresh_reason: str | None = None
+    research_focus: Literal[
+        "full_intelligence",
+        "store_context",
+        "competitive_landscape",
+        "industry_baseline",
+        "audience_pain_points",
+        "compliance_scan",
+    ] = "full_intelligence"
+    execution_mode: Literal["sync", "queued"] = "sync"
 
 
 class ShopAnalysisResult(BaseModel):
     source_type: str  # "shop_profile" or "competitor_analysis"
     content: dict     # structured profile or markdown report
     summary: str      # one-line summary for display
+    research_status: str = "unknown"
+    evidence_count: int = 0
+    evidence_quality: dict = Field(default_factory=dict)
+    conflict_count: int = 0
+    research_focus: str = "full_intelligence"
+
+
+class ResearchTaskItem(BaseModel):
+    id: str
+    project_id: str
+    shop_id: str | None = None
+    shop_name: str | None = None
+    store_url: str
+    industry_code: str = "general"
+    task_type: str = "full_intelligence"
+    status: str = "queued"
+    priority: int = 2
+    source: str = "manual"
+    refresh_reason: str | None = None
+    memory_ids: list[str] = Field(default_factory=list)
+    error_message: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
 
 
 class ShopAnalysisResponse(BaseModel):
@@ -662,9 +703,19 @@ class ShopAnalysisResponse(BaseModel):
     industry_code: str
     profile: ShopAnalysisResult | None = None
     competitor_analysis: ShopAnalysisResult | None = None
-    status: str  # "running", "completed", "failed"
+    extended_results: list[ShopAnalysisResult] = Field(default_factory=list)
+    status: str  # "queued", "running", "completed", "failed"
+    research_focus: str = "full_intelligence"
+    task: ResearchTaskItem | None = None
+    tool_status: dict = Field(default_factory=dict)
     error_message: str | None = None
     created_at: datetime
+
+
+class ShopAnalysisPreflightResponse(BaseModel):
+    ok: bool
+    severity: Literal["ok", "warn", "error"]
+    checks: list[dict] = Field(default_factory=list)
 
 
 class ShopAnalysisListItem(BaseModel):
@@ -673,12 +724,25 @@ class ShopAnalysisListItem(BaseModel):
     industry_code: str
     status: str
     source_type: str
+    memory_type: str = ""
+    research_focus: str = "full_intelligence"
+    research_status: str = "unknown"
+    evidence_count: int = 0
+    evidence_quality: dict = Field(default_factory=dict)
+    conflict_count: int = 0
+    expires_at: str | None = None
+    refresh_state: str = "unknown"
+    latest_task: ResearchTaskItem | None = None
     summary: str
     created_at: datetime
 
 
 class ShopAnalysisHistoryResponse(BaseModel):
     items: list[ShopAnalysisListItem]
+
+
+class ResearchTaskHistoryResponse(BaseModel):
+    items: list[ResearchTaskItem]
 
 
 class ShopItem(BaseModel):

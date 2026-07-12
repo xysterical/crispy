@@ -13,6 +13,7 @@ from app.api.routes import router
 from app.core.config import get_settings
 from app.data.models import Workspace
 from app.data.session import SessionLocal, init_db
+from app.orchestrator.research_worker import research_worker
 from app.orchestrator.worker import worker
 
 logger = logging.getLogger(__name__)
@@ -72,12 +73,14 @@ async def lifespan(_: FastAPI):
         print(f"[crispy] Database backed up to {backup_path}")
     if settings.enable_worker:
         await worker.start()
+        await research_worker.start()
     auto_sync_task = asyncio.create_task(_auto_sync_loop())
     try:
         yield
     finally:
         auto_sync_task.cancel()
         if settings.enable_worker:
+            await research_worker.stop()
             await worker.stop()
 
 
