@@ -126,6 +126,7 @@ global: agent_api_config, integration_config, creative_preset, run_template, per
 | `VariantScore` | Evaluation/compliance/visual_quality scores per variant |
 | `AgentTraceEvent` | Per-stage execution log for debugging |
 | `GmMemory` | Cross-run strategy memory (product/industry/shop scopes) |
+| `ResearchTask` | Durable Research Intelligence queue item for store, competitor, industry, audience, and compliance tasks |
 | `ContentSchedule` | Publishing schedule entries, synced to Notion |
 
 ## API Reference
@@ -165,7 +166,24 @@ PATCH  /integration-configs/{id}      # Update integration credential
 POST   /feedback/import               # Import CSV feedback rows
 GET    /projects/{id}/leaderboard     # Creative performance ranking
 GET    /gm-memory                     # List GM memory entries
+POST   /gm-memory/{id}/review         # Approve/reject/resolve conflicts for research_intelligence memory
 ```
+
+### Research Intelligence
+```
+GET    /research-context                    # Included/excluded research context for planning and dashboards
+GET    /shop-analysis/preflight             # LLM/Tavily/Firecrawl readiness for Research Intelligence
+POST   /shop-analysis/run                   # Create and optionally execute a research task
+GET    /shop-analysis/history               # Latest research memory by shop/store
+GET    /shop-analysis/tasks                 # Research task history
+GET    /shop-analysis/tasks/{id}            # Single research task status
+POST   /shop-analysis/tasks/{id}/execute    # Execute/retry a queued or failed research task
+GET    /shop-analysis/queue/status          # Research worker queue status
+POST   /shop-analysis/refresh-due           # Queue expired/refresh-soon research memory for refresh
+```
+
+Research focus values:
+`full_intelligence`, `store_context`, `competitive_landscape`, `industry_baseline`, `audience_pain_points`, `compliance_scan`.
 
 ### Database Backup
 ```
@@ -218,18 +236,36 @@ Shopify Sync ──→ GmMemory (product_intelligence)
               ──→ GmMemory (store_intelligence)
 
 Meta Sync ──→ GmMemory (store_intelligence)
+
+Research Intelligence ──→ GmMemory (research_intelligence)
+                      ├─ shop_profile
+                      ├─ competitor_analysis
+                      ├─ industry_baseline
+                      ├─ audience_pain_points
+                      └─ compliance_scan
 ```
 
 ### Write Path
 - `POST /feedback/import` → writes product + industry GmMemory entries
 - Shopify/Meta auto-sync → writes product/store intelligence
 - Operator variant review (marketplace QA tags) → writes visual_quality memory
+- Research Intelligence → writes shop/industry-scoped `research_intelligence` memory with evidence, quality, conflicts, freshness, and review state
 - `GmInstructionVersion` incremented on each feedback import
 
 ### Read Path
 - `planning` stage: `_recent_gm_lessons()` queries recent memories by `product_code` + `industry_code`
+- Shop-scoped research memory is included when `content.shop_id == PipelineRun.workspace_id`
+- Memory is gated by `memory_is_strategy_safe()`; weak evidence, expired research, unresolved conflicts, low confidence, or archived status are excluded unless pinned/reviewed
+- `build_research_context()` summarizes included/excluded research for Create Run, Run Detail, Agent Trace, GM Review, Data Dashboard, and planning prompts
 - Merged with analytics insights (sales velocity, creative fatigue, creative comparison)
-- Injected into planning agent prompt as `gm_lessons`
+- Injected into planning agent prompt as `gm_lessons` plus `research_context`
+
+### Research Quality & Governance
+- Evidence is normalized with source URL, query, evidence category, fetched timestamp, quality score, and quality tier.
+- `audience_pain_points` uses review/community evidence categories.
+- `compliance_scan` uses policy/regulatory evidence categories.
+- Expired or soon-to-expire memory can be refreshed through `/shop-analysis/refresh-due`.
+- Conflicted research is held out of planning until resolved in GM Review or explicitly pinned.
 
 ### Attribution Logic
 - **Shopify → Product**: Order line items matched to `Product.product_code` via variant SKU
@@ -296,6 +332,12 @@ The `PipelineWorker` runs background task processing:
 - Video poller loop for async video generation tasks
 - Orphaned task recovery on startup
 
+The `ResearchWorker` runs alongside the pipeline worker when `CRISPY_ENABLE_WORKER=true`:
+- Claims queued `ResearchTask` rows
+- Executes store/competitor/industry/audience/compliance research through `execute_research_task()`
+- Recovers orphaned running research tasks on startup
+- Exposes queue visibility through `/shop-analysis/queue/status`
+
 ## Environment Variables
 
 All configuration uses the `CRISPY_API_KEY_*` prefix:
@@ -315,6 +357,10 @@ CRISPY_API_KEY_SHOPIFY
 
 # Meta Ads (reserved)
 CRISPY_API_KEY_META
+
+# Research Intelligence search tools
+CRISPY_API_KEY_TAVILY
+CRISPY_API_KEY_FIRECRAWL
 
 # Database
 CRISPY_DATABASE_URL=sqlite:///./crispy.db
