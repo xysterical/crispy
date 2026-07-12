@@ -49,9 +49,14 @@ def test_shop_management_page_renders_workflow_layout(client):
     html = resp.text
     assert "Shops" in html
     assert "Create Shop" in html
-    assert "Operating Flow" in html
+    assert "Shop workflow help" in html
     assert "shop-list" in html
+    assert "shops-list-tools" in html
+    assert "create-shop-toggle" in html
+    assert "setCreateCollapsed(shops.length > 0)" in html
     assert "renderShopWorkspace" in html
+    assert "displayShopName" in html
+    assert "workflow-card" not in html
     assert 'href="/dashboard/shops"' in html
 
 
