@@ -3,7 +3,7 @@
 {% block styles %}
   {{ super() }}
   .shops-shell { max-width: 1320px; }
-  .shops-header { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 16px; }
+  .shops-header { margin-bottom: 16px; }
   .shops-kicker { color: var(--accent-dark); font-size: 12px; font-weight: 750; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
   .shops-layout { display: grid; grid-template-columns: minmax(280px, 380px) minmax(0, 1fr); gap: 16px; align-items: start; }
   .shops-sidebar { display: grid; gap: 12px; position: sticky; top: 16px; }
@@ -72,7 +72,7 @@
     .shops-list { max-height: 380px; }
   }
   @media (max-width: 560px) {
-    .shops-header, .shop-profile-head, .shop-edit-actions { align-items: flex-start; flex-direction: column; }
+    .shop-profile-head, .shop-edit-actions { align-items: flex-start; flex-direction: column; }
     .metric-grid { grid-template-columns: 1fr; }
     .shop-profile-actions { justify-content: flex-start; }
   }
@@ -87,11 +87,6 @@
         <div class="shops-kicker">Commerce workspace</div>
         <h1>Shops</h1>
         <div class="subtitle">Manage the store entity used by research, creative runs, GM memory, data sync, and scheduling.</div>
-      </div>
-      <div class="action-row">
-        <a class="nav-link" href="/dashboard/research">Research</a>
-        <a class="nav-link" href="/dashboard">Create Run</a>
-        <a class="nav-link" href="/dashboard/data">Data</a>
       </div>
     </header>
 
