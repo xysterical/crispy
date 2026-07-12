@@ -393,6 +393,10 @@ class DataSourceSelectRequest(BaseModel):
     url: str
 
 
+class BulkIdsRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+
+
 class ArtifactListItem(BaseModel):
     artifact_id: str
     run_id: str

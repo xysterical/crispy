@@ -36,6 +36,7 @@ from app.schemas.api import (
     AgentTraceEventView,
     ArtifactListItem,
     ArtifactListResponse,
+    BulkIdsRequest,
     DataSourceInfo,
     DataSourceListResponse,
     DataSourceSelectRequest,
@@ -4239,6 +4240,63 @@ def list_artifacts(
     return ArtifactListResponse(page=page, page_size=page_size, total=total, items=items)
 
 
+@router.post("/artifacts/images.zip")
+def download_artifact_images_zip(payload: BulkIdsRequest, db: Session = Depends(get_db)) -> StreamingResponse:
+    ids = [item for item in payload.ids if item]
+    if not ids:
+        raise HTTPException(status_code=400, detail="no artifact ids selected")
+    rows = db.scalars(
+        select(Artifact)
+        .where(Artifact.id.in_(ids))
+        .order_by(desc(Artifact.created_at))
+    ).all()
+    archive = io.BytesIO()
+    exported: list[dict] = []
+    skipped: list[dict] = []
+    with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for row in rows:
+            media_type = mimetypes.guess_type(row.uri)[0] or ""
+            if "image" not in row.artifact_type and not media_type.startswith("image/"):
+                skipped.append({"artifact_id": row.id, "uri": row.uri, "reason": "not_image"})
+                continue
+            try:
+                media_path = _resolve_media_path(row.uri)
+            except HTTPException:
+                skipped.append({"artifact_id": row.id, "uri": row.uri, "reason": "missing_file"})
+                continue
+            suffix = media_path.suffix or ".png"
+            export_name = f"{row.artifact_type}_{row.id}{suffix}".replace("/", "_")
+            zf.write(media_path, export_name)
+            exported.append({"artifact_id": row.id, "file": export_name, "uri": row.uri})
+        zf.writestr(
+            "manifest.json",
+            json.dumps(
+                {"selected_count": len(ids), "exported_count": len(exported), "skipped_count": len(skipped), "exported": exported, "skipped": skipped},
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
+    archive.seek(0)
+    return StreamingResponse(
+        archive,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="selected_asset_images.zip"'},
+    )
+
+
+@router.post("/artifacts/bulk-delete")
+def bulk_delete_artifacts(payload: BulkIdsRequest, db: Session = Depends(get_db)) -> dict:
+    ids = [item for item in payload.ids if item]
+    if not ids:
+        raise HTTPException(status_code=400, detail="no artifact ids selected")
+    rows = db.scalars(select(Artifact).where(Artifact.id.in_(ids))).all()
+    deleted_ids = [row.id for row in rows]
+    for row in rows:
+        db.delete(row)
+    db.commit()
+    return {"requested": len(ids), "deleted": len(deleted_ids), "deleted_ids": deleted_ids, "skipped": len(ids) - len(deleted_ids)}
+
+
 @router.get("/asset-products", response_model=AssetProductListResponse)
 def list_asset_products(
     q: str | None = Query(default=None),
@@ -4316,6 +4374,32 @@ def list_asset_products(
             )
         )
     return AssetProductListResponse(page=page, page_size=page_size, total=total, items=items)
+
+
+@router.post("/asset-products/bulk-delete")
+def bulk_delete_asset_products(payload: BulkIdsRequest, db: Session = Depends(get_db)) -> dict:
+    ids = [item for item in payload.ids if item]
+    if not ids:
+        raise HTTPException(status_code=400, detail="no product ids selected")
+    rows = db.scalars(select(Product).where(Product.id.in_(ids))).all()
+    deleted_ids: list[str] = []
+    skipped: list[dict] = []
+    for product in rows:
+        run_count = db.scalar(select(func.count(PipelineRun.id)).where(PipelineRun.product_id == product.id)) or 0
+        campaign_count = db.scalar(select(func.count(Campaign.id)).where(Campaign.product_id == product.id)) or 0
+        if run_count or campaign_count:
+            skipped.append({
+                "product_id": product.id,
+                "product_code": product.product_code,
+                "reason": "has_history",
+                "run_count": run_count,
+                "campaign_count": campaign_count,
+            })
+            continue
+        deleted_ids.append(product.id)
+        db.delete(product)
+    db.commit()
+    return {"requested": len(ids), "deleted": len(deleted_ids), "deleted_ids": deleted_ids, "skipped": skipped}
 
 
 def get_stage_payload(db: Session, run_id: str, stage_name: str) -> dict:

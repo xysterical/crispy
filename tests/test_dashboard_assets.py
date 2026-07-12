@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import zipfile
 from pathlib import Path
 
 from sqlalchemy import create_engine
@@ -196,6 +197,105 @@ def test_asset_products_endpoint_lists_skus_without_assets(client, db_session):
     assert item["asset_count"] == 0
 
 
+def test_asset_bulk_image_zip_and_delete(client, db_session):
+    from app.data.models import Artifact
+
+    create_resp = client.post(
+        "/runs",
+        json={
+            "workspace_name": "asset-bulk-shop",
+            "project_name": "asset-bulk-project",
+            "product_name": "bulk product",
+            "product_code": "BULK-ASSET-001",
+            "industry_code": "general",
+            "campaign_name": "asset-bulk-campaign",
+            "creative_preset": "meta_square_5s",
+            "pipeline_mode": "copy_image_only",
+            "business_context": {"target_audience": "operators"},
+        },
+    )
+    assert create_resp.status_code == 200
+    run_id = create_resp.json()["id"]
+    media_path = Path("assets/bulk_selected_image.png")
+    media_path.parent.mkdir(parents=True, exist_ok=True)
+    media_path.write_bytes(b"fake image bytes")
+    artifact = Artifact(
+        run_id=run_id,
+        stage_name="copy_image_generation",
+        artifact_type="generated_image",
+        uri=str(media_path),
+        payload={"summary": "bulk image"},
+    )
+    db_session.add(artifact)
+    db_session.commit()
+    artifact_id = artifact.id
+
+    zip_resp = client.post("/artifacts/images.zip", json={"ids": [artifact_id]})
+
+    assert zip_resp.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(zip_resp.content)) as zf:
+        assert "manifest.json" in zf.namelist()
+        assert any(name.endswith(".png") for name in zf.namelist())
+
+    delete_resp = client.post("/artifacts/bulk-delete", json={"ids": [artifact_id]})
+
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["deleted"] == 1
+    db_session.expire_all()
+    assert db_session.get(Artifact, artifact_id) is None
+
+
+def test_asset_products_bulk_delete_skips_products_with_history(client, db_session):
+    from sqlalchemy import select
+
+    from app.data.models import Product
+
+    deletable = client.post(
+        "/runs",
+        json={
+            "workspace_name": "asset-product-delete-shop",
+            "project_name": "asset-product-delete-project",
+            "product_name": "kept product",
+            "product_code": "PRODUCT-WITH-HISTORY",
+            "industry_code": "general",
+            "campaign_name": "asset-product-delete-campaign",
+            "creative_preset": "meta_square_5s",
+            "pipeline_mode": "copy_image_only",
+            "business_context": {"target_audience": "operators"},
+        },
+    )
+    assert deletable.status_code == 200
+    protected_product = db_session.scalar(
+        select(Product).where(Product.product_code == "PRODUCT-WITH-HISTORY")
+    )
+    assert protected_product is not None
+    protected_product_id = protected_product.id
+    workspace_name = protected_product.project.workspace.name
+    empty_product = Product(
+        project_id=protected_product.project_id,
+        name="Empty SKU",
+        product_code="PRODUCT-NO-HISTORY",
+    )
+    db_session.add(empty_product)
+    db_session.commit()
+    empty_product_id = empty_product.id
+
+    resp = client.post(
+        "/asset-products/bulk-delete",
+        json={"ids": [protected_product_id, empty_product_id]},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["deleted"] == 1
+    assert body["deleted_ids"] == [empty_product_id]
+    assert body["skipped"][0]["product_code"] == "PRODUCT-WITH-HISTORY"
+    db_session.expire_all()
+    assert db_session.get(Product, empty_product_id) is None
+    assert db_session.get(Product, protected_product_id) is not None
+    assert workspace_name == "asset-product-delete-shop"
+
+
 def test_assets_page_has_product_view(client):
     resp = client.get("/dashboard/assets")
     assert resp.status_code == 200
@@ -204,6 +304,9 @@ def test_assets_page_has_product_view(client):
     assert "product-grid" in html
     assert "/asset-products?" in html
     assert "No products match current filters." in html
+    assert "bulk-bar" in html
+    assert "downloadSelectedImages" in html
+    assert "deleteSelectedProducts" in html
 
 
 def test_dashboard_run_detail_contains_trace_board_and_variant_collapse(client):

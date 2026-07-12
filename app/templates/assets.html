@@ -61,6 +61,7 @@
     padding:10px;
     background:#fff;
     box-shadow: 0 4px 14px rgba(32, 75, 57, 0.04);
+    position: relative;
   }
   .asset-card:hover { transform: translateY(-1px); transition: transform 160ms ease; }
   .product-card {
@@ -72,7 +73,30 @@
     display:grid;
     gap:12px;
     min-height: 210px;
+    position: relative;
   }
+  .card-check {
+    position:absolute;
+    top:10px;
+    right:10px;
+    width:18px;
+    height:18px;
+    accent-color: var(--accent);
+  }
+  .bulk-bar {
+    display:none;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    margin-bottom:12px;
+    padding:10px 12px;
+    border:1px solid #c9ddd1;
+    border-radius:12px;
+    background:#f7fcf8;
+  }
+  .bulk-bar.active { display:flex; }
+  .bulk-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+  .bulk-danger { color:#b91c1c; border-color:#fecaca; background:#fff7f7; }
   .product-placeholder {
     height: 74px;
     border: 1px dashed #c8dacd;
@@ -267,6 +291,18 @@
       </div>
     </section>
     <section class="card">
+      <div id="bulk-bar" class="bulk-bar">
+        <div>
+          <strong id="bulk-count">0 selected</strong>
+          <div id="bulk-help" class="muted">Select assets to save or remove them from the library.</div>
+        </div>
+        <div class="bulk-actions">
+          <button id="bulk-save-images" type="button" onclick="downloadSelectedImages()">Save images</button>
+          <button id="bulk-delete-assets" class="bulk-danger" type="button" onclick="deleteSelectedAssets()">Delete assets</button>
+          <button id="bulk-delete-products" class="bulk-danger" type="button" onclick="deleteSelectedProducts()" style="display:none;">Delete products</button>
+          <button type="button" onclick="clearSelection()">Clear</button>
+        </div>
+      </div>
       <div id="stats" class="muted stats-line"></div>
       <div id="asset-grid" class="grid"></div>
       <div id="product-grid" class="product-grid" style="display:none;"></div>
@@ -277,6 +313,8 @@
     let page = 1;
     let pageSize = 20;
     let total = 0;
+    const selectedAssets = new Set();
+    const selectedProducts = new Set();
     function esc(v){ return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
     function escAttr(v){ return esc(v).replaceAll('"',"&quot;").replaceAll("'","&#39;");}
     function mediaUrl(path){ return `/media?path=${encodeURIComponent(path || "")}`; }
@@ -313,6 +351,8 @@
       document.getElementById("stats").textContent = `total=${data.total}, page=${data.page}, page_size=${data.page_size}`;
       const grid = document.getElementById("asset-grid");
       grid.innerHTML = "";
+      selectedAssets.clear();
+      updateBulkBar();
       if (!data.items.length) {
         grid.innerHTML = '<div class="empty">No assets match current filters.</div>';
         return;
@@ -328,6 +368,7 @@
             ? `<a href="${mediaViewUrl(item.uri)}" target="_blank" class="muted">Open video</a><video controls playsinline class="media-preview video" src="${mediaUrl(item.uri)}"></video>`
             : `<div class="muted">No direct preview.</div>`;
         el.innerHTML = `
+          <input class="card-check" type="checkbox" aria-label="Select asset" onchange="toggleAssetSelection('${escAttr(item.artifact_id)}', this.checked)" />
           <div><span class="pill">${esc(item.artifact_type)}</span><span class="pill">${esc(item.pipeline_mode)}</span><span class="pill">${esc(item.product_code || "-")}</span></div>
           <div class="muted">run: <a href="/dashboard#run=${esc(item.run_id)}">${esc(item.run_id)}</a></div>
           ${media}
@@ -352,6 +393,8 @@
       document.getElementById("stats").textContent = `products=${data.total}, page=${data.page}, page_size=${data.page_size}`;
       const grid = document.getElementById("product-grid");
       grid.innerHTML = "";
+      selectedProducts.clear();
+      updateBulkBar();
       if (!data.items.length) {
         grid.innerHTML = '<div class="empty">No products match current filters.</div>';
         return;
@@ -361,6 +404,7 @@
         el.className = "product-card";
         const latest = item.latest_run_at ? item.latest_run_at : "No runs yet";
         el.innerHTML = `
+          <input class="card-check" type="checkbox" aria-label="Select product" onchange="toggleProductSelection('${escAttr(item.product_id)}', this.checked)" />
           <div class="product-placeholder">SKU</div>
           <div>
             <div class="product-title">${esc(item.name || item.product_code)}</div>
@@ -385,6 +429,7 @@
     function switchView(view) {
       currentView = view;
       page = 1;
+      clearSelection();
       document.getElementById("tab-assets").classList.toggle("active", view === "assets");
       document.getElementById("tab-products").classList.toggle("active", view === "products");
       document.getElementById("asset-grid").style.display = view === "assets" ? "" : "none";
@@ -396,6 +441,76 @@
       document.getElementById("date_from").disabled = view === "products";
       document.getElementById("date_to").disabled = view === "products";
       refreshAssets();
+    }
+    function toggleAssetSelection(id, checked) {
+      if (checked) selectedAssets.add(id);
+      else selectedAssets.delete(id);
+      updateBulkBar();
+    }
+    function toggleProductSelection(id, checked) {
+      if (checked) selectedProducts.add(id);
+      else selectedProducts.delete(id);
+      updateBulkBar();
+    }
+    function clearSelection() {
+      selectedAssets.clear();
+      selectedProducts.clear();
+      document.querySelectorAll(".card-check").forEach((el) => { el.checked = false; });
+      updateBulkBar();
+    }
+    function updateBulkBar() {
+      const count = currentView === "products" ? selectedProducts.size : selectedAssets.size;
+      document.getElementById("bulk-bar").classList.toggle("active", count > 0);
+      document.getElementById("bulk-count").textContent = `${count} selected`;
+      document.getElementById("bulk-help").textContent = currentView === "products"
+        ? "Selected SKUs can be removed only when they have no run or campaign history."
+        : "Selected assets can be saved as image zip or removed from the library.";
+      document.getElementById("bulk-save-images").style.display = currentView === "assets" ? "" : "none";
+      document.getElementById("bulk-delete-assets").style.display = currentView === "assets" ? "" : "none";
+      document.getElementById("bulk-delete-products").style.display = currentView === "products" ? "" : "none";
+    }
+    async function postJson(path, body) {
+      const resp = await fetch(path, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      return resp;
+    }
+    async function downloadSelectedImages() {
+      const ids = [...selectedAssets];
+      if (!ids.length) return;
+      const resp = await postJson("/artifacts/images.zip", {ids});
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "selected_asset_images.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+    async function deleteSelectedAssets() {
+      const ids = [...selectedAssets];
+      if (!ids.length) return;
+      if (!confirm(`Delete ${ids.length} selected assets from the library? Files on disk are kept.`)) return;
+      const resp = await postJson("/artifacts/bulk-delete", {ids});
+      const result = await resp.json();
+      clearSelection();
+      await refreshAssets();
+      document.getElementById("stats").textContent += ` | deleted=${result.deleted || 0}, skipped=${result.skipped || 0}`;
+    }
+    async function deleteSelectedProducts() {
+      const ids = [...selectedProducts];
+      if (!ids.length) return;
+      if (!confirm(`Delete ${ids.length} selected products? Products with run or campaign history will be skipped.`)) return;
+      const resp = await postJson("/asset-products/bulk-delete", {ids});
+      const result = await resp.json();
+      clearSelection();
+      await refreshProducts();
+      document.getElementById("stats").textContent += ` | deleted=${result.deleted || 0}, skipped=${(result.skipped || []).length}`;
     }
     function showProductAssets(productCode) {
       document.getElementById("product_code").value = productCode;
