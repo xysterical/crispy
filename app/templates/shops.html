@@ -32,7 +32,7 @@
   .shop-list-name { display: block; font-size: 14px; font-weight: 760; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.25; }
   .shop-list-meta { display: block; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.25; }
   .shop-count-stack { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
-  .shop-count-chip { min-width: 34px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--text-secondary); font-size: 11px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
+  .shop-count-chip { min-width: 48px; padding: 3px 7px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--text-secondary); font-size: 11px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
   .shops-workspace { display: grid; gap: 16px; }
   .shop-detail-top { display: block; }
   .shop-profile-card { min-height: 220px; }
@@ -246,9 +246,9 @@
           + '<span class="shop-list-copy"><span class="shop-list-name">' + escHtml(displayShopName(shop.name)) + '</span>'
           + '<span class="shop-list-meta">' + escHtml(shop.store_url || "No storefront URL") + archived + '</span></span>'
           + '<span class="shop-count-stack">'
-          + '<span class="shop-count-chip" title="Categories">' + Number(shop.category_count || 0) + '</span>'
-          + '<span class="shop-count-chip" title="Runs">' + Number(shop.run_count || 0) + '</span>'
-          + '<span class="shop-count-chip" title="Research runs">' + Number(shop.analysis_count || 0) + '</span>'
+          + '<span class="shop-count-chip" title="Categories">Cat ' + Number(shop.category_count || 0) + '</span>'
+          + '<span class="shop-count-chip" title="Runs">Run ' + Number(shop.run_count || 0) + '</span>'
+          + '<span class="shop-count-chip" title="Research runs">Res ' + Number(shop.analysis_count || 0) + '</span>'
           + '</span></button>';
       }).join("");
       list.querySelectorAll(".shop-list-item").forEach(btn => {
