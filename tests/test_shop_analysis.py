@@ -726,6 +726,121 @@ def test_create_run_planning_input_includes_shop_memory(client, db_session):
     assert all(item["content"].get("summary") != "Archived memory should not reach planning." for item in shop_lessons)
 
 
+def test_run_memory_selection_none_excludes_planning_memory(client, db_session):
+    from app.data.models import GmMemory, Workspace
+    from app.schemas.api import RunCreateRequest
+    from app.services.runs import _build_task_input, create_run
+
+    shop = Workspace(name="memory-none-shop", industry_code="pet_accessories")
+    db_session.add(shop)
+    db_session.flush()
+    run = create_run(
+        db_session,
+        RunCreateRequest(
+            workspace_name="memory-none-shop",
+            project_name="memory-none-project",
+            product_name="utility leash",
+            product_code="MEM-NONE",
+            industry_code="pet_accessories",
+            campaign_name="memory-none-campaign",
+            creative_preset="custom",
+            creative_specs={"image_size": "1:1", "video_size": "1:1", "resolution": "720p", "video_duration_seconds": 5},
+            memory_selection={"mode": "none"},
+        ),
+    )
+    memory = GmMemory(
+        project_id=run.project_id,
+        memory_scope="product",
+        product_code="MEM-NONE",
+        industry_code="pet_accessories",
+        source_type="feedback_import",
+        memory_type="strategy",
+        score_hint=100,
+        content={"summary": "This memory should not shape this run."},
+    )
+    db_session.add(memory)
+    db_session.flush()
+
+    planning_task = next(task for task in run.stage_tasks if task.stage_name == "planning")
+    task_input = _build_task_input(db_session, run, planning_task)
+
+    assert memory.id not in {item.get("id") for item in task_input["gm_lessons"]}
+    assert task_input["research_context"]["summary"]["memory_selection_mode"] == "none"
+
+
+def test_run_memory_selection_manual_uses_only_selected_safe_memory(client, db_session):
+    from app.data.models import GmMemory, Workspace
+    from app.schemas.api import RunCreateRequest
+    from app.services.runs import _build_task_input, create_run
+
+    shop = Workspace(name="memory-manual-shop", industry_code="pet_accessories")
+    db_session.add(shop)
+    db_session.flush()
+    run = create_run(
+        db_session,
+        RunCreateRequest(
+            workspace_name="memory-manual-shop",
+            project_name="memory-manual-project",
+            product_name="utility leash",
+            product_code="MEM-MANUAL",
+            industry_code="pet_accessories",
+            campaign_name="memory-manual-campaign",
+            creative_preset="custom",
+            creative_specs={"image_size": "1:1", "video_size": "1:1", "resolution": "720p", "video_duration_seconds": 5},
+        ),
+    )
+    selected = GmMemory(
+        project_id=run.project_id,
+        memory_scope="product",
+        product_code="MEM-MANUAL",
+        industry_code="pet_accessories",
+        source_type="feedback_import",
+        memory_type="strategy",
+        score_hint=10,
+        content={"summary": "Selected memory should shape this run."},
+    )
+    unselected = GmMemory(
+        project_id=run.project_id,
+        memory_scope="product",
+        product_code="MEM-MANUAL",
+        industry_code="pet_accessories",
+        source_type="feedback_import",
+        memory_type="strategy",
+        score_hint=100,
+        content={"summary": "Higher score but not selected."},
+    )
+    unsafe_selected = GmMemory(
+        project_id=run.project_id,
+        memory_scope="product",
+        product_code="MEM-MANUAL",
+        industry_code="pet_accessories",
+        source_type="feedback_import",
+        memory_type="strategy",
+        status="archived",
+        score_hint=999,
+        content={"summary": "Archived memory should stay out even when selected."},
+    )
+    db_session.add_all([selected, unselected, unsafe_selected])
+    db_session.flush()
+    run.context_json = {
+        **(run.context_json or {}),
+        "memory_selection": {
+            "mode": "manual",
+            "include_ids": [selected.id, unsafe_selected.id],
+            "exclude_ids": [],
+        },
+    }
+    db_session.flush()
+
+    planning_task = next(task for task in run.stage_tasks if task.stage_name == "planning")
+    task_input = _build_task_input(db_session, run, planning_task)
+    lesson_ids = {item.get("id") for item in task_input["gm_lessons"]}
+
+    assert selected.id in lesson_ids
+    assert unselected.id not in lesson_ids
+    assert unsafe_selected.id not in lesson_ids
+
+
 def test_expired_research_memory_is_excluded_from_planning_unless_pinned(client, db_session):
     from datetime import UTC, datetime, timedelta
 

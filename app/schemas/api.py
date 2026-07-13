@@ -39,6 +39,7 @@ class RunCreateRequest(BaseModel):
     approval_mode: ApprovalMode = "manual"
     enable_research: bool = False
     manual_research_brief: str = ""
+    memory_selection: dict = Field(default_factory=dict)
     business_context: dict = Field(default_factory=dict)
     category_tags: list[str] = Field(default_factory=list)
 
@@ -105,6 +106,7 @@ class RunView(BaseModel):
     approval_mode: str = "manual"
     enable_research: bool = False
     manual_research_brief: str = ""
+    memory_selection: dict = Field(default_factory=dict)
     business_context: dict = Field(default_factory=dict)
     category_tags: list[str] = Field(default_factory=list)
     budget_used: float

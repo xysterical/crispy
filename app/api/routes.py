@@ -469,6 +469,7 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
         project_id=run.project_id,
         shop_id=run.workspace_id,
         industry_code=run.industry_code,
+        memory_selection=(run.context_json or {}).get("memory_selection"),
     )
 
     return RunView(
@@ -491,6 +492,7 @@ def _serialize_run(db: Session, run: PipelineRun) -> RunView:
         approval_mode=run.approval_mode or "manual",
         enable_research=run.enable_research,
         manual_research_brief=run.manual_research_brief or "",
+        memory_selection=(run.context_json or {}).get("memory_selection") or {},
         business_context=run.business_context or {},
         category_tags=run.category_tags or [],
         budget_used=run.budget_used,
@@ -4074,6 +4076,7 @@ async def create_pipeline_run_rich(
     approval_mode: str = Form("manual"),
     enable_research: bool = Form(False),
     manual_research_brief: str = Form(""),
+    memory_selection: str = Form("{}"),
     business_context: str = Form("{}"),
     category_tags: str = Form("[]"),
     url_references: str = Form("[]"),
@@ -4103,6 +4106,7 @@ async def create_pipeline_run_rich(
         approval_mode=approval_mode,
         enable_research=enable_research,
         manual_research_brief=manual_research_brief,
+        memory_selection=_load_json_dict(memory_selection, "memory_selection"),
         business_context=_load_json_dict(business_context, "business_context"),
         category_tags=_load_json_list(category_tags, "category_tags"),
         context={"url_references": _load_json_list(url_references, "url_references")},

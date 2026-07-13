@@ -67,6 +67,7 @@ from app.services.execution_memory import (
     write_variant_review_memory,
 )
 from app.services.marketplace_qa import MARKETPLACE_REVIEW_TAGS, is_marketplace_main_image
+from app.services.memory_selection import normalize_memory_selection
 from app.services.personas import get_persona
 from app.services.gm_evolution import compile_run_outcome_reflection
 from app.services.stage_inputs import (
@@ -364,6 +365,7 @@ def create_run(db: Session, payload: RunCreateRequest) -> PipelineRun:
     context_json = payload.context or {}
     context_json.setdefault("business_context", payload.business_context or {})
     context_json.setdefault("category_tags", payload.category_tags or [])
+    context_json["memory_selection"] = normalize_memory_selection(payload.memory_selection)
     context_json["creative_specs"] = creative_specs
     context_json["model_snapshot"] = model_snapshot
     run = PipelineRun(
