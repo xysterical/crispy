@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.runtime import AgentsRuntime
 from app.data.models import Artifact, Campaign, PipelineRun, StageTask
+from app.orchestrator.stage_contracts import all_stage_contracts, get_stage_contract
 from app.schemas.contracts import (
     CopyImageBundle,
     PlanningBrief,
@@ -67,27 +68,45 @@ class RegenerationExecutionContext:
 
 
 def execute_runtime_stage(context: StageExecutionContext) -> Any:
+    contract = get_stage_contract(context.task.stage_name)
     try:
-        handler = RUNTIME_STAGE_DISPATCH[context.task.stage_name]
+        handler = RUNTIME_HANDLER_DISPATCH[contract.runtime_handler]
     except KeyError as exc:
-        raise ValueError(f"unknown stage: {context.task.stage_name}") from exc
+        raise ValueError(f"unknown runtime handler for stage {context.task.stage_name}: {contract.runtime_handler}") from exc
     return handler(context)
 
 
 def runtime_stage_names() -> set[str]:
-    return set(RUNTIME_STAGE_DISPATCH)
+    return {
+        contract.stage_name
+        for contract in all_stage_contracts()
+        if contract.runtime_handler in RUNTIME_HANDLER_DISPATCH
+    }
+
+
+def runtime_handler_names() -> set[str]:
+    return set(RUNTIME_HANDLER_DISPATCH)
 
 
 def execute_regeneration_stage(context: RegenerationExecutionContext) -> Any:
+    contract = get_stage_contract(context.task.stage_name)
     try:
-        handler = REGENERATION_STAGE_DISPATCH[context.task.stage_name]
+        handler = REGENERATION_HANDLER_DISPATCH[contract.runtime_handler]
     except KeyError as exc:
         raise ValueError(f"stage {context.task.stage_name} does not support variant regeneration") from exc
     return handler(context)
 
 
 def regeneratable_stage_names() -> set[str]:
-    return set(REGENERATION_STAGE_DISPATCH)
+    return {
+        contract.stage_name
+        for contract in all_stage_contracts()
+        if contract.runtime_handler in REGENERATION_HANDLER_DISPATCH
+    }
+
+
+def regeneration_handler_names() -> set[str]:
+    return set(REGENERATION_HANDLER_DISPATCH)
 
 
 def _run_intake(context: StageExecutionContext) -> Any:
@@ -400,22 +419,22 @@ def _reference_bundle(context: Any) -> dict:
     )
 
 
-RUNTIME_STAGE_DISPATCH: dict[str, Callable[[StageExecutionContext], Any]] = {
-    "intake": _run_intake,
-    "planning": _run_planning,
-    "divergence": _run_divergence,
-    "copy_image_generation": _run_copy_image_generation,
-    "video_scripting": _run_video_scripting,
-    "storyboard_image_generation": _run_storyboard_image_generation,
-    "video_generation": _run_video_generation,
-    "visual_quality_assessment": _run_visual_quality_assessment,
-    "evaluation_selection": _run_evaluation_selection,
+RUNTIME_HANDLER_DISPATCH: dict[str, Callable[[StageExecutionContext], Any]] = {
+    "run_intake": _run_intake,
+    "run_planning": _run_planning,
+    "run_divergence": _run_divergence,
+    "run_copy_image_generation": _run_copy_image_generation,
+    "run_video_scripting": _run_video_scripting,
+    "run_storyboard_image_generation": _run_storyboard_image_generation,
+    "run_video_generation": _run_video_generation,
+    "run_visual_quality_assessment": _run_visual_quality_assessment,
+    "run_evaluation_selection": _run_evaluation_selection,
 }
 
 
-REGENERATION_STAGE_DISPATCH: dict[str, Callable[[RegenerationExecutionContext], Any]] = {
-    "copy_image_generation": _regenerate_copy_image_generation,
-    "video_scripting": _regenerate_video_scripting,
-    "storyboard_image_generation": _regenerate_storyboard_image_generation,
-    "video_generation": _regenerate_video_generation,
+REGENERATION_HANDLER_DISPATCH: dict[str, Callable[[RegenerationExecutionContext], Any]] = {
+    "run_copy_image_generation": _regenerate_copy_image_generation,
+    "run_video_scripting": _regenerate_video_scripting,
+    "run_storyboard_image_generation": _regenerate_storyboard_image_generation,
+    "run_video_generation": _regenerate_video_generation,
 }

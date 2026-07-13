@@ -10,7 +10,12 @@ from app.orchestrator.stage_contracts import (
 )
 from app.orchestrator.state_machine import PIPELINE_STAGE_PLANS
 from app.services.runs import REGENERATABLE_STAGES
-from app.services.stage_execution import regeneratable_stage_names, runtime_stage_names
+from app.services.stage_execution import (
+    regeneratable_stage_names,
+    regeneration_handler_names,
+    runtime_handler_names,
+    runtime_stage_names,
+)
 from app.services.stage_inputs import STAGE_OUTPUT_INPUTS, stage_input_keys_for_contract
 
 
@@ -82,7 +87,12 @@ def test_stage_input_bindings_only_reference_known_stages():
 
 def test_runtime_dispatch_covers_every_stage_contract():
     assert runtime_stage_names() == set(STAGE_CONTRACTS)
+    assert {contract.runtime_handler for contract in all_stage_contracts()} == runtime_handler_names()
 
 
 def test_regeneration_dispatch_covers_regeneratable_stages():
     assert regeneratable_stage_names() == REGENERATABLE_STAGES
+    assert {
+        get_stage_contract(stage_name).runtime_handler
+        for stage_name in REGENERATABLE_STAGES
+    } == regeneration_handler_names()
