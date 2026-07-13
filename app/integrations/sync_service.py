@@ -16,6 +16,7 @@ from app.data.models import (
 )
 from app.integrations.shopify import ShopifyProvider
 from app.integrations.meta import MetaProvider
+from app.integrations.tiktok import TikTokProvider
 from app.integrations.models import SyncResult
 from app.schemas.contracts import FeedbackRow
 
@@ -515,9 +516,208 @@ async def sync_meta(
         await provider.close()
 
 
+async def sync_tiktok(
+    db: Session,
+    *,
+    workspace_name: str,
+    project_name: str,
+    sync_type: str = "performance",
+    access_token: str = "",
+    advertiser_id: str = "",
+) -> SyncResult:
+    import os
+    from app.services.feedback import import_feedback_rows
+
+    token = access_token or os.getenv("CRISPY_API_KEY_TIKTOK", "")
+    adv_id = advertiser_id or os.getenv("CRISPY_API_KEY_TIKTOK_ADVERTISER", "")
+    if not token or not adv_id:
+        raise ValueError("TikTok access_token and advertiser_id are required")
+
+    workspace, project = _get_or_create_workspace_project(db, workspace_name, project_name)
+
+    sync_record = IntegrationSync(
+        workspace_id=workspace.id,
+        project_id=project.id,
+        platform="tiktok",
+        sync_type=sync_type,
+        status="running",
+    )
+    db.add(sync_record)
+    db.flush()
+
+    provider = TikTokProvider(config={"access_token": token, "advertiser_id": adv_id})
+    items_synced = 0
+    memory_count = 0
+
+    try:
+        if sync_type in ("campaigns", "all"):
+            campaigns = await provider.fetch_campaigns()
+            for tc in campaigns:
+                existing = db.scalar(
+                    select(Campaign).where(
+                        Campaign.project_id == project.id,
+                        Campaign.platform_campaign_id == tc.campaign_id,
+                    )
+                )
+                if existing:
+                    existing.name = tc.name
+                    existing.objective = tc.objective
+                    existing.platform_ad_account_id = tc.advertiser_id
+                else:
+                    db.add(
+                        Campaign(
+                            project_id=project.id,
+                            name=tc.name,
+                            channel="tiktok",
+                            objective=tc.objective,
+                            platform_campaign_id=tc.campaign_id,
+                            platform_ad_account_id=tc.advertiser_id,
+                        )
+                    )
+                items_synced += 1
+
+        if sync_type in ("performance", "all"):
+            rows = await provider.fetch_ad_performance()
+            feedback_rows: list[FeedbackRow] = []
+            for ir in rows:
+                campaign = (
+                    db.scalar(
+                        select(Campaign).where(
+                            Campaign.project_id == project.id,
+                            Campaign.platform_campaign_id == ir.campaign_id,
+                        )
+                    )
+                    if ir.campaign_id
+                    else None
+                )
+                product_code = ""
+                if campaign and campaign.product_id:
+                    product = db.get(Product, campaign.product_id)
+                    if product:
+                        product_code = product.product_code
+
+                feedback_rows.append(
+                    FeedbackRow(
+                        project_name=project_name,
+                        creative_key=ir.creative_id or ir.ad_id,
+                        asset_type="creative",
+                        variant_id=None,
+                        campaign_name=ir.campaign_name or ir.ad_name,
+                        run_id=None,
+                        impressions=ir.impressions,
+                        clicks=ir.clicks,
+                        spend=ir.spend,
+                        conversions=ir.conversions,
+                        revenue=ir.revenue,
+                        period_start=date.fromisoformat(ir.date_start) if ir.date_start else None,
+                        period_end=date.fromisoformat(ir.date_stop) if ir.date_stop else None,
+                        platform="tiktok",
+                        platform_campaign_id=campaign.platform_campaign_id if campaign else ir.campaign_id,
+                        platform_ad_id=ir.ad_id,
+                        platform_creative_id=ir.creative_id,
+                        product_code=product_code or None,
+                        industry_code=workspace.industry_code or None,
+                        extra_metrics={
+                            "ad_name": ir.ad_name,
+                            "ctr": ir.ctr,
+                            "cpc": ir.cpc,
+                            "cpa": ir.cpa,
+                            "roas": ir.roas,
+                        },
+                    )
+                )
+
+            if feedback_rows:
+                _, snapshot_count, memory = import_feedback_rows(
+                    db,
+                    workspace_name=workspace_name,
+                    project_name=project_name,
+                    rows=feedback_rows,
+                    file_name=f"tiktok_sync_{_utcnow().strftime('%Y%m%d_%H%M%S')}",
+                )
+                items_synced = snapshot_count
+                memory_count = 1 if memory else 0
+
+                total_spend = sum(r.spend for r in feedback_rows)
+                total_revenue = sum(r.revenue for r in feedback_rows)
+                total_impressions = sum(r.impressions for r in feedback_rows)
+                total_clicks = sum(r.clicks for r in feedback_rows)
+                total_conversions = sum(r.conversions for r in feedback_rows)
+                starts = [r.period_start.isoformat() for r in feedback_rows if r.period_start]
+                ends = [r.period_end.isoformat() for r in feedback_rows if r.period_end]
+                if total_impressions > 0:
+                    db.add(
+                        GmMemory(
+                            project_id=project.id,
+                            memory_scope="shop",
+                            source_type="tiktok_sync",
+                            memory_type="summary",
+                            score_hint=round(total_revenue / total_spend, 4) if total_spend > 0 else 0,
+                            content={
+                                "source": "tiktok_sync",
+                                "scope": "shop",
+                                "shop_id": workspace.id,
+                                "shop_name": workspace.name,
+                                "total_spend": round(total_spend, 2),
+                                "total_revenue": round(total_revenue, 2),
+                                "total_impressions": total_impressions,
+                                "total_clicks": total_clicks,
+                                "total_conversions": total_conversions,
+                                "overall_roas": round(total_revenue / total_spend, 4) if total_spend > 0 else 0,
+                                "overall_ctr": round(total_clicks / total_impressions * 100, 4) if total_impressions > 0 else 0,
+                                "creative_count": len({r.creative_key for r in feedback_rows}),
+                                "synced_at": _utcnow().isoformat(),
+                                "summary": (
+                                    f"TikTok ad account: ${total_spend:.2f} spend, "
+                                    f"${total_revenue:.2f} revenue, "
+                                    f"ROAS {total_revenue/total_spend:.2f}" if total_spend > 0 else "No spend data"
+                                ),
+                                "winning_patterns": [],
+                                "avoid_patterns": [],
+                                "evidence": [{"source": "tiktok_sync", "sync_id": sync_record.id, "creative_count": len({r.creative_key for r in feedback_rows})}],
+                                "metric_window": {
+                                    "start": min(starts) if starts else None,
+                                    "end": max(ends) if ends else None,
+                                },
+                                "confidence": round(min(0.95, 0.45 + 0.03 * len(feedback_rows)), 2),
+                            },
+                        )
+                    )
+                    memory_count += 1
+            else:
+                items_synced = 0
+
+        sync_record.status = "completed"
+        sync_record.items_synced = items_synced
+        db.flush()
+        return SyncResult(
+            platform="tiktok",
+            sync_type=sync_type,
+            status="completed",
+            items_synced=items_synced,
+            memory_entries_created=memory_count,
+        )
+    except Exception as exc:
+        sync_record.status = "failed"
+        sync_record.error_log = {"error": str(exc)}
+        db.flush()
+        logger.exception("TikTok sync failed")
+        return SyncResult(
+            platform="tiktok",
+            sync_type=sync_type,
+            status="failed",
+            items_synced=items_synced,
+            memory_entries_created=memory_count,
+            error=str(exc),
+        )
+    finally:
+        await provider.close()
+
+
 INTEGRATION_SYNC_HANDLERS = {
     "shopify": sync_shopify,
     "meta": sync_meta,
+    "tiktok": sync_tiktok,
 }
 
 

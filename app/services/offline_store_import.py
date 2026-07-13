@@ -24,8 +24,8 @@ def import_offline_store_csv(
     content: bytes,
 ) -> dict:
     platform = platform.lower().strip()
-    if platform not in {"shopify", "meta"}:
-        raise ValueError("offline CSV platform must be shopify or meta")
+    if platform not in {"shopify", "meta", "tiktok"}:
+        raise ValueError("offline CSV platform must be shopify, meta, or tiktok")
     workspace, project = _get_or_create_workspace_project(db, workspace_name, project_name)
     rows = _parse_csv(content)
     _validate_platform_rows(platform, rows)
@@ -162,10 +162,11 @@ def _validate_platform_rows(platform: str, rows: list[dict[str, str]]) -> None:
         ):
             raise ValueError("Shopify CSV contains no usable product revenue or quantity rows")
         return
-    _require_any(headers, {"creative_key", "ad_creative_id", "creative_id", "ad_id"}, "Meta CSV requires creative_key, ad_creative_id, creative_id, or ad_id")
-    _require_any(headers, {"impressions", "imps"}, "Meta CSV requires impressions")
-    _require_any(headers, {"clicks"}, "Meta CSV requires clicks")
-    _require_any(headers, {"spend", "cost"}, "Meta CSV requires spend")
+    label = "TikTok" if platform == "tiktok" else "Meta"
+    _require_any(headers, {"creative_key", "ad_creative_id", "creative_id", "ad_id"}, f"{label} CSV requires creative_key, ad_creative_id, creative_id, or ad_id")
+    _require_any(headers, {"impressions", "imps"}, f"{label} CSV requires impressions")
+    _require_any(headers, {"clicks"}, f"{label} CSV requires clicks")
+    _require_any(headers, {"spend", "cost"}, f"{label} CSV requires spend")
     if not any(
         _first(row, "creative_key", "ad_creative_id", "creative_id", "ad_id")
         and (
@@ -176,7 +177,7 @@ def _validate_platform_rows(platform: str, rows: list[dict[str, str]]) -> None:
         )
         for row in rows
     ):
-        raise ValueError("Meta CSV contains no usable creative performance rows")
+        raise ValueError(f"{label} CSV contains no usable creative performance rows")
 
 
 def _require_any(headers: set[str], candidates: set[str], message: str) -> None:

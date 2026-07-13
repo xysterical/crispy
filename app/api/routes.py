@@ -4575,6 +4575,19 @@ def get_sync_status(
     ])
 
 
+@router.get("/integrations/health")
+def get_integration_health(
+    workspace_name: str | None = Query(None),
+    project_name: str | None = Query(None),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.integration_health import integration_health
+
+    result = integration_health(db, workspace_name=workspace_name, project_name=project_name)
+    db.commit()
+    return result
+
+
 @router.get("/integrations/shopify/products")
 def list_shopify_products(
     workspace_name: str = Query(...),
@@ -5062,7 +5075,7 @@ def data_dashboard_summary(
         .where(
             GmMemory.project_id == project.id,
             GmMemory.memory_scope == "shop",
-            GmMemory.source_type.in_(["shopify_sync", "meta_sync", "offline_csv_import"]),
+            GmMemory.source_type.in_(["shopify_sync", "meta_sync", "tiktok_sync", "offline_csv_import"]),
         )
         .order_by(desc(GmMemory.created_at))
         .limit(10)
@@ -5072,6 +5085,7 @@ def data_dashboard_summary(
     latest_offline = next((m for m in store_memories if m.source_type == "offline_csv_import"), None)
     latest_store = latest_shopify or latest_offline
     latest_meta = next((m for m in store_memories if m.source_type == "meta_sync"), None)
+    latest_tiktok = next((m for m in store_memories if m.source_type == "tiktok_sync"), None)
 
     product_count = db.scalar(
         select(func.count()).select_from(Product).where(Product.project_id == project.id)
@@ -5089,30 +5103,23 @@ def data_dashboard_summary(
     total_impressions = sum(int((s.metrics or {}).get("impressions", 0)) for s in recent_snapshots)
     total_clicks = sum(int((s.metrics or {}).get("clicks", 0)) for s in recent_snapshots)
 
-    import os
     from app.services.research_context import build_research_context
+    from app.services.integration_health import credential_ready_map
+
+    credentials = credential_ready_map(db)
 
     return {
         "workspace_name": workspace_name,
         "project_name": project_name,
-        "credentials": {
-            "shopify": {
-                "store_domain": bool(os.getenv("CRISPY_API_KEY_SHOPIFY_DOMAIN")),
-                "access_token": bool(os.getenv("CRISPY_API_KEY_SHOPIFY")),
-                "ready": bool(os.getenv("CRISPY_API_KEY_SHOPIFY_DOMAIN") and os.getenv("CRISPY_API_KEY_SHOPIFY")),
-            },
-            "meta": {
-                "access_token": bool(os.getenv("CRISPY_API_KEY_META")),
-                "ad_account_id": bool(os.getenv("CRISPY_API_KEY_META_ACCOUNT")),
-                "ready": bool(os.getenv("CRISPY_API_KEY_META") and os.getenv("CRISPY_API_KEY_META_ACCOUNT")),
-            },
-        },
+        "credentials": credentials,
         "product_count": product_count,
         "shopify_revenue": (latest_store.content or {}).get("total_revenue", 0) if latest_store else 0,
         "shopify_quantity": (latest_store.content or {}).get("total_quantity", 0) if latest_store else 0,
         "store_data_source": latest_store.source_type if latest_store else None,
         "meta_spend": round(total_spend, 2),
         "meta_revenue": round(total_revenue, 2),
+        "tiktok_spend": (latest_tiktok.content or {}).get("total_spend", 0) if latest_tiktok else 0,
+        "tiktok_revenue": (latest_tiktok.content or {}).get("total_revenue", 0) if latest_tiktok else 0,
         "overall_roas": round(total_revenue / total_spend, 4) if total_spend > 0 else 0,
         "overall_ctr": round(total_clicks / total_impressions * 100, 4) if total_impressions > 0 else 0,
         "total_impressions": total_impressions,

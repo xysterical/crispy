@@ -299,8 +299,10 @@ def test_data_dashboard_page_loads(client):
     assert "csv-collapse-body" in resp.text
     assert "toggleCsvFallback" in resp.text
     assert "No CSV files staged" in resp.text
-    assert "Use offline Shopify or Meta CSV when APIs are unavailable." in resp.text
+    assert "Use offline Shopify, Meta, or TikTok CSV when APIs are unavailable." in resp.text
     assert "Use Shopify CSV with product_code/sku" in resp.text
+    assert "offline-tiktok-file" in resp.text
+    assert "Sync TikTok" in resp.text
     assert "chooseOfflineCsv" in resp.text
     assert "Use when APIs are unavailable" not in resp.text
     assert "csv-file-row" in resp.text
@@ -333,7 +335,7 @@ def test_auto_sync_config_endpoint(client):
 def test_integration_sync_uses_registry(client):
     from app.integrations.sync_service import supported_integration_platforms, sync_integration
 
-    assert set(supported_integration_platforms()) >= {"shopify", "meta"}
+    assert set(supported_integration_platforms()) >= {"shopify", "meta", "tiktok"}
 
     import pytest
 
@@ -356,4 +358,18 @@ def test_integration_sync_uses_registry(client):
         params={"workspace_name": "w", "project_name": "p"},
     )
     assert resp.status_code == 400
-    assert "shopify" in resp.text and "meta" in resp.text
+    assert "shopify" in resp.text and "meta" in resp.text and "tiktok" in resp.text
+
+
+def test_integration_health_includes_tiktok_and_notion(client):
+    configs = client.get("/integration-configs")
+    assert configs.status_code == 200
+    platforms = {item["platform"] for item in configs.json()}
+    assert {"shopify", "meta", "notion", "tiktok"}.issubset(platforms)
+
+    health = client.get("/integrations/health")
+    assert health.status_code == 200
+    rows = {item["platform"]: item for item in health.json()["platforms"]}
+    assert rows["tiktok"]["sync_supported"] is True
+    assert {item["config_key"] for item in rows["tiktok"]["required"]} == {"access_token", "advertiser_id"}
+    assert rows["notion"]["sync_supported"] is False

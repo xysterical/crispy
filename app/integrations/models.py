@@ -60,6 +60,14 @@ class MetaInsightsRow(BaseModel):
     roas: float = 0.0
 
 
+class TikTokCampaignData(BaseModel):
+    campaign_id: str
+    name: str
+    objective: str = ""
+    status: str = ""
+    advertiser_id: str
+
+
 class SyncResult(BaseModel):
     platform: str
     sync_type: str

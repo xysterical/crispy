@@ -142,7 +142,7 @@
     <header class="hero" style="width:100%;display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:16px;">
       <div>
         <h1>Data Dashboard</h1>
-        <div class="subtitle">Performance monitoring, analytics insights, and API sync controls for Shopify &amp; Meta.</div>
+        <div class="subtitle">Performance monitoring, analytics insights, and API sync controls for Shopify, Meta, and TikTok.</div>
         <div class="subtitle">Auto-sync pulls fresh data from connected platforms on a configurable schedule.</div>
       </div>
     </header>
@@ -166,16 +166,18 @@
         <button class="csv-collapse-head" onclick="toggleCsvFallback()" aria-expanded="false" aria-controls="csv-fallback-body">
           <span>
             <span class="csv-collapse-title">CSV Fallback Imports</span>
-            <span class="csv-collapse-hint" id="csv-fallback-hint">Use offline Shopify or Meta CSV when APIs are unavailable.</span>
+            <span class="csv-collapse-hint" id="csv-fallback-hint">Use offline Shopify, Meta, or TikTok CSV when APIs are unavailable.</span>
           </span>
           <span class="csv-collapse-icon" id="csv-fallback-icon">⌄</span>
         </button>
         <div class="csv-collapse-body" id="csv-fallback-body">
         <input id="offline-shopify-file" type="file" accept=".csv,text/csv" style="display:none;" onchange="uploadOfflineCsv('shopify')" />
         <input id="offline-meta-file" type="file" accept=".csv,text/csv" style="display:none;" onchange="uploadOfflineCsv('meta')" />
+        <input id="offline-tiktok-file" type="file" accept=".csv,text/csv" style="display:none;" onchange="uploadOfflineCsv('tiktok')" />
         <div class="csv-upload-actions">
           <button class="csv-upload-btn" onclick="chooseOfflineCsv('shopify')">Import Shopify CSV</button>
           <button class="csv-upload-btn secondary-btn" onclick="chooseOfflineCsv('meta')">Import Meta CSV</button>
+          <button class="csv-upload-btn secondary-btn" onclick="chooseOfflineCsv('tiktok')">Import TikTok CSV</button>
         </div>
         <div id="offline-batches" class="csv-stager"></div>
         <div id="offline-csv-msg" class="muted" style="margin-top:8px;min-height:18px;"></div>
@@ -195,6 +197,7 @@
           <div style="display:flex;gap:10px;margin-bottom:4px;">
             <button class="primary" onclick="manualSync('shopify')">Sync Shopify</button>
             <button class="primary" onclick="manualSync('meta')">Sync Meta</button>
+            <button class="primary" onclick="manualSync('tiktok')">Sync TikTok</button>
           </div>
           <div id="sync-msg" class="muted" style="margin-bottom:10px;min-height:18px;"></div>
           <div class="chart-wrap"><canvas id="revenue-chart"></canvas></div>
@@ -330,6 +333,7 @@
         document.getElementById("kpi-cards").innerHTML=`
           <div class="kpi-card"><div class="kpi-value">$${data.shopify_revenue?.toFixed(0)||0}</div><div class="kpi-label">Shopify Revenue</div></div>
           <div class="kpi-card"><div class="kpi-value">$${data.meta_spend?.toFixed(0)||0}</div><div class="kpi-label">Meta Spend</div></div>
+          <div class="kpi-card"><div class="kpi-value">$${data.tiktok_spend?.toFixed(0)||0}</div><div class="kpi-label">TikTok Spend</div></div>
           <div class="kpi-card"><div class="kpi-value">${data.overall_roas?.toFixed(2)||"0.00"}x</div><div class="kpi-label">ROAS</div></div>
           <div class="kpi-card"><div class="kpi-value">${data.overall_ctr?.toFixed(2)||"0.00"}%</div><div class="kpi-label">CTR</div></div>
           <div class="kpi-card"><div class="kpi-value">${data.product_count||0}</div><div class="kpi-label">Products</div></div>
@@ -404,7 +408,7 @@
         refreshOverview();
         await loadProducts();
       }catch(e){ showSyncMsg("Sync failed: "+e.message, "warn"); }
-      finally{ btn.disabled=false; btn.textContent=`Sync ${platform.charAt(0).toUpperCase()+platform.slice(1)}`; }
+      finally{ btn.disabled=false; btn.textContent=`Sync ${platform==="tiktok"?"TikTok":platform.charAt(0).toUpperCase()+platform.slice(1)}`; }
     }
     function showSyncMsg(msg, type){
       const el=document.getElementById("sync-msg");
@@ -432,7 +436,7 @@
       if(!hint) return;
       hint.textContent=count>0
         ? `${count} CSV fallback file${count===1?"":"s"} staged. Expand to review or remove.`
-        : "Use offline Shopify or Meta CSV when APIs are unavailable.";
+        : "Use offline Shopify, Meta, or TikTok CSV when APIs are unavailable.";
     }
     function formatBytes(bytes){
       const value=Number(bytes||0);
@@ -442,7 +446,7 @@
       return `${(value/1024/1024).toFixed(1)} MB`;
     }
     function renderOfflineEmpty(){
-      return '<div class="csv-stager-empty"><strong>No CSV files staged</strong><span>Use Shopify CSV with product_code/sku plus revenue or quantity.</span><span>Use Meta CSV with creative_key/ad_id plus impressions, clicks, and spend.</span></div>';
+      return '<div class="csv-stager-empty"><strong>No CSV files staged</strong><span>Use Shopify CSV with product_code/sku plus revenue or quantity.</span><span>Use Meta or TikTok CSV with creative_key/ad_id plus impressions, clicks, and spend.</span></div>';
     }
     function renderOfflineRows(items){
       if(!items.length) return renderOfflineEmpty();
@@ -481,14 +485,14 @@
     }
     function chooseOfflineCsv(platform){
       if(!currentProj){ showOfflineMsg("Select a project first", "warn"); return; }
-      const input=document.getElementById(platform==="meta"?"offline-meta-file":"offline-shopify-file");
+      const input=document.getElementById(`offline-${platform}-file`);
       if(!input) return;
       input.value="";
       input.click();
     }
     async function uploadOfflineCsv(platform){
       if(!currentProj){ showOfflineMsg("Select a project first", "warn"); return; }
-      const input=document.getElementById(platform==="meta"?"offline-meta-file":"offline-shopify-file");
+      const input=document.getElementById(`offline-${platform}-file`);
       const file=input?.files?.[0];
       if(!file) return;
       const form=new FormData();

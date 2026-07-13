@@ -542,6 +542,8 @@ _BUILTIN_INTEGRATION_CONFIGS = [
     {"platform": "meta", "config_key": "ad_account_id", "label": "Ad Account ID", "env_var": "CRISPY_API_KEY_META_ACCOUNT", "is_required": True},
     {"platform": "notion", "config_key": "api_key", "label": "API Key (Internal Integration)", "env_var": "CRISPY_API_KEY_NOTION", "is_required": True},
     {"platform": "notion", "config_key": "database_id", "label": "Content Calendar Database ID", "env_var": "CRISPY_API_KEY_NOTION_DATABASE", "is_required": True},
+    {"platform": "tiktok", "config_key": "access_token", "label": "Access Token", "env_var": "CRISPY_API_KEY_TIKTOK", "is_required": True},
+    {"platform": "tiktok", "config_key": "advertiser_id", "label": "Advertiser ID", "env_var": "CRISPY_API_KEY_TIKTOK_ADVERTISER", "is_required": True},
 ]
 
 
