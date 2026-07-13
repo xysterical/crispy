@@ -315,10 +315,15 @@ def test_configs_page_shows_integration_health(client):
     resp = client.get("/dashboard/agent-apis")
     assert resp.status_code == 200
     assert "Integration Health" in resp.text
+    assert "integration-health-grid" in resp.text
     assert "Shopify" in resp.text
     assert "Meta" in resp.text
+    assert "TikTok" in resp.text
     assert "Notion" in resp.text
     assert "/content-schedules/notion-status" in resp.text
+    assert "/integrations/health" in resp.text
+    assert "Research Intelligence Readiness" in resp.text
+    assert "research-readiness-grid" in resp.text
 
 
 def test_data_dashboard_summary_endpoint(client):

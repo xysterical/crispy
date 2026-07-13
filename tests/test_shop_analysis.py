@@ -24,7 +24,7 @@ def test_research_adaptation_surfaces_render(client):
     create_page = client.get("/dashboard").text
     assert "research-context-card" in create_page
     agent_page = client.get("/dashboard/agent-apis").text
-    assert "Research Intelligence Tool Needs" in agent_page
+    assert "Research Intelligence Readiness" in agent_page
     assert "Audience Pain Points" in agent_page
     gm_page = client.get("/dashboard/gm-review").text
     assert "research-review-context" in gm_page

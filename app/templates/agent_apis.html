@@ -222,12 +222,8 @@
     </header>
     <section class="card" style="margin-bottom: 16px;">
       <h2>Integration Health</h2>
-      <div class="subtitle">Connection readiness is shown here; Data Dashboard stays focused on data operations.</div>
-      <div class="health-grid">
-        <div class="health-card"><div class="status-line"><span id="health-shopify-dot" class="status-dot off"></span><span>Shopify</span></div><div id="health-shopify-text" class="muted">Checking...</div></div>
-        <div class="health-card"><div class="status-line"><span id="health-meta-dot" class="status-dot off"></span><span>Meta</span></div><div id="health-meta-text" class="muted">Checking...</div></div>
-        <div class="health-card"><div class="status-line"><span id="health-notion-dot" class="status-dot off"></span><span>Notion</span></div><div id="health-notion-text" class="muted">Checking...</div></div>
-      </div>
+      <div class="subtitle">Credential readiness and latest sync state for every configured integration.</div>
+      <div class="health-grid" id="integration-health-grid"></div>
     </section>
     <section class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
@@ -243,14 +239,9 @@
       </div>
     </section>
     <section class="card" style="margin-top: 24px;">
-      <h2>Research Intelligence Tool Needs</h2>
-      <div class="subtitle" style="margin-bottom: 12px;">Research type determines which tools must be configured before the result is strong enough for GM planning.</div>
-      <div class="health-grid">
-        <div class="health-card"><div class="status-line"><span class="status-dot on"></span><span>Store Context</span></div><div class="muted">LLM + Firecrawl + Tavily</div></div>
-        <div class="health-card"><div class="status-line"><span class="status-dot on"></span><span>Competitors</span></div><div class="muted">LLM + Tavily + Firecrawl</div></div>
-        <div class="health-card"><div class="status-line"><span class="status-dot on"></span><span>Audience Pain Points</span></div><div class="muted">LLM + Tavily + review/community sources</div></div>
-        <div class="health-card"><div class="status-line"><span class="status-dot on"></span><span>Compliance Scan</span></div><div class="muted">LLM + Tavily + policy/regulatory sources</div></div>
-      </div>
+      <h2>Research Intelligence Readiness</h2>
+      <div class="subtitle" style="margin-bottom: 12px;">Shows whether each research workflow has the configured tools it needs before its output is allowed to steer GM planning.</div>
+      <div class="health-grid" id="research-readiness-grid"></div>
     </section>
     <section class="card" style="margin-top: 24px;">
       <h2>Integration Credentials</h2>
@@ -477,6 +468,7 @@
       render();
       fab.classList.remove("saving");
       updateSaveFab();
+      refreshResearchReadiness();
       showSaveToast(failed === 0 ? `Saved ${saved} configuration${saved !== 1 ? "s" : ""}` : `Saved ${saved}, ${failed} failed`);
     }
 
@@ -519,7 +511,16 @@
       const seen = new Set();
       const names = [];
       (envVars || []).forEach(function(n) { if (!seen.has(n)) { seen.add(n); names.push(n); } });
-      ["CRISPY_API_KEY_SHOPIFY_DOMAIN", "CRISPY_API_KEY_SHOPIFY", "CRISPY_API_KEY_META", "CRISPY_API_KEY_META_ACCOUNT", "CRISPY_API_KEY_NOTION", "CRISPY_API_KEY_NOTION_DATABASE"].forEach(function(n) { if (!seen.has(n)) { seen.add(n); names.push(n); } });
+      [
+        "CRISPY_API_KEY_SHOPIFY_DOMAIN",
+        "CRISPY_API_KEY_SHOPIFY",
+        "CRISPY_API_KEY_META",
+        "CRISPY_API_KEY_META_ACCOUNT",
+        "CRISPY_API_KEY_TIKTOK",
+        "CRISPY_API_KEY_TIKTOK_ADVERTISER",
+        "CRISPY_API_KEY_NOTION",
+        "CRISPY_API_KEY_NOTION_DATABASE",
+      ].forEach(function(n) { if (!seen.has(n)) { seen.add(n); names.push(n); } });
       names.sort();
       var opts = '<option value="">(none)</option>';
       names.forEach(function(name) {
@@ -533,6 +534,7 @@
         integrationConfigs = await api("/integration-configs");
         refreshIntegrationTable();
         refreshIntegrationHealth();
+        refreshResearchReadiness();
         showSaveToast("Saved: " + platform + " / " + configKey);
       } catch (err) { alert(err.message); }
     }
@@ -541,31 +543,78 @@
       render();
       refreshIntegrationTable();
       refreshIntegrationHealth();
+      refreshResearchReadiness();
       document.getElementById("save-fab").addEventListener("click", saveAll);
     }
     function configSet(configs, platform, key) {
       const row = (configs || []).find((c) => c.platform === platform && c.config_key === key);
       return !!(row && row.is_set);
     }
-    function setHealth(id, ok, text) {
-      const dot = document.getElementById("health-" + id + "-dot");
-      const label = document.getElementById("health-" + id + "-text");
-      if(dot) dot.className = "status-dot " + (ok ? "ok" : "warn");
-      if(label) label.textContent = text;
+    function platformLabel(platform) {
+      const labels = { shopify: "Shopify", meta: "Meta", tiktok: "TikTok", notion: "Notion" };
+      return labels[platform] || (platform ? platform.charAt(0).toUpperCase() + platform.slice(1) : "Unknown");
+    }
+    function missingText(row) {
+      const missing = row.missing || [];
+      if (!missing.length) return row.sync_supported ? "Ready to sync" : "Configured";
+      return "Missing " + missing.join(", ");
+    }
+    function renderHealthCard(title, ok, detail, meta) {
+      return '<div class="health-card">'
+        + '<div class="status-line"><span class="status-dot ' + (ok ? 'ok' : 'warn') + '"></span><span>' + title + '</span></div>'
+        + '<div class="muted">' + detail + '</div>'
+        + (meta ? '<div class="muted" style="margin-top:4px;">' + meta + '</div>' : '')
+        + '</div>';
     }
     async function refreshIntegrationHealth() {
-      let configs = integrationConfigs;
-      try { configs = await api("/integration-configs"); } catch (_e) {}
-      const shopifyReady = configSet(configs, "shopify", "store_domain") && configSet(configs, "shopify", "access_token");
-      const metaReady = configSet(configs, "meta", "access_token") && configSet(configs, "meta", "ad_account_id");
-      setHealth("shopify", shopifyReady, shopifyReady ? "Configured" : "Missing store domain or access token");
-      setHealth("meta", metaReady, metaReady ? "Configured" : "Missing access token or ad account id");
+      const grid = document.getElementById("integration-health-grid");
+      if (!grid) return;
       try {
-        const status = await api("/content-schedules/notion-status");
-        setHealth("notion", !!status.ok, status.ok ? "Connected" : (status.error || "Not configured"));
+        const health = await api("/integrations/health");
+        const rows = health.platforms || [];
+        const notionStatus = await api("/content-schedules/notion-status").catch(() => null);
+        grid.innerHTML = rows.map((row) => {
+          const platform = String(row.platform || "");
+          const isNotion = platform === "notion";
+          const ready = isNotion && notionStatus ? !!notionStatus.ok : !!row.ready;
+          const detail = isNotion && notionStatus
+            ? (notionStatus.ok ? "Connected" : (notionStatus.error || missingText(row)))
+            : missingText(row);
+          const latest = row.latest_sync
+            ? `Last sync: ${row.latest_sync.status}, ${row.latest_sync.items_synced || 0} items`
+            : (row.sync_supported ? "No sync run yet" : "Calendar push only");
+          return renderHealthCard(platformLabel(platform), ready, detail, latest);
+        }).join("");
       } catch (err) {
-        setHealth("notion", false, "Connection check failed");
+        grid.innerHTML = renderHealthCard("Integration Health", false, "Unable to load integration health.", "");
       }
+    }
+    function researchConfigState() {
+      const cfg = byAgent.shop_analyst || {};
+      return {
+        llm: !!cfg.api_key_available,
+        tavily: !!cfg.tavily_api_key_available,
+        firecrawl: !!cfg.firecrawl_api_key_available,
+      };
+    }
+    function renderResearchCard(title, needs, state, note) {
+      const missing = needs.filter((key) => !state[key]);
+      const labels = { llm: "LLM", tavily: "Tavily", firecrawl: "Firecrawl" };
+      const detail = missing.length
+        ? "Missing " + missing.map((key) => labels[key]).join(", ")
+        : needs.map((key) => labels[key]).join(" + ") + " ready";
+      return renderHealthCard(title, missing.length === 0, detail, note || "");
+    }
+    function refreshResearchReadiness() {
+      const grid = document.getElementById("research-readiness-grid");
+      if (!grid) return;
+      const state = researchConfigState();
+      grid.innerHTML = [
+        renderResearchCard("Store Context", ["llm", "firecrawl", "tavily"], state, "Store profile and category context"),
+        renderResearchCard("Competitors", ["llm", "tavily", "firecrawl"], state, "Competitive landscape evidence"),
+        renderResearchCard("Audience Pain Points", ["llm", "tavily", "firecrawl"], state, "Review and community evidence"),
+        renderResearchCard("Compliance Scan", ["llm", "tavily", "firecrawl"], state, "Policy and regulatory evidence"),
+      ].join("");
     }
     init();
   </script>
