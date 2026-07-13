@@ -258,6 +258,11 @@ def test_creative_decision_analyzer_classifies_direction_and_refreshes_memory(db
     assert canonical_creative_key(run.id, "V2", "image") in retire_keys
     assert "production_quality_blocked" in needs_test[canonical_creative_key(run.id, "V3", "image")]["reasons"]
     assert "high_attention_low_intent" in needs_test[canonical_creative_key(run.id, "V4", "image")]["reasons"]
+    assert report["attribution_summary"]["strategy_safe_rate"] == 1.0
+    assert report["next_generation"]["priority_seeds"][0]["angle"] == "Angle V1"
+    assert report["next_generation"]["avoid_seeds"][0]["hook"] == "Hook V2"
+    assert report["next_generation"]["test_queue"]
+    assert report["next_generation"]["dimension_priorities"]["angles"][0]["value"] == "Angle V1"
 
     _, memories = refresh_creative_decision_memory(db_session, project_id=project.id)
     assert len(memories) == 1
@@ -268,6 +273,8 @@ def test_creative_decision_analyzer_classifies_direction_and_refreshes_memory(db
     assert len(content["avoid_patterns"]) == 1
     assert content["winning_patterns"][0]["decision"] == "promote"
     assert content["avoid_patterns"][0]["decision"] == "retire"
+    assert content["next_generation"]["priority_seeds"][0]["creative_key"] == canonical_creative_key(run.id, "V1", "image")
+    assert content["attribution_summary"]["creative_count"] == 4
 
 
 def test_creative_decision_dashboard_api_and_planning_insight(client, db_session):
@@ -324,6 +331,9 @@ def test_creative_decision_dashboard_api_and_planning_insight(client, db_session
     assert canonical_creative_key(run.id, "V1", "image") in {item["creative_key"] for item in payload["promote"]}
     assert canonical_creative_key(run.id, "V2", "image") in {item["creative_key"] for item in payload["retire"]}
     assert payload["unmatched"][0]["status"] == "unmatched"
+    assert payload["attribution_summary"]["unmatched_snapshots"] == 1
+    assert payload["next_generation"]["attribution_quality"]["recommendation"] == "improve_tracking"
+    assert payload["next_generation"]["priority_seeds"]
 
     refresh_resp = client.post(
         "/data-dashboard/creative-decisions/refresh",
@@ -339,6 +349,8 @@ def test_creative_decision_dashboard_api_and_planning_insight(client, db_session
     content = decision["content"]
     assert content["promote"]
     assert content["retire"]
+    assert content["next_generation"]["priority_seeds"]
+    assert content["attribution_summary"]["unmatched_snapshots"] == 1
     assert "unmatched" not in content
     assert content["unmatched_count"] == 1
 

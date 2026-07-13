@@ -887,6 +887,8 @@ def _analytics_insights(db: Session, run: PipelineRun) -> list[dict]:
             "promote": creative_decisions.get("promote", [])[:3],
             "retire": creative_decisions.get("retire", [])[:3],
             "needs_test": creative_decisions.get("needs_test", [])[:3],
+            "next_generation": creative_decisions.get("next_generation") or {},
+            "attribution_summary": creative_decisions.get("attribution_summary") or {},
             "unmatched_count": len(creative_decisions.get("unmatched", [])),
             "summary": "Creative decision attribution suggests which ideas to promote, retire, or test further.",
         }

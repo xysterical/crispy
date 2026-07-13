@@ -75,6 +75,17 @@ class CreativeDecisionAnalyzer:
         promote.sort(key=lambda item: item["metrics"]["weighted_score"], reverse=True)
         retire.sort(key=lambda item: item["metrics"]["weighted_score"])
         needs_test.sort(key=lambda item: item["metrics"]["weighted_score"], reverse=True)
+        attribution_summary = self._attribution_summary(
+            snapshots=snapshots,
+            candidates=candidates,
+            unmatched=unmatched,
+        )
+        next_generation = self._next_generation(
+            promote=promote,
+            retire=retire,
+            needs_test=needs_test,
+            attribution_summary=attribution_summary,
+        )
         return {
             "project_id": self.project_id,
             "product_code": product_code,
@@ -89,6 +100,8 @@ class CreativeDecisionAnalyzer:
             "retire": retire,
             "needs_test": needs_test,
             "unmatched": unmatched,
+            "attribution_summary": attribution_summary,
+            "next_generation": next_generation,
         }
 
     def _unmatched_item(self, snapshot: PerformanceSnapshot, attribution: dict) -> dict:
@@ -138,6 +151,7 @@ class CreativeDecisionAnalyzer:
             for m in metrics_list
             if (m.get("extra_metrics") or {}).get("thumbstop_rate") is not None
         ]
+        platforms = sorted({str(m.get("platform") or "").strip() for m in metrics_list if str(m.get("platform") or "").strip()})
         return {
             "impressions": impressions,
             "clicks": clicks,
@@ -151,6 +165,7 @@ class CreativeDecisionAnalyzer:
             "thumbstop_rate": round(sum(thumbstop_vals) / len(thumbstop_vals), 6) if thumbstop_vals else None,
             "weighted_score": round(sum(weighted_scores) / max(1, len(weighted_scores)), 2),
             "snapshots": len(metrics_list),
+            "platforms": platforms,
         }
 
     def _evidence(self, metrics_list: list[dict]) -> dict:
@@ -255,6 +270,58 @@ class CreativeDecisionAnalyzer:
         reasons.append("mixed_signal")
         return "needs_test"
 
+    def _attribution_summary(
+        self,
+        *,
+        snapshots: list[PerformanceSnapshot],
+        candidates: list[dict],
+        unmatched: list[dict],
+    ) -> dict:
+        total_snapshots = len(snapshots)
+        attributed_snapshots = sum(int((item.get("metrics") or {}).get("snapshots") or 0) for item in candidates)
+        unmatched_count = len(unmatched)
+        return {
+            "total_snapshots": total_snapshots,
+            "strategy_safe_snapshots": attributed_snapshots,
+            "unmatched_snapshots": unmatched_count,
+            "strategy_safe_rate": round(attributed_snapshots / total_snapshots, 4) if total_snapshots else 0.0,
+            "creative_count": len(candidates),
+            "unmatched_methods": sorted({str(item.get("method") or "unknown") for item in unmatched}),
+        }
+
+    def _next_generation(
+        self,
+        *,
+        promote: list[dict],
+        retire: list[dict],
+        needs_test: list[dict],
+        attribution_summary: dict,
+    ) -> dict:
+        priority_seeds = [_generation_seed(item) for item in promote[:5]]
+        avoid_seeds = [_generation_seed(item) for item in retire[:5]]
+        test_queue = [_generation_seed(item) for item in needs_test[:5]]
+        return {
+            "summary": _generation_summary(priority_seeds, avoid_seeds, test_queue, attribution_summary),
+            "priority_seeds": priority_seeds,
+            "avoid_seeds": avoid_seeds,
+            "test_queue": test_queue,
+            "dimension_priorities": {
+                "angles": _rank_dimension(promote, retire, "angle"),
+                "hooks": _rank_dimension(promote, retire, "hook"),
+                "asset_types": _rank_asset_types(promote, retire),
+                "platforms": _rank_platforms(promote, retire),
+            },
+            "attribution_quality": {
+                "strategy_safe_rate": attribution_summary.get("strategy_safe_rate", 0.0),
+                "unmatched_snapshots": attribution_summary.get("unmatched_snapshots", 0),
+                "recommendation": (
+                    "improve_tracking"
+                    if float(attribution_summary.get("strategy_safe_rate") or 0) < 0.8
+                    else "tracking_ready"
+                ),
+            },
+        }
+
 
 def refresh_creative_decision_memory(
     db: Session,
@@ -295,6 +362,8 @@ def refresh_creative_decision_memory(
                 "summary": "Use attributed creative performance to promote winning ideas and retire weak creative directions.",
                 "promote": promote,
                 "retire": retire,
+                "next_generation": report.get("next_generation") or {},
+                "attribution_summary": report.get("attribution_summary") or {},
                 "winning_patterns": [_memory_pattern(item) for item in promote],
                 "avoid_patterns": [_memory_pattern(item) for item in retire],
                 "evidence": [{"source": "performance_snapshot", "window_days": window_days}],
@@ -320,8 +389,103 @@ def _memory_pattern(item: dict) -> dict:
         "visual_pattern": dimensions.get("visual_pattern"),
         "video_structure": dimensions.get("video_structure"),
         "asset_type": item.get("asset_type"),
+        "platforms": metrics.get("platforms") or [],
         "weighted_score": metrics.get("weighted_score"),
         "ctr": metrics.get("ctr"),
         "cvr": metrics.get("cvr"),
         "reasons": item.get("reasons") or [],
     }
+
+
+def _generation_seed(item: dict) -> dict:
+    dimensions = item.get("dimensions") or {}
+    metrics = item.get("metrics") or {}
+    return {
+        "creative_key": item.get("creative_key"),
+        "decision": item.get("decision"),
+        "product_code": dimensions.get("product_code"),
+        "angle": dimensions.get("angle"),
+        "hook": dimensions.get("hook"),
+        "selling_point": dimensions.get("selling_point"),
+        "asset_type": item.get("asset_type"),
+        "platforms": metrics.get("platforms") or [],
+        "weighted_score": metrics.get("weighted_score"),
+        "ctr": metrics.get("ctr"),
+        "cvr": metrics.get("cvr"),
+        "roas": metrics.get("roas"),
+        "reasons": item.get("reasons") or [],
+    }
+
+
+def _generation_summary(
+    priority_seeds: list[dict],
+    avoid_seeds: list[dict],
+    test_queue: list[dict],
+    attribution_summary: dict,
+) -> str:
+    if priority_seeds:
+        first = priority_seeds[0]
+        return (
+            f"Generate more variants around angle '{first.get('angle') or 'unknown'}' "
+            f"and hook '{first.get('hook') or 'unknown'}'; avoid {len(avoid_seeds)} weak direction(s)."
+        )
+    if test_queue:
+        return "Evidence is mixed; run controlled follow-up tests before scaling new creative directions."
+    if attribution_summary.get("unmatched_snapshots"):
+        return "Improve creative attribution before using performance data to steer generation."
+    return "No attributed creative performance is ready to steer generation."
+
+
+def _rank_dimension(promote: list[dict], retire: list[dict], dimension_key: str) -> list[dict]:
+    buckets: dict[str, dict] = defaultdict(lambda: {"value": "", "promote": 0, "retire": 0, "score_sum": 0.0, "count": 0})
+    for decision, rows in (("promote", promote), ("retire", retire)):
+        for item in rows:
+            value = str((item.get("dimensions") or {}).get(dimension_key) or "").strip()
+            if not value:
+                continue
+            bucket = buckets[value]
+            bucket["value"] = value
+            bucket[decision] += 1
+            bucket["score_sum"] += float((item.get("metrics") or {}).get("weighted_score") or 0)
+            bucket["count"] += 1
+    ranked = []
+    for bucket in buckets.values():
+        count = int(bucket["count"] or 1)
+        ranked.append({
+            "value": bucket["value"],
+            "promote": bucket["promote"],
+            "retire": bucket["retire"],
+            "avg_weighted_score": round(float(bucket["score_sum"]) / count, 2),
+            "net_signal": int(bucket["promote"]) - int(bucket["retire"]),
+        })
+    return sorted(ranked, key=lambda item: (item["net_signal"], item["avg_weighted_score"]), reverse=True)[:8]
+
+
+def _rank_asset_types(promote: list[dict], retire: list[dict]) -> list[dict]:
+    return _rank_item_values(promote, retire, lambda item: [str(item.get("asset_type") or "creative")])
+
+
+def _rank_platforms(promote: list[dict], retire: list[dict]) -> list[dict]:
+    return _rank_item_values(promote, retire, lambda item: (item.get("metrics") or {}).get("platforms") or ["unknown"])
+
+
+def _rank_item_values(promote: list[dict], retire: list[dict], values_fn) -> list[dict]:
+    buckets: dict[str, dict] = defaultdict(lambda: {"value": "", "promote": 0, "retire": 0})
+    for decision, rows in (("promote", promote), ("retire", retire)):
+        for item in rows:
+            for value in values_fn(item):
+                value = str(value or "").strip()
+                if not value:
+                    continue
+                buckets[value]["value"] = value
+                buckets[value][decision] += 1
+    ranked = [
+        {
+            "value": bucket["value"],
+            "promote": bucket["promote"],
+            "retire": bucket["retire"],
+            "net_signal": int(bucket["promote"]) - int(bucket["retire"]),
+        }
+        for bucket in buckets.values()
+    ]
+    return sorted(ranked, key=lambda item: (item["net_signal"], item["promote"]), reverse=True)[:8]
