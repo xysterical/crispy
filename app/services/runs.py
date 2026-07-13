@@ -38,7 +38,6 @@ from app.orchestrator.state_machine import next_stage, should_auto_approve, stag
 from app.orchestrator.stage_contracts import get_stage_contract
 from app.schemas.api import RunCreateRequest
 from app.schemas.contracts import (
-    ProductIntake,
     VariantSet,
     VideoSegmentPlan,
     VideoScriptPack,
@@ -70,14 +69,18 @@ from app.services.execution_memory import (
 from app.services.marketplace_qa import MARKETPLACE_REVIEW_TAGS, is_marketplace_main_image
 from app.services.personas import get_persona
 from app.services.gm_evolution import compile_run_outcome_reflection
-from app.services.reference_library import build_reference_bundle
 from app.services.stage_inputs import (
     analytics_insights as _analytics_insights,
     build_task_input as _build_task_input,
     recent_gm_lessons as _recent_gm_lessons,
     stage_output_optional as _stage_output_optional,
 )
-from app.services.stage_execution import StageExecutionContext, execute_runtime_stage
+from app.services.stage_execution import (
+    RegenerationExecutionContext,
+    StageExecutionContext,
+    execute_regeneration_stage,
+    execute_runtime_stage,
+)
 from app.services.video_frames import extract_last_video_frame, stitch_video_files
 from app.services.visual_qa import inspect_visual_asset
 
@@ -3010,91 +3013,22 @@ def regenerate_variant_assets(
 
     runtime_config = {**runtime_config, "trace_callback": trace_regeneration_model_event}
 
-    if stage_name == "copy_image_generation":
-        intake_payload = task.input_payload.get("intake") or {}
-        intake = ProductIntake.model_validate(intake_payload) if intake_payload else None
-        campaign = db.get(Campaign, run.campaign_id)
-        reference_bundle = build_reference_bundle(
-            db,
-            product_code=run.product_code,
-            channel=campaign.channel if campaign else "",
-            limit_images=2,
-            limit_frames=2,
-        )
-        output = runtime.run_copy_image_generation(
-            run.id,
-            _single_variant_set(db, run_id, variant_id),
-            intake=intake,
-            business_context=task.input_payload.get("business_context", {}),
-            creative_specs=task.input_payload.get("creative_specs", {}),
-            market=run.market,
-            locale=run.locale,
-            provider=provider_name,
-            model=model_name,
+    output = execute_regeneration_stage(
+        RegenerationExecutionContext(
+            db=db,
+            run=run,
+            task=task,
+            runtime=runtime,
             runtime_config=runtime_config,
-            historical_references=reference_bundle["images"],
+            provider_name=provider_name,
+            model_name=model_name,
+            variant_id=variant_id,
+            get_single_variant_set=_single_variant_set,
+            get_single_script_pack=_single_script_pack,
+            get_stage_output=_get_stage_output,
+            get_latest_video_payload=_latest_video_payload_for_variant,
         )
-    elif stage_name == "video_scripting":
-        intake_payload = task.input_payload.get("intake") or {}
-        intake = ProductIntake.model_validate(intake_payload) if intake_payload else None
-        campaign = db.get(Campaign, run.campaign_id)
-        reference_bundle = build_reference_bundle(
-            db,
-            product_code=run.product_code,
-            channel=campaign.channel if campaign else "",
-            limit_images=2,
-            limit_frames=2,
-        )
-        output = runtime.run_video_scripting(
-            run.id,
-            _single_variant_set(db, run_id, variant_id),
-            intake=intake,
-            business_context=task.input_payload.get("business_context", {}),
-            provider=provider_name,
-            model=model_name,
-            creative_specs=task.input_payload.get("creative_specs", {}),
-            pipeline_mode=run.pipeline_mode,
-            runtime_config=runtime_config,
-            reference_bundle=reference_bundle,
-            planning=task.input_payload.get("planning"),
-        )
-    elif stage_name == "storyboard_image_generation":
-        campaign = db.get(Campaign, run.campaign_id)
-        reference_bundle = build_reference_bundle(
-            db,
-            product_code=run.product_code,
-            channel=campaign.channel if campaign else "",
-            limit_images=2,
-            limit_frames=2,
-        )
-        output = runtime.run_storyboard_image_generation(
-            run.id,
-            _single_script_pack(db, run_id, variant_id),
-            creative_specs=task.input_payload.get("creative_specs", {}),
-            provider=provider_name,
-            model=model_name,
-            runtime_config=runtime_config,
-            historical_references=reference_bundle["frames"] or reference_bundle["images"],
-            intake=ProductIntake.model_validate(task.input_payload["intake"]) if task.input_payload.get("intake") else None,
-            planning=task.input_payload.get("planning"),
-        )
-    elif stage_name == "video_generation":
-        storyboard_output = _get_stage_output(db, run_id, "storyboard_image_generation")
-        storyboard_frames = (storyboard_output or {}).get("frames", [])
-        variant_frames = [f for f in storyboard_frames if f.get("variant_id") == variant_id]
-        resume_payload = _latest_video_payload_for_variant(db, run_id, variant_id)
-
-        output = runtime.run_video_generation(
-            run.id,
-            _single_script_pack(db, run_id, variant_id),
-            creative_specs=task.input_payload.get("creative_specs", {}),
-            provider=provider_name,
-            model=model_name,
-            runtime_config={**runtime_config, "resume_video_payload": resume_payload} if resume_payload else runtime_config,
-            storyboard_frames=variant_frames,
-        )
-    else:
-        raise ValueError(f"stage {stage_name} does not support variant regeneration")
+    )
 
     task.output_payload = _merge_stage_payload(stage_name, task.output_payload or {}, output.payload)
     task.model_used = output.model_used

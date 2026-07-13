@@ -27,6 +27,9 @@ TraceEmitter = Callable[..., None]
 VariantLibrarySync = Callable[[Session, PipelineRun, StageTask, dict], None]
 StageOutputReader = Callable[[Session, str, str], dict | None]
 MemoryTracePayload = Callable[[list[dict], dict | None], dict]
+SingleVariantSet = Callable[[Session, str, str], VariantSet]
+SingleScriptPack = Callable[[Session, str, str], VideoScriptPack]
+LatestVideoPayload = Callable[[Session, str, str], dict | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +50,22 @@ class StageExecutionContext:
     utcnow: Callable[[], Any]
 
 
+@dataclass(frozen=True, slots=True)
+class RegenerationExecutionContext:
+    db: Session
+    run: PipelineRun
+    task: StageTask
+    runtime: AgentsRuntime
+    runtime_config: dict
+    provider_name: str
+    model_name: str
+    variant_id: str
+    get_single_variant_set: SingleVariantSet
+    get_single_script_pack: SingleScriptPack
+    get_stage_output: StageOutputReader
+    get_latest_video_payload: LatestVideoPayload
+
+
 def execute_runtime_stage(context: StageExecutionContext) -> Any:
     try:
         handler = RUNTIME_STAGE_DISPATCH[context.task.stage_name]
@@ -57,6 +76,18 @@ def execute_runtime_stage(context: StageExecutionContext) -> Any:
 
 def runtime_stage_names() -> set[str]:
     return set(RUNTIME_STAGE_DISPATCH)
+
+
+def execute_regeneration_stage(context: RegenerationExecutionContext) -> Any:
+    try:
+        handler = REGENERATION_STAGE_DISPATCH[context.task.stage_name]
+    except KeyError as exc:
+        raise ValueError(f"stage {context.task.stage_name} does not support variant regeneration") from exc
+    return handler(context)
+
+
+def regeneratable_stage_names() -> set[str]:
+    return set(REGENERATION_STAGE_DISPATCH)
 
 
 def _run_intake(context: StageExecutionContext) -> Any:
@@ -284,7 +315,81 @@ def _run_evaluation_selection(context: StageExecutionContext) -> Any:
     )
 
 
-def _reference_bundle(context: StageExecutionContext) -> dict:
+def _regenerate_copy_image_generation(context: RegenerationExecutionContext) -> Any:
+    intake_payload = context.task.input_payload.get("intake") or {}
+    intake = ProductIntake.model_validate(intake_payload) if intake_payload else None
+    reference_bundle = _reference_bundle(context)
+    return context.runtime.run_copy_image_generation(
+        context.run.id,
+        context.get_single_variant_set(context.db, context.run.id, context.variant_id),
+        intake=intake,
+        business_context=context.task.input_payload.get("business_context", {}),
+        creative_specs=context.task.input_payload.get("creative_specs", {}),
+        market=context.run.market,
+        locale=context.run.locale,
+        provider=context.provider_name,
+        model=context.model_name,
+        runtime_config=context.runtime_config,
+        historical_references=reference_bundle["images"],
+    )
+
+
+def _regenerate_video_scripting(context: RegenerationExecutionContext) -> Any:
+    intake_payload = context.task.input_payload.get("intake") or {}
+    intake = ProductIntake.model_validate(intake_payload) if intake_payload else None
+    reference_bundle = _reference_bundle(context)
+    return context.runtime.run_video_scripting(
+        context.run.id,
+        context.get_single_variant_set(context.db, context.run.id, context.variant_id),
+        intake=intake,
+        business_context=context.task.input_payload.get("business_context", {}),
+        provider=context.provider_name,
+        model=context.model_name,
+        creative_specs=context.task.input_payload.get("creative_specs", {}),
+        pipeline_mode=context.run.pipeline_mode,
+        runtime_config=context.runtime_config,
+        reference_bundle=reference_bundle,
+        planning=context.task.input_payload.get("planning"),
+    )
+
+
+def _regenerate_storyboard_image_generation(context: RegenerationExecutionContext) -> Any:
+    reference_bundle = _reference_bundle(context)
+    return context.runtime.run_storyboard_image_generation(
+        context.run.id,
+        context.get_single_script_pack(context.db, context.run.id, context.variant_id),
+        creative_specs=context.task.input_payload.get("creative_specs", {}),
+        provider=context.provider_name,
+        model=context.model_name,
+        runtime_config=context.runtime_config,
+        historical_references=reference_bundle["frames"] or reference_bundle["images"],
+        intake=ProductIntake.model_validate(context.task.input_payload["intake"]) if context.task.input_payload.get("intake") else None,
+        planning=context.task.input_payload.get("planning"),
+    )
+
+
+def _regenerate_video_generation(context: RegenerationExecutionContext) -> Any:
+    storyboard_output = context.get_stage_output(context.db, context.run.id, "storyboard_image_generation")
+    storyboard_frames = (storyboard_output or {}).get("frames", [])
+    variant_frames = [frame for frame in storyboard_frames if frame.get("variant_id") == context.variant_id]
+    resume_payload = context.get_latest_video_payload(context.db, context.run.id, context.variant_id)
+    runtime_config = (
+        {**context.runtime_config, "resume_video_payload": resume_payload}
+        if resume_payload
+        else context.runtime_config
+    )
+    return context.runtime.run_video_generation(
+        context.run.id,
+        context.get_single_script_pack(context.db, context.run.id, context.variant_id),
+        creative_specs=context.task.input_payload.get("creative_specs", {}),
+        provider=context.provider_name,
+        model=context.model_name,
+        runtime_config=runtime_config,
+        storyboard_frames=variant_frames,
+    )
+
+
+def _reference_bundle(context: Any) -> dict:
     campaign = context.db.get(Campaign, context.run.campaign_id)
     return build_reference_bundle(
         context.db,
@@ -305,4 +410,12 @@ RUNTIME_STAGE_DISPATCH: dict[str, Callable[[StageExecutionContext], Any]] = {
     "video_generation": _run_video_generation,
     "visual_quality_assessment": _run_visual_quality_assessment,
     "evaluation_selection": _run_evaluation_selection,
+}
+
+
+REGENERATION_STAGE_DISPATCH: dict[str, Callable[[RegenerationExecutionContext], Any]] = {
+    "copy_image_generation": _regenerate_copy_image_generation,
+    "video_scripting": _regenerate_video_scripting,
+    "storyboard_image_generation": _regenerate_storyboard_image_generation,
+    "video_generation": _regenerate_video_generation,
 }
