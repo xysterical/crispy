@@ -38,11 +38,8 @@ from app.orchestrator.state_machine import next_stage, should_auto_approve, stag
 from app.orchestrator.stage_contracts import get_stage_contract
 from app.schemas.api import RunCreateRequest
 from app.schemas.contracts import (
-    CopyImageBundle,
-    PlanningBrief,
     ProductIntake,
     VariantSet,
-    VideoBundle,
     VideoSegmentPlan,
     VideoScriptPack,
 )
@@ -80,6 +77,7 @@ from app.services.stage_inputs import (
     recent_gm_lessons as _recent_gm_lessons,
     stage_output_optional as _stage_output_optional,
 )
+from app.services.stage_execution import StageExecutionContext, execute_runtime_stage
 from app.services.video_frames import extract_last_video_frame, stitch_video_files
 from app.services.visual_qa import inspect_visual_asset
 
@@ -1475,241 +1473,24 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
             "compiled_persona": compiled_persona,
         }
 
-        output = None
-        if task.stage_name == "intake":
-            output = runtime.run_intake(run.id, task.input_payload, provider=provider_name, model=model_name, runtime_config=runtime_config)
-        elif task.stage_name == "planning":
-            intake = ProductIntake.model_validate(task.input_payload["intake"])
-            gm_lessons = task.input_payload.get("gm_lessons", [])
-            add_agent_trace_event(
-                db,
-                run_id=run.id,
-                stage_task_id=task.id,
-                stage_name=task.stage_name,
-                agent_name=lead_agent,
-                event_type="gm_memory_applied",
-                message=f"Planning applied {len(gm_lessons)} GM memory entries.",
+        output = execute_runtime_stage(
+            StageExecutionContext(
+                db=db,
+                run=run,
+                task=task,
+                runtime=runtime,
+                resolved=resolved,
+                runtime_config=runtime_config,
                 provider_name=provider_name,
                 model_name=model_name,
-                payload=_gm_memory_trace_payload(gm_lessons, task.input_payload.get("research_context") or {}),
+                lead_agent=lead_agent,
+                emit_trace=trace_model_event,
+                variant_library_sync=_variant_library_sync,
+                get_stage_output=_get_stage_output,
+                gm_memory_trace_payload=_gm_memory_trace_payload,
+                utcnow=utcnow,
             )
-            output = runtime.run_planning(
-                run.id,
-                intake,
-                gm_lessons=gm_lessons,
-                research_context=task.input_payload.get("research_context") or {},
-                gm_policy=task.input_payload.get("gm_policy", {}),
-                creative_specs=task.input_payload.get("creative_specs", {}),
-                enable_research=bool(task.input_payload.get("enable_research")),
-                provider=provider_name,
-                model=model_name,
-                runtime_config=runtime_config,
-            )
-        elif task.stage_name == "divergence":
-            planning = PlanningBrief.model_validate(task.input_payload["planning"])
-            output = runtime.run_divergence(
-                run.id,
-                planning,
-                variant_count=run.variant_count,
-                gm_policy=task.input_payload.get("gm_policy", {}),
-                creative_specs=task.input_payload.get("creative_specs", {}),
-                provider=provider_name,
-                model=model_name,
-                runtime_config=runtime_config,
-            )
-        elif task.stage_name == "copy_image_generation":
-            variants = VariantSet.model_validate(task.input_payload["variants"])
-            intake_payload = task.input_payload.get("intake") or {}
-            intake = ProductIntake.model_validate(intake_payload) if intake_payload else None
-            campaign = db.get(Campaign, run.campaign_id)
-            reference_bundle = build_reference_bundle(
-                db,
-                product_code=run.product_code,
-                channel=campaign.channel if campaign else "",
-                limit_images=2,
-                limit_frames=2,
-            )
-            output = runtime.run_copy_image_generation(
-                run.id,
-                variants,
-                intake=intake,
-                business_context=task.input_payload.get("business_context", {}),
-                creative_specs=task.input_payload.get("creative_specs", {}),
-                market=run.market,
-                locale=run.locale,
-                provider=provider_name,
-                model=model_name,
-                runtime_config=runtime_config,
-                historical_references=reference_bundle["images"],
-            )
-        elif task.stage_name == "video_scripting":
-            variants = VariantSet.model_validate(task.input_payload["variants"])
-            intake_payload = task.input_payload.get("intake") or {}
-            intake = ProductIntake.model_validate(intake_payload) if intake_payload else None
-            campaign = db.get(Campaign, run.campaign_id)
-            reference_bundle = build_reference_bundle(
-                db,
-                product_code=run.product_code,
-                channel=campaign.channel if campaign else "",
-                limit_images=2,
-                limit_frames=2,
-            )
-            output = runtime.run_video_scripting(
-                run.id,
-                variants,
-                intake=intake,
-                business_context=task.input_payload.get("business_context", {}),
-                provider=provider_name,
-                model=model_name,
-                creative_specs=task.input_payload.get("creative_specs", {}),
-                pipeline_mode=run.pipeline_mode,
-                runtime_config=runtime_config,
-                reference_bundle=reference_bundle,
-                planning=task.input_payload.get("planning"),
-            )
-        elif task.stage_name == "storyboard_image_generation":
-            scripts = VideoScriptPack.model_validate(task.input_payload["video_scripts"])
-            storyboard_resolved = resolved
-            if not has_resolved_image_config(storyboard_resolved):
-                image_resolved = resolve_agent_config(
-                    db,
-                    agent_name="copy_image_agent",
-                    run_provider=run.model_provider,
-                    run_model=run.model_name,
-                )
-                storyboard_resolved = with_fallback_image_config(
-                    storyboard_resolved,
-                    image_resolved,
-                    source="copy_image_agent",
-                )
-                task.metadata_json = {
-                    **(task.metadata_json or {}),
-                    "storyboard_image_config_source": "copy_image_agent",
-                    "resolved_api": storyboard_resolved,
-                }
-            storyboard_runtime = resolve_agent_runtime(storyboard_resolved)
-            storyboard_image_runtime = dict(storyboard_runtime.get("image") or {})
-            storyboard_image_runtime["extra"] = {
-                **(storyboard_image_runtime.get("extra") or {}),
-                "submit_only": True,
-            }
-            storyboard_runtime_config = {
-                **runtime_config,
-                "image": storyboard_image_runtime,
-            }
-            campaign = db.get(Campaign, run.campaign_id)
-            reference_bundle = build_reference_bundle(
-                db,
-                product_code=run.product_code,
-                channel=campaign.channel if campaign else "",
-                limit_images=2,
-                limit_frames=2,
-            )
-            output = runtime.run_storyboard_image_generation(
-                run.id,
-                scripts,
-                creative_specs=task.input_payload.get("creative_specs", {}),
-                provider=provider_name,
-                model=model_name,
-                runtime_config=storyboard_runtime_config,
-                historical_references=reference_bundle["frames"] or reference_bundle["images"],
-                intake=ProductIntake.model_validate(task.input_payload["intake"]) if task.input_payload.get("intake") else None,
-                planning=task.input_payload.get("planning"),
-            )
-        elif task.stage_name == "video_generation":
-            scripts = VideoScriptPack.model_validate(task.input_payload["video_scripts"])
-            def persist_video_asset(video_payload: dict) -> None:
-                current_payload = task.output_payload or {"videos": []}
-                current_videos = [
-                    item for item in current_payload.get("videos", []) if item.get("variant_id") != video_payload.get("variant_id")
-                ]
-                current_videos.append(video_payload)
-                task.output_payload = {"videos": current_videos}
-                db.add(
-                    Artifact(
-                        run_id=run.id,
-                        stage_name=task.stage_name,
-                        artifact_type="generated_video",
-                        uri=video_payload.get("video_uri"),
-                        payload=video_payload,
-                    )
-                )
-                _variant_library_sync(db, run, task, {"videos": [video_payload]})
-                add_agent_trace_event(
-                    db,
-                    run_id=run.id,
-                    stage_task_id=task.id,
-                    stage_name=task.stage_name,
-                    agent_name=lead_agent,
-                    event_type="artifact_created",
-                    message=f"Video asset submitted for variant {video_payload.get('variant_id')}.",
-                    provider_name=provider_name,
-                    model_name=model_name,
-                    payload={
-                        "variant_id": video_payload.get("variant_id"),
-                        "asset_type": "video",
-                        "uri": video_payload.get("video_uri"),
-                        "external_task_id": video_payload.get("external_task_id"),
-                        "generation_status": video_payload.get("generation_status"),
-                    },
-                )
-                run.updated_at = utcnow()
-                db.commit()
-
-            storyboard_output = _get_stage_output(db, run.id, "storyboard_image_generation")
-            storyboard_frames = (storyboard_output or {}).get("frames", [])
-            variant_ids = {s.variant_id for s in scripts.scripts}
-            variant_frames = [f for f in storyboard_frames if f.get("variant_id") in variant_ids]
-
-            output = runtime.run_video_generation(
-                run.id,
-                scripts,
-                creative_specs=task.input_payload.get("creative_specs", {}),
-                provider=provider_name,
-                model=model_name,
-                runtime_config=runtime_config,
-                on_video_asset=persist_video_asset,
-                storyboard_frames=variant_frames,
-            )
-        elif task.stage_name == "visual_quality_assessment":
-            variants = VariantSet.model_validate(task.input_payload["variants"])
-            output = runtime.run_visual_quality_assessment(
-                run.id,
-                variants,
-                copy_images=task.input_payload.get("copy_images", {}),
-                video_scripts=task.input_payload.get("video_scripts", {}),
-                storyboards=task.input_payload.get("storyboards", {}),
-                videos=task.input_payload.get("videos", {}),
-                intake=task.input_payload.get("intake", {}),
-                business_context=task.input_payload.get("business_context", {}),
-                creative_specs=task.input_payload.get("creative_specs", {}),
-                social_review_contract=task.input_payload.get("social_review_contract", {}),
-                gm_policy=task.input_payload.get("gm_policy", {}),
-                provider=provider_name,
-                model=model_name,
-                runtime_config=runtime_config,
-            )
-        elif task.stage_name == "evaluation_selection":
-            variants = VariantSet.model_validate(task.input_payload["variants"])
-            copy_bundle = CopyImageBundle.model_validate(task.input_payload.get("copy_images", {}))
-            script_pack = VideoScriptPack.model_validate(task.input_payload.get("video_scripts", {}))
-            video_bundle = VideoBundle.model_validate(task.input_payload.get("videos", {}))
-            output = runtime.run_evaluation_selection(
-                run.id,
-                variants,
-                copy_bundle,
-                script_pack,
-                video_bundle,
-                task.input_payload.get("visual_quality", {}),
-                provider=provider_name,
-                model=model_name,
-                creative_specs=task.input_payload.get("creative_specs", {}),
-                pipeline_mode=run.pipeline_mode,
-                gm_policy=task.input_payload.get("gm_policy", {}),
-                runtime_config=runtime_config,
-            )
-        else:
-            raise ValueError(f"unknown stage: {task.stage_name}")
+        )
 
         task.output_payload = output.payload
         task.model_used = output.model_used

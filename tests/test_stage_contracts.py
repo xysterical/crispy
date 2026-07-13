@@ -9,6 +9,7 @@ from app.orchestrator.stage_contracts import (
     stage_contracts_for_plan,
 )
 from app.orchestrator.state_machine import PIPELINE_STAGE_PLANS
+from app.services.stage_execution import runtime_stage_names
 from app.services.stage_inputs import STAGE_OUTPUT_INPUTS, stage_input_keys_for_contract
 
 
@@ -76,3 +77,7 @@ def test_stage_input_bindings_only_reference_known_stages():
     for stage_name, bindings in STAGE_OUTPUT_INPUTS.items():
         assert stage_name in known_stages
         assert set(bindings.values()).issubset(known_stages)
+
+
+def test_runtime_dispatch_covers_every_stage_contract():
+    assert runtime_stage_names() == set(STAGE_CONTRACTS)
