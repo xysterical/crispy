@@ -841,6 +841,58 @@ def test_run_memory_selection_manual_uses_only_selected_safe_memory(client, db_s
     assert unsafe_selected.id not in lesson_ids
 
 
+def test_run_memory_candidates_api_marks_default_safe_memory(client, db_session):
+    from app.data.models import GmMemory, Workspace
+    from app.schemas.api import RunCreateRequest
+    from app.services.runs import create_run
+
+    shop = Workspace(name="memory-candidates-shop", industry_code="pet_accessories")
+    db_session.add(shop)
+    db_session.flush()
+    run = create_run(
+        db_session,
+        RunCreateRequest(
+            workspace_name="memory-candidates-shop",
+            project_name="memory-candidates-project",
+            product_name="utility leash",
+            product_code="MEM-CANDIDATE",
+            industry_code="pet_accessories",
+            campaign_name="memory-candidates-campaign",
+            creative_preset="custom",
+            creative_specs={"image_size": "1:1", "video_size": "1:1", "resolution": "720p", "video_duration_seconds": 5},
+        ),
+    )
+    memory = GmMemory(
+        project_id=run.project_id,
+        memory_scope="product",
+        product_code="MEM-CANDIDATE",
+        industry_code="pet_accessories",
+        source_type="feedback_import",
+        memory_type="strategy",
+        score_hint=100,
+        content={"summary": "Candidate memory should be available."},
+    )
+    db_session.add(memory)
+    db_session.commit()
+
+    resp = client.get(
+        "/run-memory-candidates",
+        params={
+            "workspace_name": shop.name,
+            "project_name": "memory-candidates-project",
+            "product_code": "MEM-CANDIDATE",
+            "industry_code": "pet_accessories",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    item = next(row for row in body["items"] if row["id"] == memory.id)
+    assert item["strategy_safe"] is True
+    assert item["selected_by_default"] is True
+    assert body["summary"]["default_selected_count"] >= 1
+
+
 def test_expired_research_memory_is_excluded_from_planning_unless_pinned(client, db_session):
     from datetime import UTC, datetime, timedelta
 

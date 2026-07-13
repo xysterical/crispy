@@ -3399,6 +3399,25 @@ def research_context(
     )
 
 
+@router.get("/run-memory-candidates")
+def run_memory_candidates(
+    workspace_name: str = Query(default=""),
+    project_name: str | None = Query(default=None),
+    product_code: str | None = Query(default=None),
+    industry_code: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.memory_selection import build_run_memory_candidates
+
+    return build_run_memory_candidates(
+        db,
+        workspace_name=workspace_name,
+        project_name=project_name,
+        product_code=product_code,
+        industry_code=industry_code,
+    )
+
+
 @router.post("/shop-analysis/run", response_model=ShopAnalysisResponse)
 def run_shop_analysis(
     payload: ShopAnalysisRequest,
