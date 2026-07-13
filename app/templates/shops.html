@@ -76,6 +76,21 @@
   .shop-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .shop-edit-grid .full { grid-column: 1 / -1; }
   .shop-edit-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .connection-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  .connection-card { display: grid; gap: 12px; }
+  .connection-list { display: grid; gap: 8px; }
+  .connection-item { border: 1px solid var(--line); border-radius: var(--radius); background: #fff; padding: 10px; display: grid; gap: 6px; }
+  .connection-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+  .connection-title { min-width: 0; font-size: 13px; font-weight: 800; overflow-wrap: anywhere; }
+  .connection-meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .connection-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .connection-actions button { width: auto; min-width: 0; padding: 6px 8px; font-size: 12px; }
+  .connection-form { display: grid; gap: 9px; border-top: 1px solid var(--line-light); padding-top: 10px; }
+  .connection-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .connection-form-grid .full { grid-column: 1 / -1; }
+  .small-check { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
+  .small-check input { width: auto; }
+  .empty-connection { min-height: 72px; display: grid; place-items: center; color: var(--muted); border: 1px dashed var(--line); border-radius: var(--radius); background: var(--gray-50); font-size: 12px; text-align: center; padding: 12px; }
   .danger-text { color: var(--danger); }
   .shop-status-line { min-height: 18px; color: var(--muted); font-size: 12px; font-weight: 650; }
   .shop-status-line.ok { color: var(--accent-dark); }
@@ -85,7 +100,7 @@
   .archived-toggle { display: inline-flex; align-items: center; gap: 6px; margin: 0 6px 0 0; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
   .archived-toggle input { width: auto; }
   @media (max-width: 980px) {
-    .shops-layout, .shop-detail-top, .shop-edit-grid, .summary-grid { grid-template-columns: 1fr; }
+    .shops-layout, .shop-detail-top, .shop-edit-grid, .summary-grid, .connection-grid { grid-template-columns: 1fr; }
     .shops-sidebar { position: static; }
     .shops-list { max-height: 380px; }
   }
@@ -166,6 +181,8 @@
     let shops = [];
     let selectedShopId = "";
     let shopSortDirection = "asc";
+    let shopSitesById = {};
+    let shopChannelsById = {};
 
     async function api(url, options) {
       const resp = await fetch(url, Object.assign({ headers: { "Content-Type": "application/json" } }, options || {}));
@@ -247,6 +264,7 @@
       setCreateCollapsed(shops.length > 0);
       renderShopList();
       renderShopWorkspace();
+      if (selectedShopId) loadShopConnections(selectedShopId);
     }
 
     function renderShopList() {
@@ -266,6 +284,7 @@
           + '<span class="shop-count-stack">'
           + '<span class="shop-count-chip" title="Categories">Cat ' + Number(shop.category_count || 0) + '</span>'
           + '<span class="shop-count-chip" title="Runs">Run ' + Number(shop.run_count || 0) + '</span>'
+          + '<span class="shop-count-chip" title="Channels">Ch ' + Number(shop.channel_count || 0) + '</span>'
           + '<span class="shop-count-chip" title="Research runs">Res ' + Number(shop.analysis_count || 0) + '</span>'
           + '</span></button>';
       }).join("");
@@ -274,6 +293,7 @@
           selectedShopId = btn.dataset.shopId || "";
           renderShopList();
           renderShopWorkspace();
+          loadShopConnections(selectedShopId);
         });
       });
     }
@@ -300,7 +320,7 @@
         + '<div class="metric-grid">'
         + metricBox("Categories", shop.category_count, "Project groups")
         + metricBox("Runs", shop.run_count, "Creative pipelines")
-        + metricBox("Research", shop.analysis_count, "Memory inputs")
+        + metricBox("Channels", shop.channel_count, "Connected accounts")
         + '</div></section>'
         + '<section class="summary-grid" aria-label="Shop context summaries">'
         + summaryCard(
@@ -354,7 +374,67 @@
         + '<div class="shop-edit-actions">'
         + '<div class="action-row"><button class="primary" type="button" onclick="saveSelectedShop()">Save Details</button><button class="' + archiveClass + '" type="button" onclick="toggleArchiveSelectedShop()">' + archiveLabel + ' Shop</button></div>'
         + '<div id="detail-status" class="shop-status-line"></div>'
-        + '</div></section>';
+        + '</div></section>'
+        + '<section class="connection-grid">'
+        + renderSitesCard(shop)
+        + renderChannelsCard(shop)
+        + '</section>';
+    }
+
+    async function loadShopConnections(shopId) {
+      if (!shopId) return;
+      try {
+        const [sites, accounts] = await Promise.all([
+          api("/shops/" + encodeURIComponent(shopId) + "/sites"),
+          api("/shops/" + encodeURIComponent(shopId) + "/channel-accounts")
+        ]);
+        shopSitesById[shopId] = sites.sites || [];
+        shopChannelsById[shopId] = accounts.accounts || [];
+        if (selectedShopId === shopId) renderConnectionLists(shopId);
+      } catch (err) {
+        setStatus("connection-status", "Could not load shop connections: " + err.message, "error");
+      }
+    }
+
+    function renderConnectionLists(shopId) {
+      const siteList = document.getElementById("site-list");
+      const channelList = document.getElementById("channel-list");
+      if (siteList) siteList.innerHTML = renderSiteItems(shopSitesById[shopId] || []);
+      if (channelList) channelList.innerHTML = renderChannelItems(shopChannelsById[shopId] || []);
+    }
+
+    function renderSitesCard(shop) {
+      return '<section class="card connection-card"><div><h2>Sites</h2><div class="subtitle">Storefronts, marketplaces, and owned web surfaces for this shop.</div></div>'
+        + '<div id="site-list" class="connection-list">' + renderSiteItems(shopSitesById[shop.id] || []) + '</div>'
+        + '<div class="connection-form">'
+        + '<div class="connection-form-grid">'
+        + '<div><label>Label</label><input id="new-site-label" placeholder="US Storefront" /></div>'
+        + '<div><label>Type</label><select id="new-site-type"><option value="storefront">Storefront</option><option value="marketplace">Marketplace</option><option value="landing_page">Landing Page</option><option value="social_bio">Social Bio</option></select></div>'
+        + '<div class="full"><label>URL</label><input id="new-site-url" type="url" placeholder="https://example.com" /></div>'
+        + '<div><label>Platform</label><input id="new-site-platform" placeholder="shopify, tiktok_shop, amazon..." /></div>'
+        + '<div><label>Locale</label><input id="new-site-locale" placeholder="en-US" /></div>'
+        + '</div>'
+        + '<label class="small-check"><input id="new-site-primary" type="checkbox" /> Primary site</label>'
+        + '<button type="button" class="primary" onclick="createSite()">Add Site</button>'
+        + '</div><div id="site-status" class="shop-status-line"></div></section>';
+    }
+
+    function renderChannelsCard(shop) {
+      return '<section class="card connection-card"><div><h2>Channel Accounts</h2><div class="subtitle">Platform accounts, credentials, sync policy, and attribution rules scoped to this shop.</div></div>'
+        + '<div id="channel-list" class="connection-list">' + renderChannelItems(shopChannelsById[shop.id] || []) + '</div>'
+        + '<div class="connection-form">'
+        + '<div class="connection-form-grid">'
+        + '<div><label>Platform</label><select id="new-channel-platform"><option value="shopify">Shopify</option><option value="meta">Meta</option><option value="tiktok">TikTok</option><option value="notion">Notion</option><option value="instagram">Instagram</option><option value="facebook">Facebook</option></select></div>'
+        + '<div><label>Account Key</label><input id="new-channel-key" placeholder="main, us-store, ads-1" /></div>'
+        + '<div><label>Label</label><input id="new-channel-label" placeholder="Main TikTok Ads" /></div>'
+        + '<div><label>Account ID / Domain</label><input id="new-channel-account-id" placeholder="act_..., advertiser id, myshopify domain" /></div>'
+        + '<div class="full"><label>Account URL</label><input id="new-channel-url" type="url" placeholder="https://..." /></div>'
+        + '<div><label>Token Env</label><input id="new-channel-token-env" placeholder="CRISPY_API_KEY_..." /></div>'
+        + '<div><label>Account/Domain Env</label><input id="new-channel-account-env" placeholder="CRISPY_API_KEY_..." /></div>'
+        + '</div>'
+        + '<label class="small-check"><input id="new-channel-primary" type="checkbox" /> Primary account for platform</label>'
+        + '<button type="button" class="primary" onclick="createChannelAccount()">Add Channel Account</button>'
+        + '</div><div id="channel-status" class="shop-status-line"></div><div id="connection-status" class="shop-status-line"></div></section>';
     }
 
     function metricBox(label, value, note) {
@@ -375,6 +455,151 @@
         + '<div class="summary-rows">' + rowHtml + '</div>'
         + '<div class="summary-actions">' + actionHtml + '</div>'
         + '</article>';
+    }
+
+    function renderSiteItems(sites) {
+      if (!sites.length) return '<div class="empty-connection">No sites saved for this shop.</div>';
+      return sites.map(site => '<article class="connection-item">'
+        + '<div class="connection-head"><div><div class="connection-title">' + escHtml(site.label || site.url) + '</div>'
+        + '<div class="connection-meta">' + escHtml(site.url) + '</div>'
+        + '<div class="connection-meta">' + escHtml([site.site_type, site.platform, site.locale].filter(Boolean).join(" · ")) + '</div></div>'
+        + '<span class="status-dot ' + (site.is_primary ? 'ok' : 'warn') + '">' + (site.is_primary ? 'Primary' : 'Secondary') + '</span></div>'
+        + '<div class="connection-actions">'
+        + (!site.is_primary ? '<button type="button" onclick="setPrimarySite(\'' + escAttr(site.id) + '\')">Set Primary</button>' : '')
+        + '<button type="button" class="danger-text" onclick="deleteSite(\'' + escAttr(site.id) + '\')">Delete</button>'
+        + '</div></article>').join("");
+    }
+
+    function renderChannelItems(accounts) {
+      if (!accounts.length) return '<div class="empty-connection">No channel accounts saved for this shop.</div>';
+      return accounts.map(account => {
+        const missing = account.missing_credentials || [];
+        const ready = account.ready && account.status !== "disabled";
+        return '<article class="connection-item">'
+          + '<div class="connection-head"><div><div class="connection-title">' + escHtml((account.label || account.account_key) + ' · ' + account.platform) + '</div>'
+          + '<div class="connection-meta">' + escHtml([account.account_id, account.account_url].filter(Boolean).join(" · ") || account.account_key) + '</div>'
+          + '<div class="connection-meta">' + escHtml(missing.length ? 'Missing ' + missing.join(", ") : 'Credentials ready') + '</div></div>'
+          + '<span class="status-dot ' + (ready ? 'ok' : 'warn') + '">' + escHtml(ready ? 'Ready' : account.status || 'Needs config') + '</span></div>'
+          + '<div class="connection-actions">'
+          + (!account.is_primary ? '<button type="button" onclick="setPrimaryChannel(\'' + escAttr(account.id) + '\')">Set Primary</button>' : '')
+          + '<button type="button" class="danger-text" onclick="archiveChannel(\'' + escAttr(account.id) + '\')">Archive</button>'
+          + '</div></article>';
+      }).join("");
+    }
+
+    function channelCredentialPayload(platform, tokenEnv, accountEnv) {
+      const envs = {};
+      if (platform === "shopify") {
+        if (tokenEnv) envs.access_token = tokenEnv;
+        if (accountEnv) envs.store_domain = accountEnv;
+      } else if (platform === "meta") {
+        if (tokenEnv) envs.access_token = tokenEnv;
+        if (accountEnv) envs.ad_account_id = accountEnv;
+      } else if (platform === "tiktok") {
+        if (tokenEnv) envs.access_token = tokenEnv;
+        if (accountEnv) envs.advertiser_id = accountEnv;
+      } else if (platform === "notion") {
+        if (tokenEnv) envs.api_key = tokenEnv;
+        if (accountEnv) envs.database_id = accountEnv;
+      } else if (tokenEnv) {
+        envs.access_token = tokenEnv;
+      }
+      return envs;
+    }
+
+    async function createSite() {
+      const shop = selectedShop();
+      if (!shop) return;
+      const url = document.getElementById("new-site-url").value.trim();
+      if (!url) {
+        setStatus("site-status", "Enter a site URL first.", "error");
+        return;
+      }
+      setStatus("site-status", "Adding...");
+      try {
+        await api("/shops/" + encodeURIComponent(shop.id) + "/sites", { method: "POST", body: JSON.stringify({
+          label: document.getElementById("new-site-label").value.trim() || "Storefront",
+          url: url,
+          site_type: document.getElementById("new-site-type").value,
+          platform: document.getElementById("new-site-platform").value.trim() || null,
+          locale: document.getElementById("new-site-locale").value.trim() || null,
+          is_primary: document.getElementById("new-site-primary").checked
+        }) });
+        ["new-site-label", "new-site-url", "new-site-platform", "new-site-locale"].forEach(id => document.getElementById(id).value = "");
+        document.getElementById("new-site-primary").checked = false;
+        await loadShopConnections(shop.id);
+        await loadShops();
+        setStatus("site-status", "Site added.", "ok");
+      } catch (err) {
+        setStatus("site-status", "Could not add site: " + err.message, "error");
+      }
+    }
+
+    async function setPrimarySite(siteId) {
+      const shop = selectedShop();
+      if (!shop) return;
+      await api("/shops/" + encodeURIComponent(shop.id) + "/sites/" + encodeURIComponent(siteId), { method: "PATCH", body: JSON.stringify({ is_primary: true }) });
+      await loadShopConnections(shop.id);
+      await loadShops();
+    }
+
+    async function deleteSite(siteId) {
+      const shop = selectedShop();
+      if (!shop) return;
+      if (!confirm("Delete this site from the shop?")) return;
+      await api("/shops/" + encodeURIComponent(shop.id) + "/sites/" + encodeURIComponent(siteId), { method: "DELETE" });
+      await loadShopConnections(shop.id);
+      await loadShops();
+    }
+
+    async function createChannelAccount() {
+      const shop = selectedShop();
+      if (!shop) return;
+      const platform = document.getElementById("new-channel-platform").value;
+      const accountKey = document.getElementById("new-channel-key").value.trim();
+      if (!accountKey) {
+        setStatus("channel-status", "Enter an account key first.", "error");
+        return;
+      }
+      const tokenEnv = document.getElementById("new-channel-token-env").value.trim();
+      const accountEnv = document.getElementById("new-channel-account-env").value.trim();
+      setStatus("channel-status", "Adding...");
+      try {
+        await api("/shops/" + encodeURIComponent(shop.id) + "/channel-accounts", { method: "POST", body: JSON.stringify({
+          platform: platform,
+          account_key: accountKey,
+          label: document.getElementById("new-channel-label").value.trim() || accountKey,
+          account_id: document.getElementById("new-channel-account-id").value.trim() || null,
+          account_url: document.getElementById("new-channel-url").value.trim() || null,
+          credential_env_vars: channelCredentialPayload(platform, tokenEnv, accountEnv),
+          attribution_rules: { creative_key: "creative_key" },
+          is_primary: document.getElementById("new-channel-primary").checked
+        }) });
+        ["new-channel-key", "new-channel-label", "new-channel-account-id", "new-channel-url", "new-channel-token-env", "new-channel-account-env"].forEach(id => document.getElementById(id).value = "");
+        document.getElementById("new-channel-primary").checked = false;
+        await loadShopConnections(shop.id);
+        await loadShops();
+        setStatus("channel-status", "Channel account added.", "ok");
+      } catch (err) {
+        setStatus("channel-status", "Could not add channel: " + err.message, "error");
+      }
+    }
+
+    async function setPrimaryChannel(accountId) {
+      const shop = selectedShop();
+      if (!shop) return;
+      await api("/shops/" + encodeURIComponent(shop.id) + "/channel-accounts/" + encodeURIComponent(accountId), { method: "PATCH", body: JSON.stringify({ is_primary: true }) });
+      await loadShopConnections(shop.id);
+      await loadShops();
+    }
+
+    async function archiveChannel(accountId) {
+      const shop = selectedShop();
+      if (!shop) return;
+      if (!confirm("Archive this channel account? Sync history will remain available.")) return;
+      await api("/shops/" + encodeURIComponent(shop.id) + "/channel-accounts/" + encodeURIComponent(accountId), { method: "DELETE" });
+      await loadShopConnections(shop.id);
+      await loadShops();
     }
 
     function setCreateCollapsed(collapsed) {

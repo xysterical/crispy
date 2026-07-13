@@ -216,13 +216,13 @@
     <header class="hero">
       <div>
         <h1>API &amp; Integration Configs</h1>
-        <div class="subtitle">Manage LLM provider credentials and integration credentials for Shopify / Meta / TikTok / Notion.</div>
+        <div class="subtitle">Manage LLM provider credentials and global integration defaults for Shopify / Meta / TikTok / Notion.</div>
         <div class="subtitle">Security: only env var names are stored. Env var values are read from the runtime environment.</div>
       </div>
     </header>
     <section class="card" style="margin-bottom: 16px;">
-      <h2>Integration Health</h2>
-      <div class="subtitle">Credential readiness and latest sync state for every configured integration.</div>
+      <h2>System Integration Health</h2>
+      <div class="subtitle">Global defaults are shown here. Manage shop-specific sites, social accounts, credentials, and sync policies in <a href="/dashboard/shops">Shops</a>.</div>
       <div class="health-grid" id="integration-health-grid"></div>
     </section>
     <section class="card">
@@ -245,7 +245,7 @@
     </section>
     <section class="card" style="margin-top: 24px;">
       <h2>Integration Credentials</h2>
-      <div class="subtitle" style="margin-bottom: 12px;">Credentials are read from environment variables. Only env var names are stored here.</div>
+      <div class="subtitle" style="margin-bottom: 12px;">These are global fallback env vars. Shop-level channel accounts can override them from <a href="/dashboard/shops">Shops</a>.</div>
       <div class="table-wrap">
         <table id="int-cfg-table">
           <thead><tr><th>Platform</th><th>Config Key</th><th>Label</th><th>Env Var</th><th>Required</th><th>Status</th><th>Action</th></tr></thead>

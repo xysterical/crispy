@@ -847,6 +847,8 @@ class ShopChannelAccountItem(BaseModel):
     attribution_rules: dict = Field(default_factory=dict)
     status: str = "active"
     is_primary: bool = False
+    ready: bool = False
+    missing_credentials: list[str] = Field(default_factory=list)
     last_verified_at: datetime | None = None
     last_sync_at: datetime | None = None
     created_at: datetime | None = None

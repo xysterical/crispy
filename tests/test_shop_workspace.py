@@ -68,6 +68,11 @@ def test_shop_management_page_renders_workflow_layout(client):
     assert "summary-grid" in html
     assert "Research Context" in html
     assert "Memory Health" in html
+    assert "Sites" in html
+    assert "Channel Accounts" in html
+    assert "loadShopConnections" in html
+    assert "createChannelAccount" in html
+    assert "new-channel-platform" in html
     assert "workflow-card" not in html
     assert 'href="/dashboard/shops"' in html
 

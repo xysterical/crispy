@@ -314,7 +314,9 @@ def test_data_dashboard_page_loads(client):
 def test_configs_page_shows_integration_health(client):
     resp = client.get("/dashboard/agent-apis")
     assert resp.status_code == 200
-    assert "Integration Health" in resp.text
+    assert "System Integration Health" in resp.text
+    assert "global integration defaults" in resp.text
+    assert "Shop-level channel accounts" in resp.text
     assert "integration-health-grid" in resp.text
     assert "Shopify" in resp.text
     assert "Meta" in resp.text
@@ -378,3 +380,29 @@ def test_integration_health_includes_tiktok_and_notion(client):
     assert rows["tiktok"]["sync_supported"] is True
     assert {item["config_key"] for item in rows["tiktok"]["required"]} == {"access_token", "advertiser_id"}
     assert rows["notion"]["sync_supported"] is False
+
+
+def test_integration_health_uses_shop_channel_accounts(client, monkeypatch):
+    monkeypatch.delenv("CRISPY_API_KEY_TIKTOK", raising=False)
+    monkeypatch.delenv("CRISPY_API_KEY_TIKTOK_ADVERTISER", raising=False)
+    monkeypatch.setenv("CRISPY_API_KEY_TIKTOK_MAIN", "token")
+    shop = client.post("/shops", json={"name": "health-channel-shop"}).json()
+    account = client.post(
+        f"/shops/{shop['id']}/channel-accounts",
+        json={
+            "platform": "tiktok",
+            "account_key": "main",
+            "account_id": "adv-main",
+            "credential_env_vars": {"access_token": "CRISPY_API_KEY_TIKTOK_MAIN"},
+            "is_primary": True,
+        },
+    ).json()
+
+    health = client.get("/integrations/health", params={"workspace_name": "health-channel-shop"})
+
+    assert health.status_code == 200
+    rows = {item["platform"]: item for item in health.json()["platforms"]}
+    assert rows["tiktok"]["ready"] is True
+    assert rows["tiktok"]["missing"] == []
+    assert rows["tiktok"]["accounts"][0]["id"] == account["id"]
+    assert rows["tiktok"]["accounts"][0]["ready"] is True

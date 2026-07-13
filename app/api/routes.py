@@ -5,6 +5,7 @@ import json
 import uuid
 import mimetypes
 import asyncio
+import os
 import zipfile
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -2788,6 +2789,36 @@ def list_pipeline_modes() -> list[PipelineModeView]:
 
 # ── Shops & Categories ────────────────────────────────────────────
 
+CHANNEL_ACCOUNT_REQUIREMENTS = {
+    "shopify": ["store_domain", "access_token"],
+    "meta": ["access_token", "ad_account_id"],
+    "tiktok": ["access_token", "advertiser_id"],
+    "notion": ["api_key", "database_id"],
+}
+
+
+def _account_fallback_credential(row: ShopChannelAccount, key: str) -> str:
+    if key in {"ad_account_id", "advertiser_id"}:
+        return row.account_id or row.account_key or ""
+    if key == "store_domain":
+        return row.account_id or row.account_url or row.account_key or ""
+    if key == "database_id":
+        return row.account_id or ""
+    return ""
+
+
+def _channel_missing_credentials(row: ShopChannelAccount) -> list[str]:
+    required = CHANNEL_ACCOUNT_REQUIREMENTS.get(row.platform, [])
+    env_vars = row.credential_env_vars if isinstance(row.credential_env_vars, dict) else {}
+    missing = []
+    for key in required:
+        env_name = str(env_vars.get(key) or "").strip()
+        has_env_value = bool(env_name and os.getenv(env_name))
+        has_account_value = bool(_account_fallback_credential(row, key))
+        if not has_env_value and not has_account_value:
+            missing.append(key)
+    return missing
+
 def _serialize_shop(db: Session, workspace) -> dict:
     from app.data.models import GmMemory, PipelineRun, Product, Project, ShopChannelAccount, ShopSite
     from app.services.gm_memory import memory_dirty_reasons
@@ -2885,6 +2916,7 @@ def _serialize_shop_site(row: ShopSite) -> dict:
 
 
 def _serialize_channel_account(row: ShopChannelAccount) -> dict:
+    missing = _channel_missing_credentials(row)
     return ShopChannelAccountItem(
         id=row.id,
         workspace_id=row.workspace_id,
@@ -2898,6 +2930,8 @@ def _serialize_channel_account(row: ShopChannelAccount) -> dict:
         attribution_rules=row.attribution_rules or {},
         status=row.status or "active",
         is_primary=bool(row.is_primary),
+        ready=(row.status != "archived" and not missing),
+        missing_credentials=missing,
         last_verified_at=row.last_verified_at,
         last_sync_at=row.last_sync_at,
         created_at=row.created_at,
