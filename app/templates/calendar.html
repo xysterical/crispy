@@ -90,6 +90,12 @@
   }
   .notion-badge.connected { background:#ecfdf5; color:#065f46; border:1px solid #a7f3d0; }
   .notion-badge.disconnected { background:#fef2f2; color:#991b1b; border:1px solid #fecaca; }
+  .publish-badge {
+    font-size:11px; padding:3px 8px; border-radius:999px;
+    font-weight:600; background:#eef2ff; color:#3730a3; border:1px solid #c7d2fe;
+  }
+  .publish-badge.failed { background:#fef2f2; color:#991b1b; border-color:#fecaca; }
+  .publish-badge.published { background:#ecfdf5; color:#065f46; border-color:#a7f3d0; }
 
   .add-schedule-btn {
     width:100%; padding:6px; border:1px dashed var(--line); border-radius:8px;
@@ -172,10 +178,27 @@
               <div class="row" style="margin-top:10px;">
                 <div style="flex:2;"><label>Link Variant (optional)</label><select id="sched-variant"><option value="">-- none --</option></select></div>
               </div>
+              <div class="row" style="margin-top:10px;">
+                <div style="flex:1;"><label>Channel Account</label><select id="sched-channel-account"><option value="">Primary account</option></select></div>
+                <div style="flex:2;"><label>Publish Media URL</label><input id="sched-media-url" type="url" placeholder="https://cdn.example.com/video.mp4" /></div>
+              </div>
+              <div class="row" style="margin-top:10px;">
+                <div style="flex:1;"><label>TikTok Privacy</label><select id="sched-tiktok-privacy">
+                  <option value="SELF_ONLY">Self Only</option>
+                  <option value="PUBLIC_TO_EVERYONE">Public</option>
+                  <option value="FOLLOWER_OF_CREATOR">Followers</option>
+                  <option value="MUTUAL_FOLLOW_FRIENDS">Friends</option>
+                </select></div>
+                <div style="flex:1;"><label>AI Content</label><select id="sched-is-aigc">
+                  <option value="true">Label as AI generated</option>
+                  <option value="false">Not AI generated</option>
+                </select></div>
+              </div>
               <div style="margin-top:10px;"><label>Notes</label><textarea id="sched-notes" rows="2" placeholder="Optional notes..."></textarea></div>
               <input type="hidden" id="sched-id" />
               <div class="variant-detail-actions" style="margin-top:14px;">
                 <button class="primary" onclick="saveSchedule()">Save</button>
+                <button id="sched-publish-btn" onclick="publishSchedule()" style="display:none;">Publish</button>
                 <button id="sched-delete-btn" onclick="deleteSchedule()" style="color:var(--danger);display:none;">Delete</button>
                 <button onclick="closeScheduleModal()">Cancel</button>
               </div>
@@ -194,6 +217,7 @@
     let calendarWeekStart = new Date(today);
     calendarWeekStart.setDate(today.getDate() - ((today.getDay() + 6) % 7));
     window.__calendarWorkspaces = [];
+    window.__calendarChannelAccounts = [];
 
     async function loadCalendarWorkspaces(){
       try {
@@ -225,6 +249,31 @@
 
     function getCalendarProjectId(){
       return getCalendarWorkspaceId() + '_project';
+    }
+
+    async function loadChannelAccounts(){
+      const wsId = getCalendarWorkspaceId();
+      try {
+        const r = await fetch('/shops/' + encodeURIComponent(wsId) + '/channel-accounts');
+        const data = await r.json();
+        window.__calendarChannelAccounts = data.accounts || [];
+      } catch(e) {
+        window.__calendarChannelAccounts = [];
+      }
+      renderChannelAccountOptions();
+    }
+
+    function renderChannelAccountOptions(selected){
+      const sel = document.getElementById('sched-channel-account');
+      if(!sel) return;
+      const channel = document.getElementById('sched-channel')?.value || '';
+      const accounts = (window.__calendarChannelAccounts || []).filter(function(account){
+        return !channel || account.platform === channel;
+      });
+      sel.innerHTML = '<option value="">Primary account</option>' + accounts.map(function(account){
+        const label = (account.label || account.account_key) + (account.ready ? '' : ' · needs config');
+        return '<option value="' + escHtml(account.id) + '"' + (selected === account.id ? ' selected' : '') + '>' + escHtml(label) + '</option>';
+      }).join('');
     }
 
     window.calendarPrevWeek = function(){
@@ -322,6 +371,8 @@
           html += escHtml(s.channel) + (s.scheduled_time ? ' · ' + s.scheduled_time : '');
           html += ' · <span class="status-pill ' + escHtml(s.state) + '">' + escHtml(s.state) + '</span>';
           if(s.notion_page_id) html += ' · <span style="opacity:0.6;">N</span>';
+          if(s.platform_post_id) html += ' · <span class="publish-badge published">Posted</span>';
+          if(s.publish_error) html += ' · <span class="publish-badge failed">Publish failed</span>';
           html += '</div></div>';
         });
         html += '<button class="add-schedule-btn" onclick="openNewSchedule(\'' + fmtDate(d) + '\')">+ Add</button>';
@@ -339,10 +390,16 @@
       document.getElementById('sched-state').value = 'scheduled';
       document.getElementById('sched-notes').value = '';
       document.getElementById('sched-variant').value = '';
+      document.getElementById('sched-channel-account').value = '';
+      document.getElementById('sched-media-url').value = '';
+      document.getElementById('sched-tiktok-privacy').value = 'SELF_ONLY';
+      document.getElementById('sched-is-aigc').value = 'true';
       document.getElementById('schedule-modal-title').textContent = 'New Schedule';
       document.getElementById('sched-delete-btn').style.display = 'none';
+      document.getElementById('sched-publish-btn').style.display = 'none';
       document.getElementById('sched-msg').textContent = '';
       openScheduleModal();
+      loadChannelAccounts();
       loadVariantOptions();
     };
 
@@ -358,10 +415,16 @@
       document.getElementById('sched-state').value = s.state;
       document.getElementById('sched-notes').value = s.notes || '';
       document.getElementById('sched-variant').value = s.variant_id || '';
+      const payload = s.publish_payload || {};
+      document.getElementById('sched-media-url').value = payload.media_url || payload.video_url || payload.image_url || '';
+      document.getElementById('sched-tiktok-privacy').value = payload.privacy_level || 'SELF_ONLY';
+      document.getElementById('sched-is-aigc').value = String(payload.is_aigc !== false);
       document.getElementById('schedule-modal-title').textContent = 'Edit Schedule';
       document.getElementById('sched-delete-btn').style.display = '';
-      document.getElementById('sched-msg').textContent = s.notion_sync_error ? 'Notion: ' + s.notion_sync_error : '';
+      document.getElementById('sched-publish-btn').style.display = s.platform_post_id ? 'none' : '';
+      document.getElementById('sched-msg').textContent = s.publish_error ? 'Publish: ' + s.publish_error : (s.notion_sync_error ? 'Notion: ' + s.notion_sync_error : '');
       openScheduleModal();
+      loadChannelAccounts().then(function(){ renderChannelAccountOptions(s.channel_account_id || ''); });
       loadVariantOptions();
     };
 
@@ -389,6 +452,8 @@
         state: document.getElementById('sched-state').value,
         notes: document.getElementById('sched-notes').value || null,
         variant_id: document.getElementById('sched-variant').value || null,
+        channel_account_id: document.getElementById('sched-channel-account').value || null,
+        publish_payload: buildPublishPayload(),
       };
 
       try {
@@ -413,6 +478,37 @@
         loadCalendarData();
       } catch(e){
         document.getElementById('sched-msg').textContent = 'Error: ' + e.message;
+      }
+    };
+
+    function buildPublishPayload(){
+      return {
+        media_url: document.getElementById('sched-media-url').value.trim() || null,
+        privacy_level: document.getElementById('sched-tiktok-privacy').value,
+        is_aigc: document.getElementById('sched-is-aigc').value === 'true'
+      };
+    }
+
+    window.publishSchedule = async function(){
+      const id = document.getElementById('sched-id').value;
+      if(!id) return;
+      if(!confirm('Publish this scheduled post now?')) return;
+      document.getElementById('sched-msg').textContent = 'Publishing...';
+      try {
+        const r = await fetch('/content-schedules/' + id + '/publish', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            channel_account_id: document.getElementById('sched-channel-account').value || null,
+            publish_payload: buildPublishPayload()
+          })
+        });
+        if(!r.ok){ const err=await r.json(); throw new Error(err.detail||'Publish failed'); }
+        const updated = await r.json();
+        document.getElementById('sched-msg').textContent = updated.platform_post_url ? 'Published: ' + updated.platform_post_url : 'Published.';
+        loadCalendarData();
+      } catch(e){
+        document.getElementById('sched-msg').textContent = 'Publish error: ' + e.message;
+        loadCalendarData();
       }
     };
 
@@ -451,6 +547,9 @@
 
     window.addEventListener('load', function(){
       loadCalendarWorkspaces().then(function(){ loadCalendarData(); });
+    });
+    document.addEventListener('change', function(e){
+      if(e.target && e.target.id === 'sched-channel') renderChannelAccountOptions(document.getElementById('sched-channel-account').value || '');
     });
   })();
   </script>

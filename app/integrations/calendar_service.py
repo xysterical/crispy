@@ -126,7 +126,9 @@ async def schedule_variant(
     title: str,
     channel: str,
     scheduled_date: date,
+    channel_account_id: str | None = None,
     scheduled_time: str | None = None,
+    publish_payload: dict | None = None,
     notes: str | None = None,
     variant_url: str = "",
 ) -> ContentSchedule:
@@ -135,10 +137,12 @@ async def schedule_variant(
         project_id=project_id,
         variant_id=variant_id or None,
         campaign_id=campaign_id or None,
+        channel_account_id=channel_account_id or None,
         title=title,
         channel=channel,
         scheduled_date=scheduled_date,
         scheduled_time=scheduled_time,
+        publish_payload=publish_payload or {},
         notes=notes,
         state="scheduled",
     )

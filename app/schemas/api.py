@@ -888,22 +888,31 @@ class ContentScheduleCreateRequest(BaseModel):
     project_id: str
     variant_id: str | None = None
     campaign_id: str | None = None
+    channel_account_id: str | None = None
     title: str = Field(..., min_length=1, max_length=256)
     channel: str = "meta"
     scheduled_date: str  # "YYYY-MM-DD"
     scheduled_time: str | None = None  # "HH:MM"
+    publish_payload: dict = Field(default_factory=dict)
     notes: str | None = None
 
 
 class ContentScheduleUpdateRequest(BaseModel):
     title: str | None = None
     channel: str | None = None
+    channel_account_id: str | None = None
     scheduled_date: str | None = None
     scheduled_time: str | None = None
     state: str | None = None
+    publish_payload: dict | None = None
     notes: str | None = None
     variant_id: str | None = None
     campaign_id: str | None = None
+
+
+class ContentSchedulePublishRequest(BaseModel):
+    channel_account_id: str | None = None
+    publish_payload: dict | None = None
 
 
 class ContentScheduleView(BaseModel):
@@ -914,13 +923,17 @@ class ContentScheduleView(BaseModel):
     project_id: str
     variant_id: str | None = None
     campaign_id: str | None = None
+    channel_account_id: str | None = None
     title: str
     channel: str
     scheduled_date: str
     scheduled_time: str | None = None
     state: str
+    publish_payload: dict = Field(default_factory=dict)
     platform_post_id: str | None = None
     platform_post_url: str | None = None
+    publish_error: str | None = None
+    published_at: datetime | None = None
     notion_page_id: str | None = None
     notion_sync_error: str | None = None
     notes: str | None = None

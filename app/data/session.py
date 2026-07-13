@@ -206,6 +206,10 @@ def apply_runtime_migrations(target_engine) -> None:
     _add_column_if_missing(target_engine, "workspace", "shopify_last_sync_at", "ALTER TABLE workspace ADD COLUMN shopify_last_sync_at DATETIME")
     _add_column_if_missing(target_engine, "workspace", "meta_last_sync_at", "ALTER TABLE workspace ADD COLUMN meta_last_sync_at DATETIME")
     _add_column_if_missing(target_engine, "integration_sync", "channel_account_id", "ALTER TABLE integration_sync ADD COLUMN channel_account_id VARCHAR(36)")
+    _add_column_if_missing(target_engine, "content_schedule", "channel_account_id", "ALTER TABLE content_schedule ADD COLUMN channel_account_id VARCHAR(36)")
+    _add_column_if_missing(target_engine, "content_schedule", "publish_payload", "ALTER TABLE content_schedule ADD COLUMN publish_payload JSON")
+    _add_column_if_missing(target_engine, "content_schedule", "publish_error", "ALTER TABLE content_schedule ADD COLUMN publish_error TEXT")
+    _add_column_if_missing(target_engine, "content_schedule", "published_at", "ALTER TABLE content_schedule ADD COLUMN published_at DATETIME")
 
     with target_engine.begin() as conn:
         conn.execute(

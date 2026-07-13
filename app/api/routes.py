@@ -103,6 +103,7 @@ from app.schemas.api import (
     CategoryItem,
     CategoryListResponse,
     ContentScheduleCreateRequest,
+    ContentSchedulePublishRequest,
     ContentScheduleUpdateRequest,
     ContentScheduleView,
     ContentScheduleListResponse,
@@ -5159,10 +5160,12 @@ async def create_content_schedule(
         project_id=payload.project_id,
         variant_id=payload.variant_id,
         campaign_id=payload.campaign_id,
+        channel_account_id=payload.channel_account_id,
         title=payload.title,
         channel=payload.channel,
         scheduled_date=scheduled_date,
         scheduled_time=payload.scheduled_time,
+        publish_payload=payload.publish_payload,
         notes=payload.notes,
         variant_url=variant_url,
     )
@@ -5188,12 +5191,16 @@ async def update_content_schedule(
         schedule.title = payload.title
     if payload.channel is not None:
         schedule.channel = payload.channel
+    if payload.channel_account_id is not None:
+        schedule.channel_account_id = payload.channel_account_id or None
     if payload.scheduled_date is not None:
         schedule.scheduled_date = date_type.fromisoformat(payload.scheduled_date)
     if payload.scheduled_time is not None:
         schedule.scheduled_time = payload.scheduled_time or None
     if payload.state is not None:
         schedule.state = payload.state
+    if payload.publish_payload is not None:
+        schedule.publish_payload = payload.publish_payload
     if payload.notes is not None:
         schedule.notes = payload.notes or None
     if payload.variant_id is not None:
@@ -5218,6 +5225,37 @@ async def update_content_schedule(
     db.flush()
 
     db.commit()
+    return _serialize_schedule(schedule)
+
+
+@router.post("/content-schedules/{schedule_id}/publish", response_model=ContentScheduleView)
+async def publish_content_schedule(
+    schedule_id: str,
+    payload: ContentSchedulePublishRequest | None = None,
+    db: Session = Depends(get_db),
+) -> ContentScheduleView:
+    from app.integrations.social_publishing import publish_schedule
+
+    schedule = db.get(ContentSchedule, schedule_id)
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    if schedule.state == "published" and schedule.platform_post_id:
+        return _serialize_schedule(schedule)
+    request = payload or ContentSchedulePublishRequest()
+    try:
+        await publish_schedule(
+            db,
+            schedule,
+            channel_account_id=request.channel_account_id,
+            publish_payload=request.publish_payload,
+        )
+    except Exception as exc:
+        schedule.state = "failed"
+        schedule.publish_error = str(exc)
+        db.commit()
+        raise HTTPException(status_code=400, detail=str(exc))
+    db.commit()
+    db.refresh(schedule)
     return _serialize_schedule(schedule)
 
 
@@ -5301,13 +5339,17 @@ def _serialize_schedule(s: ContentSchedule) -> ContentScheduleView:
         project_id=s.project_id,
         variant_id=s.variant_id,
         campaign_id=s.campaign_id,
+        channel_account_id=s.channel_account_id,
         title=s.title,
         channel=s.channel,
         scheduled_date=s.scheduled_date.isoformat(),
         scheduled_time=s.scheduled_time,
         state=s.state,
+        publish_payload=s.publish_payload or {},
         platform_post_id=s.platform_post_id,
         platform_post_url=s.platform_post_url,
+        publish_error=s.publish_error,
+        published_at=s.published_at,
         notion_page_id=s.notion_page_id,
         notion_sync_error=s.notion_sync_error,
         notes=s.notes,
