@@ -9,6 +9,7 @@ from app.orchestrator.stage_contracts import (
     stage_contracts_for_plan,
 )
 from app.orchestrator.state_machine import PIPELINE_STAGE_PLANS
+from app.services.stage_inputs import STAGE_OUTPUT_INPUTS, stage_input_keys_for_contract
 
 
 def test_every_pipeline_stage_has_contract():
@@ -62,3 +63,16 @@ def test_visual_and_evaluation_contracts_capture_gate_dependencies():
     assert "social_review_contract" in visual.optional_inputs
     assert "visual_quality" in evaluation.required_inputs
     assert "winner_selection" in evaluation.produces
+
+
+def test_stage_input_bindings_cover_contract_required_inputs():
+    for contract in all_stage_contracts():
+        input_keys = stage_input_keys_for_contract(contract.stage_name)
+        assert set(contract.required_inputs).issubset(input_keys)
+
+
+def test_stage_input_bindings_only_reference_known_stages():
+    known_stages = set(STAGE_CONTRACTS)
+    for stage_name, bindings in STAGE_OUTPUT_INPUTS.items():
+        assert stage_name in known_stages
+        assert set(bindings.values()).issubset(known_stages)

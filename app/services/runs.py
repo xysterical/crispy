@@ -18,7 +18,6 @@ from app.data.models import (
     Artifact,
     Campaign,
     GmMemory,
-    PerformanceSnapshot,
     PipelineRun,
     Product,
     Project,
@@ -58,7 +57,6 @@ from app.services.creative_specs import (
     TIKTOK_SHOP_VIDEO_DEFAULT_STYLE,
     TIKTOK_SHOP_VIDEO_PRESET,
     get_dtc_site_review_hints,
-    get_social_review_contract,
     resolve_creative_specs,
 )
 from app.services.creative_attribution import canonical_creative_key
@@ -72,12 +70,16 @@ from app.services.execution_memory import (
     write_stage_rejection_memory,
     write_variant_review_memory,
 )
-from app.services.gm_memory import memory_dirty_reasons, memory_is_strategy_safe
-from app.services.shop_analysis import RESEARCH_SOURCE_TYPES
 from app.services.marketplace_qa import MARKETPLACE_REVIEW_TAGS, is_marketplace_main_image
 from app.services.personas import get_persona
-from app.services.gm_evolution import compile_run_outcome_reflection, resolve_active_gm_policy
+from app.services.gm_evolution import compile_run_outcome_reflection
 from app.services.reference_library import build_reference_bundle
+from app.services.stage_inputs import (
+    analytics_insights as _analytics_insights,
+    build_task_input as _build_task_input,
+    recent_gm_lessons as _recent_gm_lessons,
+    stage_output_optional as _stage_output_optional,
+)
 from app.services.video_frames import extract_last_video_frame, stitch_video_files
 from app.services.visual_qa import inspect_visual_asset
 
@@ -619,13 +621,6 @@ def rerun_stage(db: Session, run_id: str, stage_name: str, notes: str = "") -> P
     return run
 
 
-def _stage_output_optional(db: Session, run_id: str, stage_name: str) -> dict:
-    task = db.scalar(select(StageTask).where(StageTask.run_id == run_id, StageTask.stage_name == stage_name))
-    if not task:
-        return {}
-    return task.output_payload or {}
-
-
 def _sync_refreshed_video_generation_state(
     db: Session,
     run: PipelineRun,
@@ -718,85 +713,6 @@ def _resume_full_auto_visual_qa_after_refresh(db: Session, run: PipelineRun) -> 
     run.updated_at = utcnow()
 
 
-def _recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[dict]:
-    product_rows = db.scalars(
-        select(GmMemory)
-        .where(
-            GmMemory.project_id == run.project_id,
-            GmMemory.memory_scope == "product",
-            GmMemory.product_code == run.product_code,
-            GmMemory.status == "active",
-        )
-        .order_by(desc(GmMemory.score_hint), desc(GmMemory.created_at))
-        .limit(20)
-    ).all()
-    industry_rows = db.scalars(
-        select(GmMemory)
-        .where(
-            GmMemory.project_id == run.project_id,
-            GmMemory.memory_scope == "industry",
-            GmMemory.industry_code == run.industry_code,
-            GmMemory.status == "active",
-        )
-        .order_by(desc(GmMemory.score_hint), desc(GmMemory.created_at))
-        .limit(20)
-    ).all()
-    shop_candidates = db.scalars(
-        select(GmMemory)
-        .where(
-            GmMemory.memory_scope == "shop",
-            GmMemory.source_type.in_([*RESEARCH_SOURCE_TYPES, "shopify_sync", "meta_sync"]),
-            GmMemory.status == "active",
-        )
-        .order_by(desc(GmMemory.score_hint), desc(GmMemory.created_at))
-        .limit(50)
-    ).all()
-    shop_rows = [
-        row for row in shop_candidates
-        if (row.content or {}).get("shop_id") == run.workspace_id
-    ][:5]
-    product_rows = sorted(product_rows, key=_gm_memory_priority)[:10]
-    industry_rows = sorted(industry_rows, key=_gm_memory_priority)[:10]
-    shop_rows = sorted(shop_rows, key=_gm_memory_priority)[:5]
-    product_rows = [row for row in product_rows if memory_is_strategy_safe(row)]
-    industry_rows = [row for row in industry_rows if memory_is_strategy_safe(row)]
-    shop_rows = [row for row in shop_rows if memory_is_strategy_safe(row)]
-
-    merged: list[dict] = []
-    seen_fingerprints: set[str] = set()
-    for row in [*product_rows[:3], *shop_rows[:3], *industry_rows[:2]]:
-        payload = {
-            "id": row.id,
-            "memory_scope": row.memory_scope,
-            "product_code": row.product_code,
-            "industry_code": row.industry_code,
-            "source_type": row.source_type,
-            "memory_type": row.memory_type,
-            "status": row.status,
-            "pinned": bool(row.pinned),
-            "dirty_reasons": memory_dirty_reasons(row),
-            "score_hint": row.score_hint,
-            "content": row.content or {},
-        }
-        fingerprint = f"{payload['memory_scope']}|{payload['product_code']}|{payload['industry_code']}|{json.dumps(payload['content'], sort_keys=True)}"
-        if fingerprint in seen_fingerprints:
-            continue
-        seen_fingerprints.add(fingerprint)
-        merged.append(payload)
-        if len(merged) >= limit:
-            break
-    return merged
-
-
-def _gm_memory_priority(row: GmMemory) -> tuple[int, int, float, float]:
-    return (
-        0 if row.memory_type == "summary" else 1,
-        -int(bool(row.pinned)),
-        -(row.score_hint or 0),
-        -(row.created_at.timestamp() if row.created_at else 0),
-    )
-
-
 def _gm_memory_trace_payload(gm_lessons: list[dict], research_context: dict | None = None) -> dict:
     references = []
     for item in gm_lessons[:5]:
@@ -819,192 +735,6 @@ def _gm_memory_trace_payload(gm_lessons: list[dict], research_context: dict | No
         "excluded_research": (research_context or {}).get("excluded", [])[:10],
         "influence": "included in planning gm_lessons prompt context",
     }
-
-
-def _analytics_insights(db: Session, run: PipelineRun) -> list[dict]:
-    from app.analytics import ProductAnalyzer, AdAnalyzer, CreativeDecisionAnalyzer
-
-    insights: list[dict] = []
-    if run.product_code:
-        try:
-            pa = ProductAnalyzer(db, run.project_id)
-            vel = pa.analyze_product_sales_velocity(run.product_code)
-            if not vel.insufficient_data:
-                insights.append({
-                    "memory_scope": "analytics",
-                    "source_type": "product_sales_velocity",
-                    "product_code": run.product_code,
-                    "content": vel.model_dump(),
-                })
-            contrib = pa.analyze_product_contribution([run.product_code])
-            if not contrib.insufficient_data:
-                insights.append({
-                    "memory_scope": "analytics",
-                    "source_type": "product_contribution",
-                    "product_code": run.product_code,
-                    "content": contrib.model_dump(),
-                })
-        except Exception as exc:
-            logger.debug("product analytics insight skipped: %s", exc)
-
-    try:
-        aa = AdAnalyzer(db, run.project_id)
-        snapshots = db.scalars(
-            select(PerformanceSnapshot)
-            .where(PerformanceSnapshot.project_id == run.project_id)
-            .order_by(desc(PerformanceSnapshot.created_at))
-            .limit(50)
-        ).all()
-        creative_keys = list({s.creative_key for s in snapshots if s.creative_key})
-        for ck in creative_keys[:3]:
-            fatigue = aa.analyze_creative_fatigue(ck)
-            if not fatigue.insufficient_data:
-                insights.append({
-                    "memory_scope": "analytics",
-                    "source_type": "creative_fatigue",
-                    "creative_key": ck,
-                    "product_code": run.product_code,
-                    "content": fatigue.model_dump(),
-                })
-        if len(creative_keys) >= 2:
-            comp = aa.compare_creatives(creative_keys[:5])
-            if not comp.insufficient_data:
-                insights.append({
-                    "memory_scope": "analytics",
-                    "source_type": "creative_compare",
-                    "product_code": run.product_code,
-                    "content": comp.model_dump(),
-                })
-    except Exception as exc:
-        logger.debug("ad analytics insight skipped: %s", exc)
-
-    try:
-        creative_decisions = CreativeDecisionAnalyzer(db, run.project_id).decision_report(
-            product_code=run.product_code or None,
-            window_days=30,
-        )
-        decision_content = {
-            "baseline": creative_decisions.get("baseline") or {},
-            "promote": creative_decisions.get("promote", [])[:3],
-            "retire": creative_decisions.get("retire", [])[:3],
-            "needs_test": creative_decisions.get("needs_test", [])[:3],
-            "next_generation": creative_decisions.get("next_generation") or {},
-            "attribution_summary": creative_decisions.get("attribution_summary") or {},
-            "unmatched_count": len(creative_decisions.get("unmatched", [])),
-            "summary": "Creative decision attribution suggests which ideas to promote, retire, or test further.",
-        }
-        if decision_content["promote"] or decision_content["retire"] or decision_content["needs_test"]:
-            insights.append({
-                "memory_scope": "analytics",
-                "source_type": "creative_decision_attribution",
-                "product_code": run.product_code,
-                "content": decision_content,
-            })
-    except Exception as exc:
-        logger.debug("creative decision insight skipped: %s", exc)
-
-    return insights
-
-
-def _build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
-    product = db.get(Product, run.product_id)
-    campaign = db.get(Campaign, run.campaign_id)
-    gm_policy = resolve_active_gm_policy(db, run, stage_name=task.stage_name)
-    base = {
-        "run_id": run.id,
-        "product_name": product.name if product else "unknown_product",
-        "channel": campaign.channel if campaign else "",
-        "context": run.context_json or {},
-        "market": run.market,
-        "locale": run.locale,
-        "product_code": run.product_code,
-        "industry_code": run.industry_code,
-        "pipeline_mode": run.pipeline_mode,
-        "creative_preset": run.creative_preset,
-        "creative_specs": run.creative_specs or {},
-        "social_review_contract": get_social_review_contract(
-            campaign.channel if campaign else "",
-            run.pipeline_mode,
-            run.creative_specs or {},
-        ),
-        "variant_count": run.variant_count,
-        "enable_research": run.enable_research,
-        "manual_research_brief": run.manual_research_brief or "",
-        "business_context": run.business_context or {},
-        "category_tags": run.category_tags or [],
-        "gm_policy": gm_policy,
-    }
-    payload = base
-    if task.stage_name == "planning":
-        from app.services.research_context import build_research_context
-
-        gm_lessons = _recent_gm_lessons(db, run) + _analytics_insights(db, run)
-        research_context = build_research_context(
-            db,
-            project_id=run.project_id,
-            shop_id=run.workspace_id,
-            industry_code=run.industry_code,
-        )
-        payload = {
-            **base,
-            "intake": _stage_output_optional(db, run.id, "intake"),
-            "gm_lessons": gm_lessons,
-            "research_context": research_context,
-        }
-    elif task.stage_name == "divergence":
-        payload = {**base, "planning": _stage_output_optional(db, run.id, "planning")}
-    elif task.stage_name == "copy_image_generation":
-        payload = {
-            **base,
-            "variants": _stage_output_optional(db, run.id, "divergence"),
-            "intake": _stage_output_optional(db, run.id, "intake"),
-        }
-    elif task.stage_name == "video_scripting":
-        payload = {
-            **base,
-            "variants": _stage_output_optional(db, run.id, "divergence"),
-            "intake": _stage_output_optional(db, run.id, "intake"),
-            "planning": _stage_output_optional(db, run.id, "planning"),
-        }
-    elif task.stage_name == "storyboard_image_generation":
-        payload = {
-            **base,
-            "video_scripts": _stage_output_optional(db, run.id, "video_scripting"),
-            "intake": _stage_output_optional(db, run.id, "intake"),
-            "planning": _stage_output_optional(db, run.id, "planning"),
-        }
-    elif task.stage_name == "video_generation":
-        payload = {
-            **base,
-            "video_scripts": _stage_output_optional(db, run.id, "video_scripting"),
-            "storyboards": _stage_output_optional(db, run.id, "storyboard_image_generation"),
-        }
-    elif task.stage_name == "visual_quality_assessment":
-        payload = {
-            **base,
-            "variants": _stage_output_optional(db, run.id, "divergence"),
-            "intake": _stage_output_optional(db, run.id, "intake"),
-            "copy_images": _stage_output_optional(db, run.id, "copy_image_generation"),
-            "video_scripts": _stage_output_optional(db, run.id, "video_scripting"),
-            "storyboards": _stage_output_optional(db, run.id, "storyboard_image_generation"),
-            "videos": _stage_output_optional(db, run.id, "video_generation"),
-        }
-    elif task.stage_name == "evaluation_selection":
-        payload = {
-            **base,
-            "variants": _stage_output_optional(db, run.id, "divergence"),
-            "copy_images": _stage_output_optional(db, run.id, "copy_image_generation"),
-            "video_scripts": _stage_output_optional(db, run.id, "video_scripting"),
-            "videos": _stage_output_optional(db, run.id, "video_generation"),
-            "visual_quality": _stage_output_optional(db, run.id, "visual_quality_assessment"),
-        }
-    if task.rejected_at or task.failure_category == TaskFailureCategory.HUMAN_REJECT.value:
-        payload = append_execution_memory_payload(
-            payload,
-            bucket="run",
-            memory=resolve_execution_memory(db, run_id=run.id, stage_name=task.stage_name),
-        )
-    return payload
 
 
 def _single_variant_set(db: Session, run_id: str, variant_id: str) -> VariantSet:
