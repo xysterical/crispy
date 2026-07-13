@@ -372,6 +372,75 @@ class StubProvider(LlmProvider):
     def __init__(self, provider_name: str) -> None:
         self.provider_name = provider_name
 
+    def _evaluation_stub_text(self, prompt: str) -> str | None:
+        if "Evaluate each variant" not in prompt or "'variants' array" not in prompt:
+            return None
+
+        contexts: list[dict[str, Any]] = []
+        marker = "Context — variants:"
+        marker_index = prompt.find(marker)
+        if marker_index >= 0:
+            json_start = prompt.find("[", marker_index)
+            if json_start >= 0:
+                try:
+                    parsed, _ = json.JSONDecoder().raw_decode(prompt[json_start:])
+                    if isinstance(parsed, list):
+                        contexts = [item for item in parsed if isinstance(item, dict)]
+                except json.JSONDecodeError:
+                    contexts = []
+        if not contexts:
+            contexts = [{"variant_id": "V1", "angle": "default", "hook": "Default hook", "message": "Default message"}]
+
+        is_tiktok = "thumb_stop_power" in prompt and "native_tiktok_feel" in prompt
+        dim_keys = (
+            [
+                "thumb_stop_power",
+                "product_clarity",
+                "purchase_intent",
+                "native_tiktok_feel",
+                "watch_through_potential",
+                "claim_safety",
+                "generation_feasibility",
+            ]
+            if is_tiktok
+            else ["hook_appeal", "copy_clarity", "brand_alignment", "visual_execution", "compliance_safety"]
+        )
+        variants: list[dict[str, Any]] = []
+        for idx, context in enumerate(contexts):
+            has_media = bool(context.get("has_image") or context.get("has_video"))
+            qa_status = str(context.get("visual_qa_status") or "").lower()
+            qa_action = str(context.get("visual_qa_recommended_action") or "").lower()
+            base_score = max(55, 84 - idx * 3) if has_media else 45
+            if qa_status == "fail" or qa_action == "request_regeneration":
+                base_score = min(base_score, 42)
+                recommended_action = "request_regeneration"
+            elif qa_status == "pending" or qa_action == "wait_for_asset":
+                base_score = min(base_score, 58)
+                recommended_action = "manual_review"
+            elif base_score >= 65:
+                recommended_action = "approve_variant"
+            else:
+                recommended_action = "manual_review"
+
+            row: dict[str, Any] = {
+                "variant_id": str(context.get("variant_id") or f"V{idx + 1}"),
+                "total_score": float(base_score),
+                "compliance_level": "low",
+                "recommended_action": recommended_action,
+                "brief_reason": "Deterministic local evaluation stub for development and tests.",
+                "compliance_block": {
+                    "level": "low",
+                    "score": 90,
+                    "risks": [],
+                    "reasons": ["No prohibited claim detected by local stub."],
+                    "recommendation": recommended_action,
+                },
+            }
+            for offset, key in enumerate(dim_keys):
+                row[key] = float(max(40, min(95, base_score - offset)))
+            variants.append(row)
+        return json.dumps({"variants": variants})
+
     def chat_complete(
         self,
         request: MultimodalChatRequest,
@@ -380,6 +449,15 @@ class StubProvider(LlmProvider):
         api_key: str | None = None,
         extra: dict | None = None,
     ) -> LlmResponse:
+        stub_json = self._evaluation_stub_text(request.prompt)
+        if stub_json is not None:
+            return LlmResponse(
+                text=stub_json,
+                model_used=request.model,
+                tokens_prompt=max(1, len(request.prompt) // 4),
+                tokens_completion=max(1, len(stub_json) // 4),
+                estimated_cost=0.0,
+            )
         snippet = request.prompt.strip().replace("\n", " ")[:280]
         text = f"[{self.provider_name}:{request.model}] {snippet}"
         return LlmResponse(

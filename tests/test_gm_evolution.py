@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+
 from sqlalchemy import select
 
 from app.data.models import GmPolicyVersion, GmReflection, StageTask
@@ -16,6 +18,21 @@ def _run_worker_once() -> None:
 def _advance_run(client, run_id: str) -> None:
     resp = client.post(f"/runs/{run_id}/advance", json={"notes": "approved from test"})
     assert resp.status_code == 200
+
+
+def _patch_valid_generated_images(monkeypatch) -> None:
+    def fake_materialize_generated_image(_selected):
+        from PIL import Image
+
+        image = Image.new("RGB", (200, 200))
+        for x in range(200):
+            for y in range(200):
+                image.putpixel((x, y), ((x * 3) % 255, (y * 5) % 255, ((x + y) * 2) % 255))
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue(), "b64_json"
+
+    monkeypatch.setattr("app.services.runs.runtime._materialize_generated_image", fake_materialize_generated_image)
 
 
 def _create_run(client, *, product_code: str = "GM-001", pipeline_mode: str = "copy_image_only", variant_count: int = 2) -> dict:
@@ -185,7 +202,8 @@ def test_candidate_policy_evaluate_endpoint_returns_gate_results(client):
     assert payload["replay_summary"]
 
 
-def test_evaluation_selection_creates_run_outcome_reflection_and_candidate_policy(client):
+def test_evaluation_selection_creates_run_outcome_reflection_and_candidate_policy(client, monkeypatch):
+    _patch_valid_generated_images(monkeypatch)
     run = _create_run(client, product_code="GM-EVAL-1", variant_count=2)
     for _ in range(5):
         _run_worker_once()
