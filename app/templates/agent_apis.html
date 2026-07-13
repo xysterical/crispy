@@ -61,6 +61,37 @@
   .secondary-btn {
     background: #f8fafc;
   }
+  .section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .section-head h2 { margin-bottom: 0; }
+  .credential-note {
+    border: 1px solid #bbf7d0;
+    border-radius: 12px;
+    background: #f0fdf4;
+    color: #14532d;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  .usage-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
   .toast-wrap {
     position: fixed;
     top: 20px;
@@ -244,11 +275,17 @@
       <div class="health-grid" id="research-readiness-grid"></div>
     </section>
     <section class="card" style="margin-top: 24px;">
-      <h2>Integration Credentials</h2>
-      <div class="subtitle" style="margin-bottom: 12px;">These are global fallback env vars. Shop-level channel accounts can override them from <a href="/dashboard/shops">Shops</a>.</div>
+      <div class="section-head">
+        <div>
+          <h2>Global Credential Defaults</h2>
+          <div class="subtitle">Fallback env vars used only when a shop channel account does not define its own credential mapping.</div>
+        </div>
+        <a class="nav-link" href="/dashboard/shops">Manage Shop Channel Accounts</a>
+      </div>
+      <div class="credential-note">This table is not the place for multi-shop tokens. Store Shopify, Meta, TikTok, Notion, and social account mappings under each Shop so sync, attribution, and governance stay scoped to the correct business.</div>
       <div class="table-wrap">
         <table id="int-cfg-table">
-          <thead><tr><th>Platform</th><th>Config Key</th><th>Label</th><th>Env Var</th><th>Required</th><th>Status</th><th>Action</th></tr></thead>
+          <thead><tr><th>Platform</th><th>Fallback Key</th><th>Label</th><th>Global Env Var</th><th>Required</th><th>Global Status</th><th>Shop Overrides</th><th>Updated</th></tr></thead>
           <tbody id="int-cfg-body"></tbody>
         </table>
       </div>
@@ -263,6 +300,7 @@
     const personas = {{ personas_json | safe }};
     const existing = {{ configs_json | safe }};
     let integrationConfigs = {{ integration_configs_json | safe }};
+    let integrationUsage = {};
     let envVars = {{ env_vars_json | safe }};
     let advancedColsVisible = false;
     let toastTimer = null;
@@ -487,6 +525,12 @@
       if (!body) return;
       let configs = integrationConfigs;
       try { configs = await api("/integration-configs"); } catch (_e) {}
+      try {
+        const usage = await api("/integration-configs/usage");
+        integrationUsage = Object.fromEntries((usage.items || []).map((item) => [item.platform + ":" + item.config_key, item]));
+      } catch (_e) {
+        integrationUsage = {};
+      }
       body.innerHTML = configs.map(c => {
         const platform = String(c.platform || "");
         const configKey = String(c.config_key || "");
@@ -494,6 +538,12 @@
         const envVar = String(c.env_var || "");
         const isSet = c.is_set;
         const updated = c.updated_at ? c.updated_at.slice(0,10) : "-";
+        const usage = integrationUsage[platform + ":" + configKey] || {};
+        const overrides = Number(usage.account_count || 0);
+        const shopCount = Number(usage.shop_count || 0);
+        const overrideText = overrides > 0
+          ? '<span class="usage-pill">' + overrides + ' account' + (overrides === 1 ? '' : 's') + ' / ' + shopCount + ' shop' + (shopCount === 1 ? '' : 's') + '</span>'
+          : '<span class="muted">No shop override</span>';
         return '<tr>'
           + '<td>' + platform + '</td>'
           + '<td><code>' + configKey + '</code></td>'
@@ -503,6 +553,7 @@
           + '</select></td>'
           + '<td>' + (c.is_required ? "Yes" : "No") + '</td>'
           + '<td>' + (isSet ? '<span class="badge">found</span>' : '<span class="badge badge-missing">missing</span>') + '</td>'
+          + '<td>' + overrideText + '</td>'
           + '<td><span class="muted">' + updated + '</span></td>'
           + '</tr>';
       }).join("");

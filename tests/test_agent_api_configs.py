@@ -316,7 +316,11 @@ def test_configs_page_shows_integration_health(client):
     assert resp.status_code == 200
     assert "System Integration Health" in resp.text
     assert "global integration defaults" in resp.text
-    assert "Shop-level channel accounts" in resp.text
+    assert "shop channel account" in resp.text
+    assert "Global Credential Defaults" in resp.text
+    assert "Manage Shop Channel Accounts" in resp.text
+    assert "Shop Overrides" in resp.text
+    assert "/integration-configs/usage" in resp.text
     assert "integration-health-grid" in resp.text
     assert "Shopify" in resp.text
     assert "Meta" in resp.text
@@ -406,3 +410,35 @@ def test_integration_health_uses_shop_channel_accounts(client, monkeypatch):
     assert rows["tiktok"]["missing"] == []
     assert rows["tiktok"]["accounts"][0]["id"] == account["id"]
     assert rows["tiktok"]["accounts"][0]["ready"] is True
+
+
+def test_integration_config_usage_counts_shop_channel_overrides(client):
+    shop = client.post("/shops", json={"name": "usage-shop"}).json()
+    client.post(
+        f"/shops/{shop['id']}/channel-accounts",
+        json={
+            "platform": "meta",
+            "account_key": "main",
+            "credential_env_vars": {
+                "access_token": "CRISPY_API_KEY_META_MAIN",
+                "ad_account_id": "CRISPY_API_KEY_META_ACCOUNT_MAIN",
+            },
+        },
+    )
+    client.post(
+        f"/shops/{shop['id']}/channel-accounts",
+        json={
+            "platform": "tiktok",
+            "account_key": "main",
+            "credential_env_vars": {"access_token": "CRISPY_API_KEY_TIKTOK_MAIN"},
+        },
+    )
+
+    resp = client.get("/integration-configs/usage")
+
+    assert resp.status_code == 200
+    rows = {(item["platform"], item["config_key"]): item for item in resp.json()["items"]}
+    assert rows[("meta", "access_token")]["account_count"] == 1
+    assert rows[("meta", "ad_account_id")]["shop_count"] == 1
+    assert rows[("tiktok", "access_token")]["account_count"] == 1
+    assert ("tiktok", "advertiser_id") not in rows

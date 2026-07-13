@@ -5325,6 +5325,62 @@ def get_integration_configs(db: Session = Depends(get_db)) -> list[IntegrationCo
     return [IntegrationConfigView(**row) for row in rows]
 
 
+CHANNEL_CREDENTIAL_CONFIG_KEYS = {
+    "shopify": {"store_domain": "store_domain", "access_token": "access_token"},
+    "meta": {"access_token": "access_token", "ad_account_id": "ad_account_id"},
+    "tiktok": {"access_token": "access_token", "advertiser_id": "advertiser_id"},
+    "notion": {"api_key": "api_key", "database_id": "database_id"},
+}
+
+
+@router.get("/integration-configs/usage")
+def get_integration_config_usage(db: Session = Depends(get_db)) -> dict:
+    accounts = db.scalars(
+        select(ShopChannelAccount).where(ShopChannelAccount.status != "archived")
+    ).all()
+    usage: dict[tuple[str, str], dict] = {}
+    for account in accounts:
+        key_map = CHANNEL_CREDENTIAL_CONFIG_KEYS.get(account.platform, {})
+        credential_envs = account.credential_env_vars if isinstance(account.credential_env_vars, dict) else {}
+        for account_key, config_key in key_map.items():
+            if not credential_envs.get(account_key):
+                continue
+            usage_key = (account.platform, config_key)
+            item = usage.setdefault(
+                usage_key,
+                {
+                    "platform": account.platform,
+                    "config_key": config_key,
+                    "account_count": 0,
+                    "shop_ids": set(),
+                    "examples": [],
+                },
+            )
+            item["account_count"] += 1
+            item["shop_ids"].add(account.workspace_id)
+            if len(item["examples"]) < 3:
+                item["examples"].append(
+                    {
+                        "shop_id": account.workspace_id,
+                        "account_id": account.id,
+                        "label": account.label or account.account_key,
+                        "account_key": account.account_key,
+                    }
+                )
+    items = []
+    for item in usage.values():
+        items.append(
+            {
+                "platform": item["platform"],
+                "config_key": item["config_key"],
+                "account_count": item["account_count"],
+                "shop_count": len(item["shop_ids"]),
+                "examples": item["examples"],
+            }
+        )
+    return {"items": sorted(items, key=lambda row: (row["platform"], row["config_key"]))}
+
+
 @router.patch("/integration-configs/{platform}/{config_key}", response_model=IntegrationConfigView)
 def patch_integration_config(
     platform: str,
