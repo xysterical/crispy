@@ -36,6 +36,7 @@ from app.data.models import (
     Workspace,
 )
 from app.orchestrator.state_machine import next_stage, should_auto_approve, stage_plan_for
+from app.orchestrator.stage_contracts import get_stage_contract
 from app.schemas.api import RunCreateRequest
 from app.schemas.contracts import (
     CopyImageBundle,
@@ -1663,6 +1664,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
     On permanent failure: sets task.status=FAILED, run.status=FAILED.
     """
     try:
+        stage_contract = get_stage_contract(task.stage_name)
         lead_agent = stage_agent(task.stage_name)
         collaborators = list(stage_collaborators(task.stage_name))
         persona_snapshots = _persona_snapshots(db, [lead_agent, *collaborators])
@@ -1685,6 +1687,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
             "agent_name": lead_agent,
             "collaborators": collaborators,
             "stage_contract_version": STAGE_CONTRACT_VERSION,
+            "stage_contract": stage_contract.as_dict(),
             "resolved_api": resolved,
             "persona_snapshots": persona_snapshots,
             "compiled_persona": compiled_persona,
@@ -1704,6 +1707,7 @@ def execute_stage_task(db: Session, task: StageTask, run: PipelineRun) -> None:
                 "attempt": task.attempt,
                 "collaborators": collaborators,
                 "stage_contract_version": STAGE_CONTRACT_VERSION,
+                "stage_contract": stage_contract.as_dict(),
             },
         )
         add_agent_trace_event(

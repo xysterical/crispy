@@ -283,9 +283,14 @@ def test_pipeline_run_can_progress_with_human_gates(client, monkeypatch):
         assert run["status"] == "waiting_review"
         current_task = [t for t in run["stage_tasks"] if t["stage_name"] == stage][0]
         assert current_task["metadata_json"]["stage_contract_version"] == "commercial-pilot-v2"
+        assert current_task["metadata_json"]["stage_contract"]["stage_name"] == stage
+        assert current_task["metadata_json"]["stage_contract"]["runtime_handler"].startswith("run_")
+        assert current_task["metadata_json"]["stage_contract"]["produces"]
         assert current_task["metadata_json"]["persona_snapshots"]
         stage_events = [event for event in run["trace_events"] if event["stage_name"] == stage]
         assert any(event["event_type"] == "started" for event in stage_events)
+        started_event = next(event for event in stage_events if event["event_type"] == "started")
+        assert started_event["payload"]["stage_contract"]["stage_name"] == stage
         assert any(event["event_type"] == "input_summary" for event in stage_events)
         assert any(event["event_type"] == "handoff" for event in stage_events)
         assert any(event["event_type"] == "completed" for event in stage_events)
