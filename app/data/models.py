@@ -119,6 +119,54 @@ class Workspace(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     projects: Mapped[list["Project"]] = relationship(back_populates="workspace")
+    sites: Mapped[list["ShopSite"]] = relationship(back_populates="workspace", cascade="all, delete-orphan")
+    channel_accounts: Mapped[list["ShopChannelAccount"]] = relationship(back_populates="workspace", cascade="all, delete-orphan")
+
+
+class ShopSite(Base):
+    __tablename__ = "shop_site"
+    __table_args__ = (UniqueConstraint("workspace_id", "url", name="uq_shop_site_workspace_url"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id"), nullable=False)
+    label: Mapped[str] = mapped_column(String(128), default="")
+    url: Mapped[str] = mapped_column(String(512), nullable=False)
+    site_type: Mapped[str] = mapped_column(String(32), default="storefront")
+    platform: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    locale: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    metadata_json: Mapped[dict] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    workspace: Mapped[Workspace] = relationship(back_populates="sites")
+
+
+class ShopChannelAccount(Base):
+    __tablename__ = "shop_channel_account"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "platform", "account_key", name="uq_shop_channel_workspace_platform_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id"), nullable=False)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False)
+    account_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    label: Mapped[str] = mapped_column(String(128), default="")
+    account_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    account_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    credential_env_vars: Mapped[dict] = mapped_column(json_type(), default=dict)
+    sync_settings: Mapped[dict] = mapped_column(json_type(), default=dict)
+    attribution_rules: Mapped[dict] = mapped_column(json_type(), default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    workspace: Mapped[Workspace] = relationship(back_populates="channel_accounts")
 
 
 class Project(Base):
@@ -578,6 +626,7 @@ class IntegrationSync(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id"), nullable=False)
     project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), nullable=False)
+    channel_account_id: Mapped[str | None] = mapped_column(ForeignKey("shop_channel_account.id"), nullable=True)
     platform: Mapped[str] = mapped_column(String(32), nullable=False)
     sync_type: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="running")

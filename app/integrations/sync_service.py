@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import date, datetime, timedelta, UTC
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.data.models import (
@@ -12,6 +13,7 @@ from app.data.models import (
     IntegrationSync,
     Product,
     Project,
+    ShopChannelAccount,
     Workspace,
 )
 from app.integrations.shopify import ShopifyProvider
@@ -55,6 +57,64 @@ def _make_slug(value: str) -> str:
     return slug.strip("-")
 
 
+def _find_channel_account(
+    db: Session,
+    *,
+    workspace_id: str,
+    platform: str,
+    channel_account_id: str | None = None,
+) -> ShopChannelAccount | None:
+    stmt = select(ShopChannelAccount).where(
+        ShopChannelAccount.workspace_id == workspace_id,
+        ShopChannelAccount.platform == platform,
+        ShopChannelAccount.status != "archived",
+    )
+    if channel_account_id:
+        return db.scalar(stmt.where(ShopChannelAccount.id == channel_account_id))
+    return db.scalar(stmt.order_by(desc(ShopChannelAccount.is_primary), ShopChannelAccount.created_at).limit(1))
+
+
+def _account_fallback_value(account: ShopChannelAccount | None, key: str) -> str:
+    if not account:
+        return ""
+    if key in {"ad_account_id", "advertiser_id"}:
+        return account.account_id or account.account_key or ""
+    if key == "store_domain":
+        return account.account_id or account.account_url or account.account_key or ""
+    return ""
+
+
+def _resolve_credentials(
+    db: Session,
+    *,
+    workspace: Workspace,
+    platform: str,
+    explicit_values: dict[str, str],
+    global_env_vars: dict[str, str],
+    channel_account_id: str | None = None,
+) -> tuple[dict[str, str], ShopChannelAccount | None]:
+    account = _find_channel_account(
+        db,
+        workspace_id=workspace.id,
+        platform=platform,
+        channel_account_id=channel_account_id,
+    )
+    account_env_vars = account.credential_env_vars if account and isinstance(account.credential_env_vars, dict) else {}
+    values: dict[str, str] = {}
+    for key, env_name in global_env_vars.items():
+        value = (explicit_values.get(key) or "").strip()
+        if not value:
+            account_env_name = str(account_env_vars.get(key) or "").strip()
+            if account_env_name:
+                value = os.getenv(account_env_name, "")
+        if not value:
+            value = _account_fallback_value(account, key)
+        if not value and env_name:
+            value = os.getenv(env_name, "")
+        values[key] = value
+    return values, account
+
+
 async def sync_shopify(
     db: Session,
     *,
@@ -63,19 +123,26 @@ async def sync_shopify(
     sync_type: str = "all",
     store_domain: str = "",
     access_token: str = "",
+    channel_account_id: str | None = None,
 ) -> SyncResult:
-    import os
-
-    domain = store_domain or os.getenv("CRISPY_API_KEY_SHOPIFY_DOMAIN", "")
-    token = access_token or os.getenv("CRISPY_API_KEY_SHOPIFY", "")
+    workspace, project = _get_or_create_workspace_project(db, workspace_name, project_name)
+    credentials, channel_account = _resolve_credentials(
+        db,
+        workspace=workspace,
+        platform="shopify",
+        explicit_values={"store_domain": store_domain, "access_token": access_token},
+        global_env_vars={"store_domain": "CRISPY_API_KEY_SHOPIFY_DOMAIN", "access_token": "CRISPY_API_KEY_SHOPIFY"},
+        channel_account_id=channel_account_id,
+    )
+    domain = credentials["store_domain"]
+    token = credentials["access_token"]
     if not domain or not token:
         raise ValueError("Shopify store_domain and access_token are required")
-
-    workspace, project = _get_or_create_workspace_project(db, workspace_name, project_name)
 
     sync_record = IntegrationSync(
         workspace_id=workspace.id,
         project_id=project.id,
+        channel_account_id=channel_account.id if channel_account else None,
         platform="shopify",
         sync_type=sync_type,
         status="running",
@@ -272,6 +339,8 @@ async def sync_shopify(
 
         sync_record.status = "completed"
         sync_record.items_synced = items_synced
+        if channel_account:
+            channel_account.last_sync_at = _utcnow()
         db.flush()
         return SyncResult(
             platform="shopify",
@@ -279,6 +348,7 @@ async def sync_shopify(
             status="completed",
             items_synced=items_synced,
             memory_entries_created=memory_count,
+            channel_account_id=channel_account.id if channel_account else None,
         )
 
     except Exception as exc:
@@ -292,6 +362,7 @@ async def sync_shopify(
             status="failed",
             items_synced=items_synced,
             memory_entries_created=memory_count,
+            channel_account_id=channel_account.id if channel_account else None,
             error=str(exc),
         )
     finally:
@@ -306,20 +377,28 @@ async def sync_meta(
     sync_type: str = "performance",
     access_token: str = "",
     ad_account_id: str = "",
+    channel_account_id: str | None = None,
 ) -> SyncResult:
-    import os
     from app.services.feedback import import_feedback_rows
 
-    token = access_token or os.getenv("CRISPY_API_KEY_META", "")
-    act_id = ad_account_id or os.getenv("CRISPY_API_KEY_META_ACCOUNT", "")
+    workspace, project = _get_or_create_workspace_project(db, workspace_name, project_name)
+    credentials, channel_account = _resolve_credentials(
+        db,
+        workspace=workspace,
+        platform="meta",
+        explicit_values={"access_token": access_token, "ad_account_id": ad_account_id},
+        global_env_vars={"access_token": "CRISPY_API_KEY_META", "ad_account_id": "CRISPY_API_KEY_META_ACCOUNT"},
+        channel_account_id=channel_account_id,
+    )
+    token = credentials["access_token"]
+    act_id = credentials["ad_account_id"]
     if not token or not act_id:
         raise ValueError("Meta access_token and ad_account_id are required")
-
-    workspace, project = _get_or_create_workspace_project(db, workspace_name, project_name)
 
     sync_record = IntegrationSync(
         workspace_id=workspace.id,
         project_id=project.id,
+        channel_account_id=channel_account.id if channel_account else None,
         platform="meta",
         sync_type=sync_type,
         status="running",
@@ -490,6 +569,8 @@ async def sync_meta(
 
         sync_record.status = "completed"
         sync_record.items_synced = items_synced
+        if channel_account:
+            channel_account.last_sync_at = _utcnow()
         db.flush()
         return SyncResult(
             platform="meta",
@@ -497,6 +578,7 @@ async def sync_meta(
             status="completed",
             items_synced=items_synced,
             memory_entries_created=memory_count,
+            channel_account_id=channel_account.id if channel_account else None,
         )
 
     except Exception as exc:
@@ -510,6 +592,7 @@ async def sync_meta(
             status="failed",
             items_synced=items_synced,
             memory_entries_created=memory_count,
+            channel_account_id=channel_account.id if channel_account else None,
             error=str(exc),
         )
     finally:
@@ -524,20 +607,28 @@ async def sync_tiktok(
     sync_type: str = "performance",
     access_token: str = "",
     advertiser_id: str = "",
+    channel_account_id: str | None = None,
 ) -> SyncResult:
-    import os
     from app.services.feedback import import_feedback_rows
 
-    token = access_token or os.getenv("CRISPY_API_KEY_TIKTOK", "")
-    adv_id = advertiser_id or os.getenv("CRISPY_API_KEY_TIKTOK_ADVERTISER", "")
+    workspace, project = _get_or_create_workspace_project(db, workspace_name, project_name)
+    credentials, channel_account = _resolve_credentials(
+        db,
+        workspace=workspace,
+        platform="tiktok",
+        explicit_values={"access_token": access_token, "advertiser_id": advertiser_id},
+        global_env_vars={"access_token": "CRISPY_API_KEY_TIKTOK", "advertiser_id": "CRISPY_API_KEY_TIKTOK_ADVERTISER"},
+        channel_account_id=channel_account_id,
+    )
+    token = credentials["access_token"]
+    adv_id = credentials["advertiser_id"]
     if not token or not adv_id:
         raise ValueError("TikTok access_token and advertiser_id are required")
-
-    workspace, project = _get_or_create_workspace_project(db, workspace_name, project_name)
 
     sync_record = IntegrationSync(
         workspace_id=workspace.id,
         project_id=project.id,
+        channel_account_id=channel_account.id if channel_account else None,
         platform="tiktok",
         sync_type=sync_type,
         status="running",
@@ -689,6 +780,8 @@ async def sync_tiktok(
 
         sync_record.status = "completed"
         sync_record.items_synced = items_synced
+        if channel_account:
+            channel_account.last_sync_at = _utcnow()
         db.flush()
         return SyncResult(
             platform="tiktok",
@@ -696,6 +789,7 @@ async def sync_tiktok(
             status="completed",
             items_synced=items_synced,
             memory_entries_created=memory_count,
+            channel_account_id=channel_account.id if channel_account else None,
         )
     except Exception as exc:
         sync_record.status = "failed"
@@ -708,6 +802,7 @@ async def sync_tiktok(
             status="failed",
             items_synced=items_synced,
             memory_entries_created=memory_count,
+            channel_account_id=channel_account.id if channel_account else None,
             error=str(exc),
         )
     finally:
@@ -732,6 +827,7 @@ async def sync_integration(
     workspace_name: str,
     project_name: str,
     sync_type: str = "all",
+    channel_account_id: str | None = None,
 ) -> SyncResult:
     handler = INTEGRATION_SYNC_HANDLERS.get(platform)
     if not handler:
@@ -742,4 +838,5 @@ async def sync_integration(
         workspace_name=workspace_name,
         project_name=project_name,
         sync_type=sync_type,
+        channel_account_id=channel_account_id,
     )

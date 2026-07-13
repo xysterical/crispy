@@ -4,7 +4,7 @@ import io
 
 from sqlalchemy import select
 
-from app.data.models import GmMemory, PerformanceSnapshot
+from app.data.models import GmMemory, IntegrationSync, PerformanceSnapshot
 from app.integrations.models import MetaInsightsRow
 from app.integrations.tiktok import TikTokProvider
 
@@ -67,6 +67,67 @@ def test_tiktok_sync_imports_performance(client, db_session, monkeypatch):
     rows = {item["platform"]: item for item in health.json()["platforms"]}
     assert rows["tiktok"]["ready"] is True
     assert rows["tiktok"]["latest_sync"]["status"] == "completed"
+
+
+def test_tiktok_sync_uses_shop_channel_account_credentials(client, db_session, monkeypatch):
+    monkeypatch.delenv("CRISPY_API_KEY_TIKTOK", raising=False)
+    monkeypatch.delenv("CRISPY_API_KEY_TIKTOK_ADVERTISER", raising=False)
+    monkeypatch.setenv("CRISPY_API_KEY_TIKTOK_MAIN", "shop-token")
+
+    shop = client.post("/shops", json={"name": "tt-channel-shop"}).json()
+    account = client.post(
+        f"/shops/{shop['id']}/channel-accounts",
+        json={
+            "platform": "tiktok",
+            "account_key": "primary",
+            "account_id": "adv-shop-1",
+            "credential_env_vars": {"access_token": "CRISPY_API_KEY_TIKTOK_MAIN"},
+            "is_primary": True,
+        },
+    ).json()
+
+    captured = {}
+
+    async def fake_fetch_ad_performance(self):
+        captured["config"] = dict(self.config)
+        return [
+            MetaInsightsRow(
+                date_start="2026-07-01",
+                date_stop="2026-07-07",
+                ad_id="tt-ad-channel",
+                ad_name="Channel account ad",
+                impressions=100,
+                clicks=10,
+                spend=20.0,
+                conversions=2,
+                revenue=60.0,
+                roas=3.0,
+            )
+        ]
+
+    async def fake_close(self):
+        return None
+
+    monkeypatch.setattr(TikTokProvider, "fetch_ad_performance", fake_fetch_ad_performance)
+    monkeypatch.setattr(TikTokProvider, "close", fake_close)
+
+    resp = client.post(
+        "/integrations/tiktok/sync",
+        params={
+            "workspace_name": "tt-channel-shop",
+            "project_name": "default",
+            "sync_type": "performance",
+            "channel_account_id": account["id"],
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["channel_account_id"] == account["id"]
+    assert captured["config"]["access_token"] == "shop-token"
+    assert captured["config"]["advertiser_id"] == "adv-shop-1"
+    sync = db_session.scalar(select(IntegrationSync).where(IntegrationSync.platform == "tiktok"))
+    assert sync is not None
+    assert sync.channel_account_id == account["id"]
 
 
 def test_tiktok_offline_csv_import_uses_ad_performance_contract(client, db_session):

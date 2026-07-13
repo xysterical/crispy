@@ -108,6 +108,10 @@ def test_create_shop_returns_stable_id_and_metadata(client):
     assert body["store_url"] == "https://example-shop.test"
     assert body["description"] == "Urban pet accessories store."
     assert body["archived_at"] is None
+    assert body["site_count"] == 1
+    sites = client.get(f"/shops/{body['id']}/sites").json()["sites"]
+    assert sites[0]["url"] == "https://example-shop.test"
+    assert sites[0]["is_primary"] is True
 
 
 def test_archive_shop_hides_it_from_default_list(client):
@@ -121,6 +125,74 @@ def test_archive_shop_hides_it_from_default_list(client):
     assert all(item["id"] != created["id"] for item in listed)
     listed_with_archived = client.get("/shops?include_archived=true").json()["shops"]
     assert any(item["id"] == created["id"] for item in listed_with_archived)
+
+
+def test_shop_sites_support_multiple_urls_and_primary_switch(client):
+    shop = client.post(
+        "/shops",
+        json={"name": "multi-site-shop", "store_url": "https://primary.example"},
+    ).json()
+
+    created = client.post(
+        f"/shops/{shop['id']}/sites",
+        json={
+            "label": "EU Store",
+            "url": "https://eu.example",
+            "site_type": "storefront",
+            "platform": "shopify",
+            "locale": "en-GB",
+            "currency": "GBP",
+            "is_primary": True,
+        },
+    )
+
+    assert created.status_code == 201
+    sites = client.get(f"/shops/{shop['id']}/sites").json()["sites"]
+    assert len(sites) == 2
+    assert [site["url"] for site in sites if site["is_primary"]] == ["https://eu.example"]
+    updated_shop = next(item for item in client.get("/shops").json()["shops"] if item["id"] == shop["id"])
+    assert updated_shop["store_url"] == "https://eu.example"
+    assert updated_shop["site_count"] == 2
+
+
+def test_shop_channel_accounts_support_platform_scoped_accounts(client):
+    shop = client.post("/shops", json={"name": "channel-shop"}).json()
+
+    resp = client.post(
+        f"/shops/{shop['id']}/channel-accounts",
+        json={
+            "platform": "tiktok",
+            "account_key": "tt-main",
+            "label": "TikTok Main",
+            "account_id": "adv-123",
+            "credential_env_vars": {
+                "access_token": "CRISPY_API_KEY_TIKTOK_MAIN",
+                "advertiser_id": "CRISPY_API_KEY_TIKTOK_ADVERTISER_MAIN",
+            },
+            "sync_settings": {"auto_sync_minutes": 60},
+            "attribution_rules": {"creative_key": "utm_content"},
+            "is_primary": True,
+        },
+    )
+
+    assert resp.status_code == 201
+    account = resp.json()
+    assert account["platform"] == "tiktok"
+    assert account["is_primary"] is True
+    assert account["credential_env_vars"]["access_token"] == "CRISPY_API_KEY_TIKTOK_MAIN"
+    listed = client.get(f"/shops/{shop['id']}/channel-accounts").json()["accounts"]
+    assert len(listed) == 1
+    assert listed[0]["account_id"] == "adv-123"
+
+    invalid = client.post(
+        f"/shops/{shop['id']}/channel-accounts",
+        json={
+            "platform": "meta",
+            "account_key": "meta-main",
+            "credential_env_vars": {"access_token": "SECRET_VALUE_SHOULD_NOT_BE_STORED"},
+        },
+    )
+    assert invalid.status_code == 400
 
 
 def test_cannot_delete_last_shop(client):

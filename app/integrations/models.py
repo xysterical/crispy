@@ -74,4 +74,5 @@ class SyncResult(BaseModel):
     status: str
     items_synced: int
     memory_entries_created: int
+    channel_account_id: str | None = None
     error: str | None = None

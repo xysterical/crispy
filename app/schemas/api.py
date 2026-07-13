@@ -788,6 +788,8 @@ class ShopItem(BaseModel):
     memory_conflict_count: int = 0
     archived_at: datetime | None = None
     last_analyzed_at: datetime | None = None
+    site_count: int = 0
+    channel_count: int = 0
 
 
 class ShopPatchRequest(BaseModel):
@@ -800,6 +802,72 @@ class ShopPatchRequest(BaseModel):
 
 class ShopListResponse(BaseModel):
     shops: list[ShopItem]
+
+
+class ShopSiteItem(BaseModel):
+    id: str | None = None
+    workspace_id: str | None = None
+    label: str = ""
+    url: str = Field(..., min_length=1, max_length=512)
+    site_type: str = "storefront"
+    platform: str | None = None
+    locale: str | None = None
+    currency: str | None = None
+    is_primary: bool = False
+    metadata_json: dict = Field(default_factory=dict)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ShopSitePatchRequest(BaseModel):
+    label: str | None = None
+    url: str | None = Field(default=None, min_length=1, max_length=512)
+    site_type: str | None = None
+    platform: str | None = None
+    locale: str | None = None
+    currency: str | None = None
+    is_primary: bool | None = None
+    metadata_json: dict | None = None
+
+
+class ShopSiteListResponse(BaseModel):
+    sites: list[ShopSiteItem]
+
+
+class ShopChannelAccountItem(BaseModel):
+    id: str | None = None
+    workspace_id: str | None = None
+    platform: str = Field(..., min_length=1, max_length=32)
+    account_key: str = Field(..., min_length=1, max_length=128)
+    label: str = ""
+    account_id: str | None = None
+    account_url: str | None = None
+    credential_env_vars: dict = Field(default_factory=dict)
+    sync_settings: dict = Field(default_factory=dict)
+    attribution_rules: dict = Field(default_factory=dict)
+    status: str = "active"
+    is_primary: bool = False
+    last_verified_at: datetime | None = None
+    last_sync_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ShopChannelAccountPatchRequest(BaseModel):
+    platform: str | None = Field(default=None, min_length=1, max_length=32)
+    account_key: str | None = Field(default=None, min_length=1, max_length=128)
+    label: str | None = None
+    account_id: str | None = None
+    account_url: str | None = None
+    credential_env_vars: dict | None = None
+    sync_settings: dict | None = None
+    attribution_rules: dict | None = None
+    status: Literal["active", "warning", "disabled", "archived"] | None = None
+    is_primary: bool | None = None
+
+
+class ShopChannelAccountListResponse(BaseModel):
+    accounts: list[ShopChannelAccountItem]
 
 
 class CategoryItem(BaseModel):

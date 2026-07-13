@@ -205,6 +205,7 @@ def apply_runtime_migrations(target_engine) -> None:
     _add_column_if_missing(target_engine, "workspace", "meta_auto_sync_minutes", "ALTER TABLE workspace ADD COLUMN meta_auto_sync_minutes INTEGER DEFAULT 0")
     _add_column_if_missing(target_engine, "workspace", "shopify_last_sync_at", "ALTER TABLE workspace ADD COLUMN shopify_last_sync_at DATETIME")
     _add_column_if_missing(target_engine, "workspace", "meta_last_sync_at", "ALTER TABLE workspace ADD COLUMN meta_last_sync_at DATETIME")
+    _add_column_if_missing(target_engine, "integration_sync", "channel_account_id", "ALTER TABLE integration_sync ADD COLUMN channel_account_id VARCHAR(36)")
 
     with target_engine.begin() as conn:
         conn.execute(
@@ -228,6 +229,7 @@ def apply_runtime_migrations(target_engine) -> None:
                 "id VARCHAR(36) PRIMARY KEY, "
                 "workspace_id VARCHAR(36) NOT NULL, "
                 "project_id VARCHAR(36) NOT NULL, "
+                "channel_account_id VARCHAR(36), "
                 "platform VARCHAR(32) NOT NULL, "
                 "sync_type VARCHAR(32) NOT NULL, "
                 "status VARCHAR(32) DEFAULT 'running', "
@@ -235,6 +237,61 @@ def apply_runtime_migrations(target_engine) -> None:
                 "error_log JSON, "
                 "created_at DATETIME"
                 ")"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS shop_site ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "workspace_id VARCHAR(36) NOT NULL, "
+                "label VARCHAR(128), "
+                "url VARCHAR(512) NOT NULL, "
+                "site_type VARCHAR(32) DEFAULT 'storefront', "
+                "platform VARCHAR(32), "
+                "locale VARCHAR(32), "
+                "currency VARCHAR(16), "
+                "is_primary BOOLEAN DEFAULT 0, "
+                "metadata_json JSON, "
+                "created_at DATETIME, "
+                "updated_at DATETIME, "
+                "UNIQUE(workspace_id, url)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS shop_channel_account ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "workspace_id VARCHAR(36) NOT NULL, "
+                "platform VARCHAR(32) NOT NULL, "
+                "account_key VARCHAR(128) NOT NULL, "
+                "label VARCHAR(128), "
+                "account_id VARCHAR(128), "
+                "account_url VARCHAR(512), "
+                "credential_env_vars JSON, "
+                "sync_settings JSON, "
+                "attribution_rules JSON, "
+                "status VARCHAR(32) DEFAULT 'active', "
+                "is_primary BOOLEAN DEFAULT 0, "
+                "last_verified_at DATETIME, "
+                "last_sync_at DATETIME, "
+                "created_at DATETIME, "
+                "updated_at DATETIME, "
+                "UNIQUE(workspace_id, platform, account_key)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT OR IGNORE INTO shop_site ("
+                "id, workspace_id, label, url, site_type, platform, is_primary, metadata_json, created_at, updated_at"
+                ") "
+                "SELECT lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || "
+                "substr(lower(hex(randomblob(2))), 2) || '-' || "
+                "substr('89ab', abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))), 2) || '-' || "
+                "lower(hex(randomblob(6))), "
+                "id, 'Primary Storefront', store_url, 'storefront', NULL, 1, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
+                "FROM workspace WHERE store_url IS NOT NULL AND store_url != ''"
             )
         )
         conn.execute(

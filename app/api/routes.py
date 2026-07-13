@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.registry import stage_agent
 from app.core.config import get_settings
-from app.data.models import Artifact, Campaign, ContentSchedule, GmMemory, GmPolicyVersion, GmReflection, IntegrationSync, PerformanceSnapshot, PipelineRun, Product, Project, RunVariant, ScoreCard as ScoreCardModel, StageTask, VariantAsset, Workspace
+from app.data.models import Artifact, Campaign, ContentSchedule, GmMemory, GmPolicyVersion, GmReflection, IntegrationSync, PerformanceSnapshot, PipelineRun, Product, Project, RunVariant, ScoreCard as ScoreCardModel, ShopChannelAccount, ShopSite, StageTask, VariantAsset, Workspace
 from app.data.session import (
     SessionLocal,
     get_active_database_url,
@@ -91,8 +91,14 @@ from app.schemas.api import (
     ResearchTaskHistoryResponse,
     ResearchTaskItem,
     ShopItem,
+    ShopChannelAccountItem,
+    ShopChannelAccountListResponse,
+    ShopChannelAccountPatchRequest,
     ShopListResponse,
     ShopPatchRequest,
+    ShopSiteItem,
+    ShopSiteListResponse,
+    ShopSitePatchRequest,
     CategoryItem,
     CategoryListResponse,
     ContentScheduleCreateRequest,
@@ -2783,7 +2789,7 @@ def list_pipeline_modes() -> list[PipelineModeView]:
 # ── Shops & Categories ────────────────────────────────────────────
 
 def _serialize_shop(db: Session, workspace) -> dict:
-    from app.data.models import GmMemory, PipelineRun, Product, Project
+    from app.data.models import GmMemory, PipelineRun, Product, Project, ShopChannelAccount, ShopSite
     from app.services.gm_memory import memory_dirty_reasons
     from app.services.shop_analysis import RESEARCH_SOURCE_TYPES
 
@@ -2800,6 +2806,15 @@ def _serialize_shop(db: Session, workspace) -> dict:
         ) or 0
     run_count = db.scalar(
         select(func.count(PipelineRun.id)).where(PipelineRun.workspace_id == workspace.id)
+    ) or 0
+    site_count = db.scalar(
+        select(func.count(ShopSite.id)).where(ShopSite.workspace_id == workspace.id)
+    ) or 0
+    channel_count = db.scalar(
+        select(func.count(ShopChannelAccount.id)).where(
+            ShopChannelAccount.workspace_id == workspace.id,
+            ShopChannelAccount.status != "archived",
+        )
     ) or 0
     memory_rows = []
     if project_ids:
@@ -2839,6 +2854,8 @@ def _serialize_shop(db: Session, workspace) -> dict:
         memory_conflict_count=memory_conflict_count,
         archived_at=workspace.archived_at,
         last_analyzed_at=workspace.last_analyzed_at,
+        site_count=site_count,
+        channel_count=channel_count,
     ).model_dump()
 
 
@@ -2848,6 +2865,103 @@ def _get_shop_by_id_or_name(db: Session, shop_ref: str):
     return db.scalar(
         select(Workspace).where(or_(Workspace.id == shop_ref, Workspace.name == shop_ref))
     )
+
+
+def _serialize_shop_site(row: ShopSite) -> dict:
+    return ShopSiteItem(
+        id=row.id,
+        workspace_id=row.workspace_id,
+        label=row.label or "",
+        url=row.url,
+        site_type=row.site_type or "storefront",
+        platform=row.platform,
+        locale=row.locale,
+        currency=row.currency,
+        is_primary=bool(row.is_primary),
+        metadata_json=row.metadata_json or {},
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    ).model_dump()
+
+
+def _serialize_channel_account(row: ShopChannelAccount) -> dict:
+    return ShopChannelAccountItem(
+        id=row.id,
+        workspace_id=row.workspace_id,
+        platform=row.platform,
+        account_key=row.account_key,
+        label=row.label or "",
+        account_id=row.account_id,
+        account_url=row.account_url,
+        credential_env_vars=row.credential_env_vars or {},
+        sync_settings=row.sync_settings or {},
+        attribution_rules=row.attribution_rules or {},
+        status=row.status or "active",
+        is_primary=bool(row.is_primary),
+        last_verified_at=row.last_verified_at,
+        last_sync_at=row.last_sync_at,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    ).model_dump()
+
+
+def _normalize_short(value: str | None, default: str = "") -> str:
+    text = (value or "").strip()
+    return text or default
+
+
+def _normalize_optional(value: str | None) -> str | None:
+    text = (value or "").strip()
+    return text or None
+
+
+def _validate_credential_env_vars(payload: dict | None) -> dict:
+    result = dict(payload or {})
+    for key, value in result.items():
+        if value is None or value == "":
+            continue
+        if not isinstance(value, str) or not value.startswith("CRISPY_API_KEY_"):
+            raise HTTPException(status_code=400, detail=f"credential env var for {key} must start with CRISPY_API_KEY_")
+    return result
+
+
+def _ensure_single_primary_site(db: Session, workspace_id: str, primary_id: str) -> None:
+    rows = db.scalars(select(ShopSite).where(ShopSite.workspace_id == workspace_id, ShopSite.id != primary_id)).all()
+    for row in rows:
+        row.is_primary = False
+
+
+def _ensure_single_primary_channel(db: Session, workspace_id: str, platform: str, primary_id: str) -> None:
+    rows = db.scalars(
+        select(ShopChannelAccount).where(
+            ShopChannelAccount.workspace_id == workspace_id,
+            ShopChannelAccount.platform == platform,
+            ShopChannelAccount.id != primary_id,
+        )
+    ).all()
+    for row in rows:
+        row.is_primary = False
+
+
+def _upsert_primary_site_from_store_url(db: Session, workspace: Workspace, store_url: str | None) -> None:
+    url = _normalize_optional(store_url)
+    if not url:
+        return
+    existing = db.scalar(
+        select(ShopSite).where(ShopSite.workspace_id == workspace.id, ShopSite.url == url)
+    )
+    if not existing:
+        existing = ShopSite(
+            workspace_id=workspace.id,
+            label="Primary Storefront",
+            url=url,
+            site_type="storefront",
+            is_primary=True,
+        )
+        db.add(existing)
+        db.flush()
+    existing.is_primary = True
+    _ensure_single_primary_site(db, workspace.id, existing.id)
 
 
 @router.get("/shops", response_model=ShopListResponse)
@@ -2897,6 +3011,8 @@ def create_shop(payload: ShopItem, db: Session = Depends(get_db)) -> dict:
         description=payload.description,
     )
     db.add(ws)
+    db.flush()
+    _upsert_primary_site_from_store_url(db, ws, ws.store_url)
     db.commit()
     db.refresh(ws)
     return _serialize_shop(db, ws)
@@ -2922,6 +3038,7 @@ def update_shop(shop_id: str, payload: ShopPatchRequest, db: Session = Depends(g
         ws.industry_code = payload.industry_code.strip() or "general"
     if payload.store_url is not None:
         ws.store_url = payload.store_url.strip() or None
+        _upsert_primary_site_from_store_url(db, ws, ws.store_url)
     if payload.description is not None:
         ws.description = payload.description.strip() or None
     if payload.archived is True and not ws.archived_at:
@@ -2931,6 +3048,215 @@ def update_shop(shop_id: str, payload: ShopPatchRequest, db: Session = Depends(g
     db.commit()
     db.refresh(ws)
     return _serialize_shop(db, ws)
+
+
+@router.get("/shops/{shop_id}/sites", response_model=ShopSiteListResponse)
+def list_shop_sites(shop_id: str, db: Session = Depends(get_db)) -> dict:
+    ws = _get_shop_by_id_or_name(db, shop_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+    rows = db.scalars(
+        select(ShopSite).where(ShopSite.workspace_id == ws.id).order_by(ShopSite.is_primary.desc(), ShopSite.created_at)
+    ).all()
+    return {"sites": [_serialize_shop_site(row) for row in rows]}
+
+
+@router.post("/shops/{shop_id}/sites", response_model=ShopSiteItem, status_code=201)
+def create_shop_site(shop_id: str, payload: ShopSiteItem, db: Session = Depends(get_db)) -> dict:
+    ws = _get_shop_by_id_or_name(db, shop_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+    url = payload.url.strip()
+    existing = db.scalar(select(ShopSite).where(ShopSite.workspace_id == ws.id, ShopSite.url == url))
+    if existing:
+        raise HTTPException(status_code=409, detail=f"site already exists for shop: {url}")
+    row = ShopSite(
+        workspace_id=ws.id,
+        label=_normalize_short(payload.label, "Storefront"),
+        url=url,
+        site_type=_normalize_short(payload.site_type, "storefront"),
+        platform=_normalize_optional(payload.platform),
+        locale=_normalize_optional(payload.locale),
+        currency=_normalize_optional(payload.currency),
+        is_primary=bool(payload.is_primary),
+        metadata_json=payload.metadata_json or {},
+    )
+    db.add(row)
+    db.flush()
+    if row.is_primary:
+        _ensure_single_primary_site(db, ws.id, row.id)
+        ws.store_url = row.url
+    db.commit()
+    db.refresh(row)
+    return _serialize_shop_site(row)
+
+
+@router.patch("/shops/{shop_id}/sites/{site_id}", response_model=ShopSiteItem)
+def update_shop_site(shop_id: str, site_id: str, payload: ShopSitePatchRequest, db: Session = Depends(get_db)) -> dict:
+    ws = _get_shop_by_id_or_name(db, shop_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+    row = db.scalar(select(ShopSite).where(ShopSite.id == site_id, ShopSite.workspace_id == ws.id))
+    if not row:
+        raise HTTPException(status_code=404, detail=f"site not found: {site_id}")
+    if payload.url is not None:
+        new_url = payload.url.strip()
+        conflict = db.scalar(select(ShopSite).where(ShopSite.workspace_id == ws.id, ShopSite.url == new_url, ShopSite.id != row.id))
+        if conflict:
+            raise HTTPException(status_code=409, detail=f"site already exists for shop: {new_url}")
+        row.url = new_url
+    if payload.label is not None:
+        row.label = _normalize_short(payload.label, "Storefront")
+    if payload.site_type is not None:
+        row.site_type = _normalize_short(payload.site_type, "storefront")
+    if payload.platform is not None:
+        row.platform = _normalize_optional(payload.platform)
+    if payload.locale is not None:
+        row.locale = _normalize_optional(payload.locale)
+    if payload.currency is not None:
+        row.currency = _normalize_optional(payload.currency)
+    if payload.metadata_json is not None:
+        row.metadata_json = payload.metadata_json
+    if payload.is_primary is not None:
+        row.is_primary = bool(payload.is_primary)
+    if row.is_primary:
+        _ensure_single_primary_site(db, ws.id, row.id)
+        ws.store_url = row.url
+    db.commit()
+    db.refresh(row)
+    return _serialize_shop_site(row)
+
+
+@router.delete("/shops/{shop_id}/sites/{site_id}", status_code=204)
+def delete_shop_site(shop_id: str, site_id: str, db: Session = Depends(get_db)) -> None:
+    ws = _get_shop_by_id_or_name(db, shop_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+    row = db.scalar(select(ShopSite).where(ShopSite.id == site_id, ShopSite.workspace_id == ws.id))
+    if not row:
+        raise HTTPException(status_code=404, detail=f"site not found: {site_id}")
+    was_primary = bool(row.is_primary)
+    db.delete(row)
+    db.flush()
+    if was_primary:
+        replacement = db.scalar(select(ShopSite).where(ShopSite.workspace_id == ws.id).order_by(ShopSite.created_at).limit(1))
+        if replacement:
+            replacement.is_primary = True
+            ws.store_url = replacement.url
+        else:
+            ws.store_url = None
+    db.commit()
+    return None
+
+
+@router.get("/shops/{shop_id}/channel-accounts", response_model=ShopChannelAccountListResponse)
+def list_shop_channel_accounts(shop_id: str, include_archived: bool = Query(False), db: Session = Depends(get_db)) -> dict:
+    ws = _get_shop_by_id_or_name(db, shop_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+    stmt = select(ShopChannelAccount).where(ShopChannelAccount.workspace_id == ws.id)
+    if not include_archived:
+        stmt = stmt.where(ShopChannelAccount.status != "archived")
+    rows = db.scalars(stmt.order_by(ShopChannelAccount.platform, ShopChannelAccount.is_primary.desc(), ShopChannelAccount.label)).all()
+    return {"accounts": [_serialize_channel_account(row) for row in rows]}
+
+
+@router.post("/shops/{shop_id}/channel-accounts", response_model=ShopChannelAccountItem, status_code=201)
+def create_shop_channel_account(shop_id: str, payload: ShopChannelAccountItem, db: Session = Depends(get_db)) -> dict:
+    ws = _get_shop_by_id_or_name(db, shop_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+    platform = payload.platform.lower().strip()
+    account_key = payload.account_key.strip()
+    existing = db.scalar(
+        select(ShopChannelAccount).where(
+            ShopChannelAccount.workspace_id == ws.id,
+            ShopChannelAccount.platform == platform,
+            ShopChannelAccount.account_key == account_key,
+        )
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail=f"channel account already exists: {platform}/{account_key}")
+    row = ShopChannelAccount(
+        workspace_id=ws.id,
+        platform=platform,
+        account_key=account_key,
+        label=_normalize_short(payload.label, account_key),
+        account_id=_normalize_optional(payload.account_id),
+        account_url=_normalize_optional(payload.account_url),
+        credential_env_vars=_validate_credential_env_vars(payload.credential_env_vars),
+        sync_settings=payload.sync_settings or {},
+        attribution_rules=payload.attribution_rules or {},
+        status=payload.status or "active",
+        is_primary=bool(payload.is_primary),
+    )
+    db.add(row)
+    db.flush()
+    if row.is_primary:
+        _ensure_single_primary_channel(db, ws.id, row.platform, row.id)
+    db.commit()
+    db.refresh(row)
+    return _serialize_channel_account(row)
+
+
+@router.patch("/shops/{shop_id}/channel-accounts/{account_id}", response_model=ShopChannelAccountItem)
+def update_shop_channel_account(shop_id: str, account_id: str, payload: ShopChannelAccountPatchRequest, db: Session = Depends(get_db)) -> dict:
+    ws = _get_shop_by_id_or_name(db, shop_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+    row = db.scalar(select(ShopChannelAccount).where(ShopChannelAccount.id == account_id, ShopChannelAccount.workspace_id == ws.id))
+    if not row:
+        raise HTTPException(status_code=404, detail=f"channel account not found: {account_id}")
+    new_platform = payload.platform.lower().strip() if payload.platform is not None else row.platform
+    new_key = payload.account_key.strip() if payload.account_key is not None else row.account_key
+    if new_platform != row.platform or new_key != row.account_key:
+        conflict = db.scalar(
+            select(ShopChannelAccount).where(
+                ShopChannelAccount.workspace_id == ws.id,
+                ShopChannelAccount.platform == new_platform,
+                ShopChannelAccount.account_key == new_key,
+                ShopChannelAccount.id != row.id,
+            )
+        )
+        if conflict:
+            raise HTTPException(status_code=409, detail=f"channel account already exists: {new_platform}/{new_key}")
+        row.platform = new_platform
+        row.account_key = new_key
+    if payload.label is not None:
+        row.label = _normalize_short(payload.label, row.account_key)
+    if payload.account_id is not None:
+        row.account_id = _normalize_optional(payload.account_id)
+    if payload.account_url is not None:
+        row.account_url = _normalize_optional(payload.account_url)
+    if payload.credential_env_vars is not None:
+        row.credential_env_vars = _validate_credential_env_vars(payload.credential_env_vars)
+    if payload.sync_settings is not None:
+        row.sync_settings = payload.sync_settings
+    if payload.attribution_rules is not None:
+        row.attribution_rules = payload.attribution_rules
+    if payload.status is not None:
+        row.status = payload.status
+    if payload.is_primary is not None:
+        row.is_primary = bool(payload.is_primary)
+    if row.is_primary:
+        _ensure_single_primary_channel(db, ws.id, row.platform, row.id)
+    db.commit()
+    db.refresh(row)
+    return _serialize_channel_account(row)
+
+
+@router.delete("/shops/{shop_id}/channel-accounts/{account_id}", status_code=204)
+def archive_shop_channel_account(shop_id: str, account_id: str, db: Session = Depends(get_db)) -> None:
+    ws = _get_shop_by_id_or_name(db, shop_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail=f"shop not found: {shop_id}")
+    row = db.scalar(select(ShopChannelAccount).where(ShopChannelAccount.id == account_id, ShopChannelAccount.workspace_id == ws.id))
+    if not row:
+        raise HTTPException(status_code=404, detail=f"channel account not found: {account_id}")
+    row.status = "archived"
+    row.is_primary = False
+    db.commit()
+    return None
 
 
 @router.put("/shops/{shop_name}", response_model=ShopItem)
@@ -2948,6 +3274,7 @@ def rename_shop(shop_name: str, payload: ShopItem, db: Session = Depends(get_db)
         ws.industry_code = payload.industry_code
     if payload.store_url is not None:
         ws.store_url = payload.store_url.strip() or None
+        _upsert_primary_site_from_store_url(db, ws, ws.store_url)
     if payload.description is not None:
         ws.description = payload.description.strip() or None
     db.commit()
@@ -4490,11 +4817,13 @@ class IntegrationSyncResult(_PydanticBaseModel):
     status: str
     items_synced: int
     memory_entries_created: int
+    channel_account_id: str | None = None
     error: str | None = None
 
 
 class SyncStatusItem(_PydanticBaseModel):
     id: str
+    channel_account_id: str | None = None
     platform: str
     sync_type: str
     status: str
@@ -4513,6 +4842,7 @@ async def trigger_integration_sync(
     workspace_name: str = Query(...),
     project_name: str = Query(...),
     sync_type: str = Query("all"),
+    channel_account_id: str | None = Query(None),
     db: Session = Depends(get_db),
 ) -> IntegrationSyncResult:
     from app.integrations.sync_service import supported_integration_platforms, sync_integration
@@ -4528,6 +4858,7 @@ async def trigger_integration_sync(
         workspace_name=workspace_name,
         project_name=project_name,
         sync_type=sync_type,
+        channel_account_id=channel_account_id,
     )
     db.commit()
     return IntegrationSyncResult(**result.model_dump())
@@ -4564,6 +4895,7 @@ def get_sync_status(
     return SyncStatusResponse(items=[
         SyncStatusItem(
             id=row.id,
+            channel_account_id=row.channel_account_id,
             platform=row.platform,
             sync_type=row.sync_type,
             status=row.status,
