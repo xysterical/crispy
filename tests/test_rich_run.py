@@ -87,3 +87,26 @@ def test_rich_run_accepts_tiktok_shop_video_style(client):
     assert body["pipeline_mode"] == "tiktok_shop_video"
     assert body["creative_specs"]["tiktok_video_style"] == "shop_account_content"
     assert body["enable_research"] is False
+
+
+def test_rich_run_accepts_memory_selection(client):
+    resp = client.post(
+        "/runs/rich",
+        data={
+            "workspace_name": "memory_selection_rich_ws",
+            "project_name": "memory_selection_rich_project",
+            "product_name": "portable blender",
+            "product_code": "MEM-RICH-001",
+            "industry_code": "kitchen",
+            "campaign_name": "memory-selection-rich",
+            "pipeline_mode": "copy_image_only",
+            "creative_preset": "custom",
+            "creative_specs": '{"image_size":"1:1","video_size":"1:1","resolution":"720p","video_duration_seconds":5}',
+            "memory_selection": '{"mode":"none","include_ids":[],"exclude_ids":[]}',
+        },
+        files=[("files", ("sample.jpg", io.BytesIO(b"fakeimage"), "image/jpeg"))],
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["memory_selection"]["mode"] == "none"

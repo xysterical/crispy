@@ -21,6 +21,7 @@ from app.services.creative_specs import get_social_review_contract
 from app.services.execution_memory import append_execution_memory_payload, resolve_execution_memory
 from app.services.gm_evolution import resolve_active_gm_policy
 from app.services.gm_memory import memory_dirty_reasons, memory_is_strategy_safe
+from app.services.memory_selection import normalize_memory_selection
 from app.services.shop_analysis import RESEARCH_SOURCE_TYPES
 
 logger = logging.getLogger(__name__)
@@ -117,6 +118,7 @@ def build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
             project_id=run.project_id,
             shop_id=run.workspace_id,
             industry_code=run.industry_code,
+            memory_selection=(run.context_json or {}).get("memory_selection"),
         )
     _ensure_contract_inputs_present(contract.stage_name, contract.required_inputs, payload)
     if task.rejected_at or task.failure_category == TaskFailureCategory.HUMAN_REJECT.value:
@@ -129,6 +131,10 @@ def build_task_input(db: Session, run: PipelineRun, task: StageTask) -> dict:
 
 
 def recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[dict]:
+    memory_selection = normalize_memory_selection((run.context_json or {}).get("memory_selection"))
+    if memory_selection["mode"] == "none":
+        return []
+
     product_rows = db.scalars(
         select(GmMemory)
         .where(
@@ -168,26 +174,40 @@ def recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[dic
     product_rows = sorted(product_rows, key=_gm_memory_priority)[:10]
     industry_rows = sorted(industry_rows, key=_gm_memory_priority)[:10]
     shop_rows = sorted(shop_rows, key=_gm_memory_priority)[:5]
-    product_rows = [row for row in product_rows if memory_is_strategy_safe(row)]
-    industry_rows = [row for row in industry_rows if memory_is_strategy_safe(row)]
-    shop_rows = [row for row in shop_rows if memory_is_strategy_safe(row)]
+    safe_candidates = {
+        row.id: row
+        for row in [*product_rows, *shop_rows, *industry_rows]
+        if memory_is_strategy_safe(row)
+    }
+
+    if memory_selection["mode"] == "manual":
+        selected_rows = [
+            safe_candidates[memory_id]
+            for memory_id in memory_selection["include_ids"]
+            if memory_id in safe_candidates
+        ]
+    else:
+        exclude_ids = set(memory_selection["exclude_ids"])
+        default_rows = [
+            row
+            for row in [*product_rows[:3], *shop_rows[:3], *industry_rows[:2]]
+            if row.id in safe_candidates and row.id not in exclude_ids
+        ]
+        manual_additions = [
+            safe_candidates[memory_id]
+            for memory_id in memory_selection["include_ids"]
+            if memory_id in safe_candidates and memory_id not in exclude_ids
+        ]
+        selected_rows = [*manual_additions, *default_rows]
 
     merged: list[dict] = []
     seen_fingerprints: set[str] = set()
-    for row in [*product_rows[:3], *shop_rows[:3], *industry_rows[:2]]:
-        payload = {
-            "id": row.id,
-            "memory_scope": row.memory_scope,
-            "product_code": row.product_code,
-            "industry_code": row.industry_code,
-            "source_type": row.source_type,
-            "memory_type": row.memory_type,
-            "status": row.status,
-            "pinned": bool(row.pinned),
-            "dirty_reasons": memory_dirty_reasons(row),
-            "score_hint": row.score_hint,
-            "content": row.content or {},
-        }
+    seen_ids: set[str] = set()
+    for row in selected_rows:
+        if row.id in seen_ids:
+            continue
+        seen_ids.add(row.id)
+        payload = _gm_memory_payload(row)
         fingerprint = f"{payload['memory_scope']}|{payload['product_code']}|{payload['industry_code']}|{json.dumps(payload['content'], sort_keys=True)}"
         if fingerprint in seen_fingerprints:
             continue
@@ -196,6 +216,22 @@ def recent_gm_lessons(db: Session, run: PipelineRun, limit: int = 5) -> list[dic
         if len(merged) >= limit:
             break
     return merged
+
+
+def _gm_memory_payload(row: GmMemory) -> dict:
+    return {
+        "id": row.id,
+        "memory_scope": row.memory_scope,
+        "product_code": row.product_code,
+        "industry_code": row.industry_code,
+        "source_type": row.source_type,
+        "memory_type": row.memory_type,
+        "status": row.status,
+        "pinned": bool(row.pinned),
+        "dirty_reasons": memory_dirty_reasons(row),
+        "score_hint": row.score_hint,
+        "content": row.content or {},
+    }
 
 
 def analytics_insights(db: Session, run: PipelineRun) -> list[dict]:

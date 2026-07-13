@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.data.models import GmMemory, Project, Workspace
 from app.services.gm_memory import memory_dirty_reasons, memory_is_strategy_safe
+from app.services.memory_selection import normalize_memory_selection
 from app.services.shop_analysis import RESEARCH_SOURCE_TYPES, research_refresh_state
 
 
@@ -26,8 +27,10 @@ def build_research_context(
     project_id: str,
     shop_id: str | None = None,
     industry_code: str | None = None,
+    memory_selection: dict | None = None,
     limit: int = 30,
 ) -> dict:
+    selection = normalize_memory_selection(memory_selection)
     project = db.get(Project, project_id)
     workspace = db.get(Workspace, shop_id) if shop_id else (project.workspace if project else None)
     stmt = (
@@ -71,9 +74,13 @@ def build_research_context(
         quality = item["evidence_quality"].get("aggregate_score")
         if isinstance(quality, int | float):
             quality_scores.append(float(quality))
-        if memory_is_strategy_safe(row):
+        selection_reason = _selection_exclusion_reason(row.id, selection)
+        if memory_is_strategy_safe(row) and not selection_reason:
             included.append(item)
         else:
+            if selection_reason and selection_reason not in item["dirty_reasons"]:
+                item["dirty_reasons"] = [*item["dirty_reasons"], selection_reason]
+                item["strategy_safe"] = False
             excluded.append(item)
 
     avg_quality = round(sum(quality_scores) / len(quality_scores), 2) if quality_scores else 0.0
@@ -87,6 +94,7 @@ def build_research_context(
             "candidate_count": len(candidates),
             "included_count": len(included),
             "excluded_count": len(excluded),
+            "memory_selection_mode": selection["mode"],
             "evidence_count": evidence_count,
             "average_quality": avg_quality,
             "source_counts": dict(source_counts),
@@ -98,6 +106,16 @@ def build_research_context(
         "tool_needs": RESEARCH_TYPE_TOOL_NEEDS,
         "planning_guidance": _planning_guidance(included, excluded),
     }
+
+
+def _selection_exclusion_reason(memory_id: str, selection: dict) -> str:
+    if selection["mode"] == "none":
+        return "run_memory_selection_none"
+    if selection["mode"] == "manual" and memory_id not in set(selection["include_ids"]):
+        return "not_selected_for_run"
+    if memory_id in set(selection["exclude_ids"]):
+        return "excluded_for_run"
+    return ""
 
 
 def _memory_context_item(row: GmMemory) -> dict:

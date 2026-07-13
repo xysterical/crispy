@@ -63,13 +63,13 @@ CREATE_RUN_HTML = """
                       </div>
                       <div>
                         <label>Product Category (required)</label>
-                        <input id="project_name" list="category-list" value="" placeholder="e.g. summer-collection" required />
+                        <input id="project_name" list="category-list" value="" placeholder="e.g. summer-collection" required onblur="invalidateMemoryCandidates()" />
                         <datalist id="category-list"></datalist>
                       </div>
                     </div>
                     <div class="row">
                       <div><label>Campaign (required)</label><input id="campaign_name" value="" placeholder="e.g. spring-launch" required /></div>
-                      <div><label>Industry Code (required)</label><input id="industry_code" value="general_merchandise" required /></div>
+                      <div><label>Industry Code (required)</label><input id="industry_code" value="general_merchandise" required onblur="invalidateMemoryCandidates()" /></div>
                     </div>
                     <div class="action-row" style="justify-content:flex-end;margin-top:8px;">
                       <button class="primary" onclick="nextStep(1)">Next &#8594;</button>
@@ -313,6 +313,26 @@ CREATE_RUN_HTML = """
                     <div id="research-context-card" class="hint" style="margin-top:8px;padding:10px;border:1px solid #dbe4ee;border-radius:8px;background:#f8fafc;">
                       Research context: loading current shop memory...
                     </div>
+                    <label style="margin-top:10px;">Memory Usage</label>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+                      <label style="display:flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid #dbe4ee;border-radius:8px;background:#fff;font-weight:600;font-size:12px;">
+                        <input type="radio" name="memory_selection_mode" value="auto" checked onchange="refreshMemorySelectionMode()" />
+                        <span>Auto</span>
+                      </label>
+                      <label style="display:flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid #dbe4ee;border-radius:8px;background:#fff;font-weight:600;font-size:12px;">
+                        <input type="radio" name="memory_selection_mode" value="manual" onchange="refreshMemorySelectionMode()" />
+                        <span>Manual</span>
+                      </label>
+                      <label style="display:flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid #dbe4ee;border-radius:8px;background:#fff;font-weight:600;font-size:12px;">
+                        <input type="radio" name="memory_selection_mode" value="none" onchange="refreshMemorySelectionMode()" />
+                        <span>None</span>
+                      </label>
+                    </div>
+                    <div id="memory-selection-summary" class="hint muted">Auto uses current shop, product, and industry memory that is safe for planning.</div>
+                    <div id="memory-candidates-panel" style="display:none;margin-top:8px;padding:10px;border:1px solid #dbe4ee;border-radius:8px;background:#fff;">
+                      <div class="hint muted" id="memory-candidates-status">Select Manual to load available memory.</div>
+                      <div id="memory-candidates-list" style="display:flex;flex-direction:column;gap:6px;margin-top:8px;"></div>
+                    </div>
                     <label>Validated Research Notes (optional)</label>
                     <textarea id="manual_research_brief" rows="3" placeholder="Paste your manually validated market notes..."></textarea>
                     <label>Reference URLs (one per line)</label>
@@ -354,6 +374,7 @@ CREATE_RUN_JS = """
   let currentMode = localStorage.getItem('crispy_create_mode') || 'guided';
   let currentStep = 1;
   let lastProductConfig = null;
+  let memoryCandidatesLoadedKey = '';
 
   // -- Mode Switching --
   function switchMode(mode) {
@@ -402,8 +423,15 @@ CREATE_RUN_JS = """
     });
   }
 
-  function goToStep(step) { if (currentMode === 'guided') updateWizardSteps(step); }
-  function nextStep(from) { if (currentMode === 'guided') updateWizardSteps(Math.min(from + 1, 4)); }
+  function goToStep(step) {
+    if (currentMode === 'guided') updateWizardSteps(step);
+    if (step === 4) refreshMemorySelectionMode();
+  }
+  function nextStep(from) {
+    const step = Math.min(from + 1, 4);
+    if (currentMode === 'guided') updateWizardSteps(step);
+    if (step === 4) refreshMemorySelectionMode();
+  }
   function prevStep(from) { if (currentMode === 'guided') updateWizardSteps(Math.max(from - 1, 1)); }
 
   // -- Pipeline-Creative Coupling --
@@ -606,6 +634,7 @@ CREATE_RUN_JS = """
   // -- Product Code Hint --
   function checkProductHint() {
     const code = document.getElementById('product_code').value.trim();
+    invalidateMemoryCandidates();
     if (!code) return;
     fetch('/product-config-hint?product_code=' + encodeURIComponent(code))
       .then(r => r.json()).then(hint => {
@@ -691,6 +720,11 @@ CREATE_RUN_JS = """
         else el.value = value;
       }
     }
+    if (cfg.memory_selection_mode) {
+      const radio = document.querySelector('input[name="memory_selection_mode"][value="' + String(cfg.memory_selection_mode).replace(/"/g, '') + '"]');
+      if (radio) radio.checked = true;
+      refreshMemorySelectionMode();
+    }
     refreshPipelineFields();
     buildQuickFillOptions();
   }
@@ -751,6 +785,7 @@ CREATE_RUN_JS = """
       const el = document.getElementById(id);
       if (el) config[id] = el.type === 'checkbox' ? el.checked : el.value;
     });
+    config.memory_selection_mode = selectedMemoryMode();
     return config;
   }
 
@@ -871,6 +906,119 @@ CREATE_RUN_JS = """
     return spec;
   }
 
+  function selectedMemoryMode() {
+    const selected = document.querySelector('input[name="memory_selection_mode"]:checked');
+    return selected ? selected.value : 'auto';
+  }
+
+  function memoryCandidateKey() {
+    return [
+      document.getElementById('workspace_name').value || '',
+      document.getElementById('project_name').value || '',
+      document.getElementById('product_code').value || '',
+      document.getElementById('industry_code').value || '',
+    ].join('|');
+  }
+
+  function refreshMemorySelectionMode() {
+    const mode = selectedMemoryMode();
+    const panel = document.getElementById('memory-candidates-panel');
+    const summary = document.getElementById('memory-selection-summary');
+    if (!panel || !summary) return;
+    panel.style.display = mode === 'manual' ? 'block' : 'none';
+    if (mode === 'none') {
+      summary.textContent = 'This run will skip historical GM and research memory during planning.';
+    } else if (mode === 'manual') {
+      summary.textContent = 'Only checked, strategy-safe memory will be used during planning.';
+      loadMemoryCandidates(false);
+    } else {
+      summary.textContent = 'Auto uses current shop, product, and industry memory that is safe for planning.';
+    }
+  }
+
+  function invalidateMemoryCandidates() {
+    memoryCandidatesLoadedKey = '';
+    if (selectedMemoryMode() === 'manual') loadMemoryCandidates(true);
+  }
+
+  async function loadMemoryCandidates(force) {
+    const status = document.getElementById('memory-candidates-status');
+    const list = document.getElementById('memory-candidates-list');
+    const key = memoryCandidateKey();
+    if (!force && memoryCandidatesLoadedKey === key) return;
+    memoryCandidatesLoadedKey = key;
+    if (status) status.textContent = 'Loading memory candidates...';
+    if (list) list.innerHTML = '';
+    const params = new URLSearchParams({
+      workspace_name: document.getElementById('workspace_name').value || '',
+      project_name: document.getElementById('project_name').value || '',
+      product_code: document.getElementById('product_code').value || '',
+      industry_code: document.getElementById('industry_code').value || '',
+    });
+    try {
+      const data = await fetch('/run-memory-candidates?' + params.toString()).then(r => r.json());
+      renderMemoryCandidates(data);
+    } catch (err) {
+      if (status) status.textContent = 'Memory candidates could not be loaded.';
+      console.error('Failed to load memory candidates', err);
+    }
+  }
+
+  function renderMemoryCandidates(data) {
+    const status = document.getElementById('memory-candidates-status');
+    const list = document.getElementById('memory-candidates-list');
+    const items = (data && data.items) || [];
+    if (!status || !list) return;
+    if (!items.length) {
+      status.textContent = 'No matching memory found for this shop, product, or industry yet.';
+      list.innerHTML = '';
+      return;
+    }
+    const safeCount = (data.summary && data.summary.safe_count) || 0;
+    const defaultCount = (data.summary && data.summary.default_selected_count) || 0;
+    status.textContent = safeCount + ' safe memory item' + (safeCount === 1 ? '' : 's') + ' available; ' + defaultCount + ' selected by default.';
+    const grouped = {};
+    items.forEach(item => {
+      const key = item.memory_scope || 'memory';
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(item);
+    });
+    list.innerHTML = Object.keys(grouped).map(scope => {
+      const rows = grouped[scope].map(item => memoryCandidateRowHtml(item)).join('');
+      return '<div style="border-top:1px solid #eef2f7;padding-top:8px;">'
+        + '<div class="muted" style="font-weight:700;font-size:11px;text-transform:uppercase;margin-bottom:6px;">' + escapeCreateRunHtml(scope) + '</div>'
+        + rows
+        + '</div>';
+    }).join('');
+  }
+
+  function memoryCandidateRowHtml(item) {
+    const safe = !!item.strategy_safe;
+    const disabled = safe ? '' : ' disabled';
+    const checked = item.selected_by_default && safe ? ' checked' : '';
+    const reason = safe ? 'strategy safe' : ((item.dirty_reasons || []).join(', ') || 'not strategy safe');
+    const summary = item.summary || item.source_type || item.memory_type || item.id;
+    return '<label style="display:grid;grid-template-columns:18px 1fr;gap:8px;align-items:start;padding:7px 0;font-weight:500;font-size:12px;">'
+      + '<input class="memory-candidate-checkbox" type="checkbox" value="' + escapeCreateRunHtml(item.id) + '"' + checked + disabled + ' />'
+      + '<span>'
+      + '<span style="display:block;">' + escapeCreateRunHtml(summary) + '</span>'
+      + '<span class="muted" style="display:block;font-size:11px;">' + escapeCreateRunHtml([item.memory_type, item.source_type, reason].filter(Boolean).join(' / ')) + '</span>'
+      + '</span>'
+      + '</label>';
+  }
+
+  function buildMemorySelectionJSON() {
+    const mode = selectedMemoryMode();
+    const includeIds = mode === 'manual'
+      ? Array.from(document.querySelectorAll('.memory-candidate-checkbox:checked')).map(el => el.value).filter(Boolean)
+      : [];
+    return {
+      mode: mode,
+      include_ids: includeIds,
+      exclude_ids: [],
+    };
+  }
+
   function escapeCreateRunHtml(value) {
     return String(value ?? '')
       .replaceAll('&', '&amp;')
@@ -982,6 +1130,7 @@ CREATE_RUN_JS = """
     );
     fd.set('creative_specs', JSON.stringify(creativeSpecs));
     fd.set('manual_research_brief', document.getElementById('manual_research_brief').value);
+    fd.set('memory_selection', JSON.stringify(buildMemorySelectionJSON()));
     fd.set('url_references', JSON.stringify(
       (document.getElementById('url_references').value || '').split('\\n').filter(Boolean)
     ));
@@ -1087,6 +1236,7 @@ CREATE_RUN_JS = """
             else {
               document.getElementById("category-list").innerHTML = "";
             }
+            invalidateMemoryCandidates();
           }
 
           async function loadCategories(shopName) {
